@@ -36,6 +36,8 @@ A future v1.x will swap py_ecc for blst via FFI for ~10x speedup.
 
 from __future__ import annotations
 
+import sys
+import threading
 from typing import List, Optional, Tuple
 
 
@@ -160,6 +162,46 @@ def _bytes_to_pyecc_g2(g2_data: bytes):
     return (x, y)
 
 
+def _safe_pairing(g2_pe, g1_pe):
+    """Compute a single BN254 pairing robustly across platforms.
+
+    py_ecc's FQ12 final-exponentiation recurses ~2800 frames deep. CPython's
+    stack-overflow guard raises RecursionError when that approaches the
+    smaller default thread stack on Windows, even below the default recursion
+    limit. Running it in a worker thread with a large stack and a raised
+    recursion limit avoids the crash without changing the result.
+    """
+    box: dict = {}
+
+    def _run() -> None:
+        old_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(max(old_limit, 100_000))
+        try:
+            box["value"] = py_ecc_pairing(g2_pe, g1_pe)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on caller thread
+            box["error"] = exc
+        finally:
+            sys.setrecursionlimit(old_limit)
+
+    prev_stack = threading.stack_size()
+    try:
+        threading.stack_size(64 * 1024 * 1024)  # 64 MiB: ample for ~2800 frames
+    except (ValueError, RuntimeError):
+        pass  # platform refused a custom stack size; fall back to default
+    try:
+        worker = threading.Thread(target=_run)
+        worker.start()
+        worker.join()
+    finally:
+        try:
+            threading.stack_size(prev_stack)
+        except (ValueError, RuntimeError):
+            pass
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 def pairing_check(pairs: List[Tuple[Point, bytes]]) -> bool:
     """Bilinear pairing check. Returns True iff the product equals 1 in F_p^12.
 
@@ -185,7 +227,7 @@ def pairing_check(pairs: List[Tuple[Point, bytes]]) -> bool:
                 return False
             if not py_ecc_is_on_curve(g1_pe, py_ecc_b):
                 return False
-            e = py_ecc_pairing(g2_pe, g1_pe)
+            e = _safe_pairing(g2_pe, g1_pe)
         except Exception:
             return False
         product = product * e
