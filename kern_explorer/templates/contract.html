@@ -1,0 +1,24 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Contract {{ contract.address[:12] }} — Heimdall{% endblock %}
+{% block content %}
+<section class="mb-6">
+  <a href="/contracts" class="text-xs text-kern-accent hover:underline">← Contracts</a>
+  <h1 class="text-2xl font-bold mt-1">Skald contract</h1>
+  <p class="hash text-sm text-gray-600 dark:text-gray-400">{{ contract.address }}</p>
+  {% if contract.skald_template %}<span class="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300 mt-2 inline-block">{{ contract.skald_template }}</span>{% endif %}
+</section>
+{% if contract.storage %}
+<section class="mb-6">
+  <h2 class="text-sm font-semibold uppercase text-gray-500 mb-2">Storage</h2>
+  <pre class="bg-white dark:bg-kern-800 rounded border border-gray-200 dark:border-kern-700 p-3 text-xs overflow-x-auto">{{ contract.storage | tojson(indent=2) }}</pre>
+</section>
+{% endif %}
+{% if contract.code %}
+<section>
+  <h2 class="text-sm font-semibold uppercase text-gray-500 mb-2">Source (Skald)</h2>
+  <pre class="bg-white dark:bg-kern-800 rounded border border-gray-200 dark:border-kern-700 p-3 text-xs overflow-x-auto">{{ contract.code }}</pre>
+</section>
+{% endif %}
+{% endblock %}

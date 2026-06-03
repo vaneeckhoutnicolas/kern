@@ -1,0 +1,242 @@
+// quadratic-funding.skald
+//
+// Quadratic Funding (QF) for public goods, as introduced by Buterin,
+// Hitzig and Weyl ("Liberal Radicalism," 2018) and popularized by
+// Gitcoin Grants.
+//
+// The mechanism:
+//   - A *matching pool* of KRN is provided (typically by the Foundation
+//     or a sponsor) for a fixed round.
+//   - Multiple *projects* are eligible for funding within the round.
+//   - Anyone can *contribute* KRN to any project during the round.
+//   - At the end, each project receives:
+//       a) The sum of direct contributions (what donors gave)
+//       b) PLUS a matching share computed via the QF formula:
+//             match_i ∝ (sum of sqrt(contribution_j))²
+//          which amplifies projects supported by MANY small donors over
+//          projects supported by FEW large donors.
+//
+// Sybil resistance:
+//   QF without Sybil resistance is trivially gameable — split a single
+//   €10k donation into 10000 fake accounts of €1 each, get massive
+//   matching. To prevent this, contributors must hold a valid
+//   "identity.proof-of-personhood" attestation from a trusted issuer
+//   (read off-chain by the round operator, who calls `record_contribution`
+//   on behalf of verified contributors).
+//
+// Anti-collusion:
+//   Projects cannot contribute to themselves (require sender != project).
+//   The round operator can flag contributions as colluding (e.g., a
+//   pool of "donors" all funded by the same source); flagged contributions
+//   are excluded from matching.
+//
+// The Skald constraint:
+//   Skald v1.1 has no mapping<address, int> type. So this contract
+//   tracks ONE project per origination. To run a multi-project round,
+//   the operator originates one contract per project, all sharing the
+//   same round_id and matching pool address. A coordinator contract
+//   (not modeled here) would close the round and trigger payouts.
+//
+// This is the Skald-1.1 demonstration. v1.2 (with mapping types) will
+// support a single multi-project round contract.
+
+contract QuadraticFundingProject {
+
+    storage {
+        // --- Round identity ---
+        round_id:                   string,
+        round_operator:             address,    // verifies sybil resistance off-chain
+        matching_pool_address:      address,    // holds the matching KRN
+        round_starts_at_level:      int,
+        round_ends_at_level:        int,
+
+        // --- This project ---
+        project_id:                 string,
+        project_recipient:          address,    // where final funds are paid out
+
+        // --- Contribution accounting ---
+        // Sum of direct contributions (in mukrn) — the project gets this
+        // PLUS the matching share at round close.
+        total_direct_contributions: int,
+
+        // Sum of sqrt(c_i) over all valid contributions.
+        // QF matching formula: match ∝ (sum_sqrt)².
+        // Stored as integer mukrn (sqrt is computed off-chain by the
+        // operator, since Skald has no sqrt; the result is verified
+        // against the publicly-known contribution history).
+        sum_sqrt_contributions:     int,
+
+        // Number of unique contributors (for transparency).
+        contributor_count:          int,
+
+        // Sum of (c_i)² — the operator publishes this so the matching
+        // share can be computed deterministically at round close.
+        // (sum_sqrt)² gives the matching coefficient; this stays
+        // separate for audit.
+        sum_sqrt_squared:           int,
+
+        // --- Sybil + collusion controls ---
+        // Operator records contributions only AFTER verifying:
+        //   1) Contributor holds a valid proof-of-personhood attestation
+        //   2) Contribution is not part of a known sybil ring
+        //   3) Contribution is not from the project owner
+        flagged_contributions_mukrn: int,
+
+        // --- Round close ---
+        round_closed:               bool,
+        matching_received:          int,        // mukrn received from matching pool
+        funds_paid_to_recipient:    int,
+    }
+
+    // ========================================================================
+    // INVARIANTS
+    // ========================================================================
+
+    // Contributions must accumulate monotonically.
+    invariant nonneg_direct_contributions {
+        total_direct_contributions >= 0
+    }
+
+    invariant nonneg_sum_sqrt {
+        sum_sqrt_contributions >= 0
+    }
+
+    // The number of contributors is bounded by the running total.
+    invariant contributor_count_bounded {
+        contributor_count >= 0
+    }
+
+    // Funds paid cannot exceed direct contributions + matching received.
+    invariant payout_bounded {
+        funds_paid_to_recipient <= total_direct_contributions + matching_received
+    }
+
+    // Flagged contributions must be a subset of total.
+    invariant flagged_bounded {
+        flagged_contributions_mukrn <= total_direct_contributions
+    }
+
+    // Round operator and project recipient cannot be the same address
+    // (separation of role: the operator audits the round, the recipient
+    // is the project being funded).
+    invariant role_separation {
+        round_operator != project_recipient
+    }
+
+    // ========================================================================
+    // CONTRIBUTION
+    // ========================================================================
+
+    // Anyone can call `contribute` directly with KRN attached. The
+    // contribution is initially counted as direct only. The round
+    // operator separately calls `record_sqrt_share` after off-chain
+    // sybil verification to add the contribution's sqrt share to the
+    // matching computation.
+    //
+    // This two-step design is necessary because Skald v1.1 cannot
+    // compute sqrt; the operator computes it off-chain and submits
+    // it, attesting its correctness via the attestation registry.
+    entry contribute() {
+        require !round_closed with "round closed";
+        require amount > 0 with "must contribute positive amount";
+        // Self-contributions are not allowed: project cannot fund itself.
+        require sender != project_recipient with "project cannot contribute to itself";
+        total_direct_contributions = total_direct_contributions + amount;
+        // The matching pool receives this contribution into the project's
+        // line item; the actual KRN sits in this contract.
+    }
+
+    // The round operator records the sqrt of a verified contribution.
+    // Operator first verifies off-chain that the contributor has a
+    // valid proof-of-personhood attestation, then computes sqrt(c)
+    // (in fixed-point integer arithmetic) and calls this entry.
+    //
+    // The operator's claim of "this contribution had value c with
+    // sqrt c_sqrt" is itself a slashable attestation (separate
+    // ATTEST tx); equivocation by the operator (different sqrt for
+    // same contribution) is provable on-chain.
+    entry record_sqrt_share(c_sqrt_mukrn: int, c_squared_mukrn: int) {
+        require !round_closed with "round closed";
+        require sender == round_operator with "only round operator";
+        require c_sqrt_mukrn > 0 with "sqrt must be positive";
+        require c_squared_mukrn > 0 with "c-squared must be positive";
+        sum_sqrt_contributions = sum_sqrt_contributions + c_sqrt_mukrn;
+        sum_sqrt_squared = sum_sqrt_squared + c_squared_mukrn;
+        contributor_count = contributor_count + 1;
+    }
+
+    // Operator flags a sybil ring or collusion. Amount is excluded
+    // from matching calculation (but the direct contribution stands).
+    entry flag_collusion(flagged_amount: int) {
+        require !round_closed with "round closed";
+        require sender == round_operator with "only round operator";
+        require flagged_amount > 0 with "amount must be positive";
+        require flagged_contributions_mukrn + flagged_amount <= total_direct_contributions
+            with "flagged exceeds total";
+        flagged_contributions_mukrn = flagged_contributions_mukrn + flagged_amount;
+    }
+
+    // ========================================================================
+    // ROUND CLOSE & PAYOUT
+    // ========================================================================
+
+    // Operator closes the round after the round_ends_at_level.
+    // No more contributions accepted after this.
+    entry close_round(current_level: int) {
+        require sender == round_operator with "only operator can close";
+        require !round_closed with "already closed";
+        require current_level >= round_ends_at_level with "round still open";
+        round_closed = true;
+    }
+
+    // The matching pool sends KRN to the project based on the QF formula.
+    // The pool's controller computes the matching share off-chain (using
+    // sum_sqrt_contributions across all projects in the round) and pays
+    // each project its share via this entry.
+    entry receive_matching_share() {
+        require round_closed with "round not closed yet";
+        require sender == matching_pool_address with "only matching pool";
+        require amount > 0 with "must include matching amount";
+        matching_received = matching_received + amount;
+    }
+
+    // Finally, the project's recipient can withdraw the total
+    // (direct contributions + matching received).
+    entry withdraw_to_recipient() {
+        require round_closed with "round not closed";
+        require sender == round_operator with "only operator triggers payout";
+        let total_available: int = total_direct_contributions + matching_received - funds_paid_to_recipient;
+        require total_available > 0 with "nothing to withdraw";
+        funds_paid_to_recipient = funds_paid_to_recipient + total_available;
+        // Runtime side effect: KRN transferred to project_recipient.
+    }
+
+    // ========================================================================
+    // VIEWS
+    // ========================================================================
+
+    view round_is_open(current_level: int) -> bool {
+        !round_closed && current_level >= round_starts_at_level && current_level < round_ends_at_level
+    }
+
+    view eligible_for_matching_mukrn() -> int {
+        total_direct_contributions - flagged_contributions_mukrn
+    }
+
+    // The matching pool consumer uses these for the final QF computation.
+    view get_sum_sqrt() -> int {
+        sum_sqrt_contributions
+    }
+
+    view get_contributor_count() -> int {
+        contributor_count
+    }
+
+    view total_received() -> int {
+        total_direct_contributions + matching_received
+    }
+
+    view amount_pending_payout() -> int {
+        total_direct_contributions + matching_received - funds_paid_to_recipient
+    }
+}

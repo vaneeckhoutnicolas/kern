@@ -1,0 +1,11 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Governance — Heimdall{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Governance</h1>
+<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Dual-track: protocol amendments + treasury allocations, with equivocation slashing.</p>
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 p-4">
+  <pre class="text-xs overflow-x-auto">{{ governance | tojson(indent=2) }}</pre>
+</div>
+{% endblock %}

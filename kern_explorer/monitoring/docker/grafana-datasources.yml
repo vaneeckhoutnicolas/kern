@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+#
+# Grafana datasource auto-provisioning.
+# Mount this file at /etc/grafana/provisioning/datasources/datasources.yml
+# inside the Grafana container.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s

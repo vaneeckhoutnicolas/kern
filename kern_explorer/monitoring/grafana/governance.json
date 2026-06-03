@@ -1,0 +1,67 @@
+{
+  "_comment": "SPDX-License-Identifier: Apache-2.0  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors",
+  "description": "Governance state: dual-track (protocol + treasury), governance equivocation tracking.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_indexed_transactions_by_kind_total{kind=\"governance_propose\"}", "refId": "A"}],
+      "title": "Governance proposals (lifetime)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
+      "id": 2,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_indexed_transactions_by_kind_total{kind=\"governance_vote\"}", "refId": "A"}],
+      "title": "Governance votes (lifetime)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_indexed_transactions_by_kind_total{kind=\"slash_equivocation\"}", "refId": "A"}],
+      "title": "Validator equivocation slashings",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Proposals per day. Spike = active amendment cycle. Sustained absence = governance underused (potentially a centralization smell).",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1}, "unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 4,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["sum"], "showLegend": true}},
+      "targets": [{"expr": "increase(kern_indexed_transactions_by_kind_total{kind=\"governance_propose\"}[24h])", "legendFormat": "proposals/day", "refId": "A"}],
+      "title": "Proposals per day (24h increase)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Vote activity. Healthy governance has consistent vote rate; sudden drops may indicate validator unavailability or apathy.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}, "unit": "ops"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 5,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean"], "showLegend": true}},
+      "targets": [{"expr": "rate(kern_indexed_transactions_by_kind_total{kind=\"governance_vote\"}[1h])", "legendFormat": "votes/s (1h rate)", "refId": "A"}],
+      "title": "Vote rate",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "tags": ["kern", "governance"],
+  "templating": {"list": [{"current": {"text": "Prometheus", "value": "Prometheus"}, "label": "Datasource", "name": "DS_PROMETHEUS", "query": "prometheus", "refresh": 1, "type": "datasource"}]},
+  "time": {"from": "now-7d", "to": "now"},
+  "title": "Kern — Governance",
+  "uid": "kern-governance",
+  "version": 1
+}

@@ -1,0 +1,24 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Validators — Heimdall{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Validators</h1>
+<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Active bakers (Liquid PoS LPoS — delegators keep custody).</p>
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500"><tr><th class="text-left p-2">Address</th><th class="text-right p-2">Balance</th><th class="text-right p-2">Last seen at level</th></tr></thead>
+    <tbody>
+    {% for v in validators %}
+      <tr class="border-t border-gray-100 dark:border-kern-700">
+        <td class="p-2"><a href="/account/{{ v.address }}" class="hash truncate-hash" title="{{ v.address }}">{{ v.address }}</a></td>
+        <td class="p-2 text-right font-mono">{{ v.balance_krn }} KRN</td>
+        <td class="p-2 text-right">{{ v.last_seen_level or '—' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3" class="p-4 text-center text-gray-500">No validators seen yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

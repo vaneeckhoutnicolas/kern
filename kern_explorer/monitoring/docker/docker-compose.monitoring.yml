@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+#
+# Full Heimdall monitoring stack with Prometheus + Grafana + AlertManager.
+#
+# This compose file is for local development and small-team operations.
+# For production (Yggdrasil, Midgard), use a proper orchestrator (k8s with
+# kube-prometheus-stack chart, or your cloud provider's managed Prometheus).
+#
+# Usage:
+#   cd kern_explorer/monitoring/docker
+#   docker-compose -f docker-compose.monitoring.yml up -d
+#
+# Then open:
+#   Grafana       — http://localhost:3000  (admin / admin on first login)
+#   Prometheus    — http://localhost:9090
+#   AlertManager  — http://localhost:9093
+#   Heimdall      — http://localhost:8800
+#
+# Assumes a running Kern node accessible at host.docker.internal:8732
+# (the docker-host's RPC port). If your Kern node runs in a different
+# container, replace KERN_RPC accordingly.
+
+version: '3.8'
+
+services:
+  heimdall:
+    image: python:3.12-slim
+    container_name: heimdall
+    working_dir: /app
+    volumes:
+      - ../../..:/app:ro                       # mount the kern repo read-only
+      - heimdall_data:/var/data
+    environment:
+      KERN_RPC: "http://host.docker.internal:8732"
+      HEIMDALL_DB: "/var/data/heimdall.sqlite"
+      HEIMDALL_HOST: "0.0.0.0"
+      HEIMDALL_PORT: "8800"
+    command: >
+      bash -c "pip install --quiet -e '.[explorer]' && heimdall"
+    ports:
+      - "8800:8800"
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../alerts/kern-alerts.yml:/etc/prometheus/rules/kern-alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    depends_on:
+      - heimdall
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    ports:
+      - "9093:9093"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    volumes:
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./grafana-dashboards-provider.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ../grafana:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+volumes:
+  heimdall_data:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:

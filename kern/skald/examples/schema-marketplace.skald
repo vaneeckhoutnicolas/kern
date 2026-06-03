@@ -1,0 +1,196 @@
+// schema-marketplace.skald
+//
+// On-chain registry of attestation schemas with minimum bond enforcement.
+//
+// The attestation primitive (kern/attestation.py, v1.1-rc) lets ANY
+// address attest under ANY schema_id string. That's deliberate at the
+// protocol level — no central authority gates what people can claim.
+//
+// But at the application level, consumers want to know:
+//   - Is this schema_id a recognized, well-defined claim type?
+//   - What's the minimum bond an issuer must post for attestations
+//     under this schema to be considered "production-grade"?
+//   - Who are the recognized issuers (white-list) for this schema?
+//
+// This contract is the application-level marketplace. One marketplace
+// contract per "schema-publisher" namespace. The Foundation operates
+// the canonical marketplace; nothing prevents others from running
+// competing marketplaces (multiple sources of truth, applications
+// choose which to trust).
+//
+// Skald v1.1 constraint:
+//   No mapping<string, X> — so this contract tracks ONE schema per
+//   origination. To run a multi-schema marketplace, originate one
+//   contract per schema_id, all referencing the same marketplace_id.
+
+contract SchemaMarketplaceEntry {
+
+    storage {
+        // --- Marketplace identity ---
+        marketplace_id:             string,     // e.g., "kern.canonical"
+        marketplace_admin:          address,    // can update schema metadata
+
+        // --- Schema identity ---
+        schema_id:                  string,     // e.g., "price.btc-usd"
+        schema_version:             int,        // bump on breaking changes
+        schema_hash:                string,     // hash of full JSON schema document
+
+        // --- Documentation ---
+        documentation_url:          string,     // off-chain URL for the schema spec
+        category:                   string,     // e.g., "defi.price", "kyc", "energy"
+
+        // --- Issuer requirements ---
+        minimum_bond_mukrn:         int,        // minimum bond per attestation
+        max_validity_levels:        int,        // attestation must be revoked/reissued before this
+        required_issuer_attestation: string,    // schema_id an issuer must hold (e.g., "identity.proof-of-personhood")
+
+        // --- Trust thresholds ---
+        // Consumers may want to require multiple issuer attestations
+        // to converge. This contract publishes a recommended minimum.
+        recommended_quorum:         int,        // e.g., 3 independent issuers for high-value claims
+
+        // --- Recognized issuer counter ---
+        // Each recognized issuer must be registered separately via
+        // register_issuer (which is itself an attestation from this
+        // marketplace contract to the issuer). The count is for quick
+        // consumer visibility.
+        recognized_issuer_count:    int,
+
+        // --- Anomaly tracking ---
+        // Times an issuer registered under this schema was slashed for
+        // equivocation. High counts signal the schema may be poorly
+        // defined or the recognized-issuer process is too permissive.
+        total_issuer_slashings:     int,
+
+        // --- Status ---
+        deprecated:                 bool,
+        deprecated_at_level:        int,
+        deprecated_reason:          string,
+    }
+
+    // ========================================================================
+    // INVARIANTS
+    // ========================================================================
+
+    // Min bond non-negative.
+    invariant min_bond_nonneg {
+        minimum_bond_mukrn >= 0
+    }
+
+    // Schema version monotonic.
+    invariant version_positive {
+        schema_version >= 1
+    }
+
+    // Recommended quorum bounded.
+    invariant quorum_bounded {
+        recommended_quorum > 0
+    }
+
+    // If deprecated, must have a level marker.
+    invariant deprecation_consistency {
+        !deprecated || deprecated_at_level > 0
+    }
+
+    invariant recognized_nonneg {
+        recognized_issuer_count >= 0
+    }
+
+    invariant slashings_nonneg {
+        total_issuer_slashings >= 0
+    }
+
+    // ========================================================================
+    // ADMIN
+    // ========================================================================
+
+    entry update_minimum_bond(new_min: int) {
+        require sender == marketplace_admin with "only admin";
+        require !deprecated with "schema deprecated";
+        require new_min >= 0 with "min bond non-negative";
+        minimum_bond_mukrn = new_min;
+    }
+
+    entry bump_version(new_hash: string) {
+        require sender == marketplace_admin with "only admin";
+        require !deprecated with "deprecated";
+        schema_version = schema_version + 1;
+        schema_hash = new_hash;
+    }
+
+    entry update_recommended_quorum(new_q: int) {
+        require sender == marketplace_admin with "only admin";
+        require new_q > 0 with "quorum positive";
+        recommended_quorum = new_q;
+    }
+
+    // ========================================================================
+    // ISSUER REGISTRY
+    // ========================================================================
+
+    // Marketplace admin registers a recognized issuer. Off-chain, the
+    // admin first verifies the issuer holds the required_issuer_attestation
+    // and is in good standing. The act of registering is itself an
+    // attestation (schema_id = "<marketplace_id>.recognized-issuer",
+    // subject = issuer_address, claim = {schema_covered: schema_id}).
+    entry register_issuer() {
+        require sender == marketplace_admin with "only admin";
+        require !deprecated with "deprecated";
+        recognized_issuer_count = recognized_issuer_count + 1;
+    }
+
+    entry unregister_issuer(reason: string) {
+        require sender == marketplace_admin with "only admin";
+        require recognized_issuer_count > 0 with "no issuers to unregister";
+        recognized_issuer_count = recognized_issuer_count - 1;
+    }
+
+    // Record a slashing event against a recognized issuer (off-chain
+    // monitoring of the attestation registry detects the slashing
+    // and reports it here for marketplace-wide statistics).
+    entry record_issuer_slashing() {
+        require sender == marketplace_admin with "only admin";
+        total_issuer_slashings = total_issuer_slashings + 1;
+    }
+
+    // ========================================================================
+    // DEPRECATION
+    // ========================================================================
+
+    // When a schema is replaced by a new one (or proven unsafe), the
+    // marketplace admin deprecates it. Consumers reading this entry can
+    // see the deprecation status and migrate. The schema itself is not
+    // deleted — historical attestations remain valid evidence.
+    entry deprecate(reason: string, current_level: int) {
+        require sender == marketplace_admin with "only admin";
+        require !deprecated with "already deprecated";
+        deprecated = true;
+        deprecated_at_level = current_level;
+        deprecated_reason = reason;
+    }
+
+    // ========================================================================
+    // VIEWS
+    // ========================================================================
+
+    view is_active() -> bool {
+        !deprecated
+    }
+
+    view get_minimum_bond() -> int {
+        minimum_bond_mukrn
+    }
+
+    view get_recommended_quorum() -> int {
+        recommended_quorum
+    }
+
+    view get_version() -> int {
+        schema_version
+    }
+
+    // Issuer quality score: high recognized count, low slashing rate.
+    view quality_score() -> int {
+        recognized_issuer_count * 100 - total_issuer_slashings * 50
+    }
+}

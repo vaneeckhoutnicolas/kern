@@ -1,0 +1,108 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Public goods funding — Heimdall{% endblock %}
+{% block content %}
+
+<section class="mb-6">
+  <h1 class="text-2xl font-bold">Public goods funding</h1>
+  <p class="text-sm text-gray-600 dark:text-gray-400 mt-1 max-w-3xl">
+    Quadratic Funding rounds (small grants, broad participation) and Retroactive Public Goods
+    Funding nominations (proven-impact larger grants). Administrative overhead is collapsed
+    by replacing committee-and-paperwork with explicit on-chain math.
+    See <a href="/public-goods-funding.md" class="text-kern-accent hover:underline">the spec</a>.
+  </p>
+</section>
+
+<section class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">QF projects</div>
+    <div class="text-2xl font-bold mt-1">{{ summary.qf_count }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">QF contributors total</div>
+    <div class="text-2xl font-bold mt-1">{{ summary.qf_contributors_total }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">QF total raised</div>
+    <div class="text-2xl font-bold mt-1 font-mono">{{ summary.qf_raised_krn }} KRN</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">RPGF nominations</div>
+    <div class="text-2xl font-bold mt-1">{{ summary.rpgf_count }}</div>
+  </div>
+</section>
+
+<section class="mb-6">
+  <h2 class="text-lg font-semibold mb-3">Quadratic Funding projects</h2>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+        <tr>
+          <th class="text-left p-2">Project</th>
+          <th class="text-right p-2">Contributors</th>
+          <th class="text-right p-2">Raised</th>
+          <th class="text-right p-2">Matching est.</th>
+          <th class="text-left p-2">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in qf_projects %}
+        <tr class="border-t border-gray-100 dark:border-kern-700">
+          <td class="p-2"><a href="/contract/{{ c.address }}" class="hash truncate-hash" title="{{ c.address }}">{{ c.address }}</a></td>
+          <td class="p-2 text-right font-mono">{{ c.vertical_summary.get('contributors_count', 0) if c.vertical_summary else 0 }}</td>
+          <td class="p-2 text-right font-mono text-xs">{{ c.raised_krn }} KRN</td>
+          <td class="p-2 text-right font-mono text-xs text-emerald-700">{{ c.matching_estimate_krn }} KRN</td>
+          <td class="p-2">
+            {% if c.vertical_summary and c.vertical_summary.get('admin_approved') %}
+              <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">approved</span>
+            {% else %}
+              <span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">pending</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="p-4 text-center text-gray-500">No QF projects originated yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2 class="text-lg font-semibold mb-3">Retroactive PGF nominations</h2>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+        <tr>
+          <th class="text-left p-2">Nomination</th>
+          <th class="text-left p-2">Nominated by</th>
+          <th class="text-right p-2">Avg score</th>
+          <th class="text-right p-2">Votes</th>
+          <th class="text-left p-2">Payout</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in rpgf_nominations %}
+        <tr class="border-t border-gray-100 dark:border-kern-700">
+          <td class="p-2"><a href="/contract/{{ c.address }}" class="hash truncate-hash" title="{{ c.address }}">{{ c.address }}</a></td>
+          <td class="p-2 hash truncate-hash">{{ c.vertical_summary.get('nominated_by', '—') if c.vertical_summary else '—' }}</td>
+          <td class="p-2 text-right font-mono">{{ c.vertical_summary.get('average_score', '—') if c.vertical_summary else '—' }}</td>
+          <td class="p-2 text-right">{{ c.vertical_summary.get('score_count', 0) if c.vertical_summary else 0 }}</td>
+          <td class="p-2">
+            {% if c.vertical_summary and c.vertical_summary.get('payout_executed') %}
+              <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">paid</span>
+            {% else %}
+              <span class="text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-300">pending</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="p-4 text-center text-gray-500">No RPGF nominations yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock %}

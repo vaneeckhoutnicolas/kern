@@ -1,0 +1,315 @@
+// sto-institutional-fund.skald
+//
+// Tokenization of a regulated investment fund (UCITS, AIF, or specialized
+// crypto fund). Encodes Prospectus Regulation + AIFMD + MiFID II compliance.
+//
+// Persona target: established financial institution tokenizing a fund
+// product (€50M-500M AUM). Examples: a Belgian private bank's discretionary
+// fund, a Luxembourg SICAV crypto-asset sleeve, a French AIF tokenizing
+// real-asset exposure.
+//
+// Regulatory layers encoded as invariants:
+//   Prospectus Regulation Art. 3 — Whitepaper / prospectus registration
+//   MiFID II Art. 16(9) — Segregation of client assets
+//   MAR Art. 14 — Insider trading / market abuse
+//   AIFMD      Art. 21 — Depositary independence (depositary != AIFM)
+//   MiFID II   Art. 24 — Best execution + suitability
+//   AIFMD      Art. 22 — Annual NAV publication
+//   AIFMD      Art. 18 — Risk concentration limits
+//
+// Additional features beyond startup equity:
+//   - Multiple authorized issuers (the fund's AIFM and the depositary)
+//   - NAV (Net Asset Value) published at regular intervals
+//   - Redemption mechanism (investor sells tokens back to the fund at NAV)
+//   - Risk concentration cap (no single position > X% of fund AUM)
+//   - Best-execution attestation per trade
+//
+// The contract assumes a separate "trade execution" Skald contract that
+// posts execution attestations via the attestation registry. The fund
+// contract only tracks aggregated state.
+
+contract StoInstitutionalFund {
+
+    storage {
+        // --- Roles & oversight ---
+        aifm:                       address,    // Alternative Investment Fund Manager (the operator)
+        depositary:                 address,    // independent custodian (must != aifm — AIFMD Art. 21)
+        regulator:                  address,    // CSSF / FSMA / AMF
+        compliance_oracle:          address,    // off-chain compliance attestation reader
+
+        // --- Fund identity ---
+        prospectus_registered:      bool,
+        prospectus_hash:            string,
+        prospectus_registered_at:   int,        // block level
+
+        // --- Token supply ---
+        total_supply_issued:        int,
+        total_supply_redeemed:      int,
+        outstanding_supply:         int,        // = issued - redeemed
+
+        // --- NAV (Net Asset Value) tracking ---
+        // NAV is published periodically by the AIFM, attested by the
+        // depositary. The contract holds the latest NAV and the level it
+        // was set at; redemptions use this NAV.
+        nav_per_token_mukrn:        int,        // most recent NAV
+        nav_published_at_level:     int,
+        nav_publication_count:      int,        // increment per publication
+
+        // --- AIFMD Art. 22: NAV staleness ---
+        // NAV must be published at least every nav_max_staleness_levels.
+        // If exceeded, the contract auto-halts redemptions.
+        nav_max_staleness_levels:   int,        // typically ~21 days in blocks
+
+        // --- Asset / cash split (custody segregation, MiFID II Art. 16(9)) ---
+        funds_invested_mukrn:       int,        // mukrn deployed by AIFM into assets
+        funds_cash_in_custody:      int,        // mukrn held in cash at depositary
+
+        // --- AIFMD Art. 18: risk concentration ---
+        // Largest single position must not exceed concentration_cap_pct of AUM.
+        // The compliance_oracle updates this from off-chain portfolio data.
+        largest_position_pct:       int,        // 0..100
+        concentration_cap_pct:      int,        // typically 10 for diversified
+
+        // --- MiFID II Art. 24: best execution ---
+        // Per-trade best-execution attestations are recorded off-chain via
+        // the attestation registry. The contract tracks the count and the
+        // last attestation level.
+        trades_with_best_exec_attestation_count: int,
+        total_trades_count:                       int,
+        last_trade_attestation_level:             int,
+
+        // --- MAR Art. 14: blackout windows ---
+        blackout_active:            bool,
+
+        // --- Redemption queue ---
+        redemptions_pending_mukrn:  int,        // aggregate redemption obligations
+        redemptions_fulfilled:      int,
+
+        // --- Freeze ---
+        frozen:                     bool,
+    }
+
+    // ========================================================================
+    // INVARIANTS
+    // ========================================================================
+
+    // AIFMD Art. 21: the depositary must be distinct from the AIFM.
+    // This is checked at origination; once set, the addresses cannot change
+    // without regulatory re-authorization.
+    invariant aifmd_art21_depositary_independence {
+        aifm != depositary
+    }
+
+    // Prospectus Regulation Art. 3: no token issuance before prospectus is registered.
+    invariant prospectus_before_issuance {
+        total_supply_issued == 0 || prospectus_registered
+    }
+
+    // MiFID II Art. 16(9): cash + invested = total raised; no leakage.
+    // (Conceptual; the actual sum is enforced by the issuance/redemption logic.)
+    invariant mifid_art16_no_negative_cash {
+        funds_cash_in_custody >= 0
+    }
+
+    invariant mifid_art16_no_negative_invested {
+        funds_invested_mukrn >= 0
+    }
+
+    // AIFMD Art. 18: risk concentration ceiling.
+    invariant aifmd_art18_concentration_limit {
+        largest_position_pct <= concentration_cap_pct
+    }
+
+    // No negative outstanding supply.
+    invariant supply_consistency {
+        outstanding_supply >= 0
+    }
+
+    // Outstanding = issued - redeemed (sanity).
+    invariant supply_arithmetic {
+        outstanding_supply == total_supply_issued - total_supply_redeemed
+    }
+
+    // NAV must be published at least once before any redemption.
+    invariant nav_required_for_redemptions {
+        total_supply_redeemed == 0 || nav_publication_count > 0
+    }
+
+    // ========================================================================
+    // SETUP entries
+    // ========================================================================
+
+    entry register_prospectus(hash: string, level: int) {
+        require sender == compliance_oracle with "only oracle";
+        require !prospectus_registered with "already registered";
+        prospectus_registered = true;
+        prospectus_hash = hash;
+        prospectus_registered_at = level;
+    }
+
+    // ========================================================================
+    // NAV — AIFMD Art. 22
+    // ========================================================================
+
+    // The AIFM publishes the new NAV, but the depositary must co-sign
+    // (via separate attestation in the registry; the compliance oracle
+    // verifies this and calls this entry).
+    entry publish_nav(new_nav_mukrn: int, level: int) {
+        require sender == compliance_oracle with "only oracle (with depositary co-sign)";
+        require prospectus_registered with "prospectus not registered";
+        require new_nav_mukrn > 0 with "NAV must be positive";
+        require level >= nav_published_at_level with "NAV update must be forward in time";
+        nav_per_token_mukrn = new_nav_mukrn;
+        nav_published_at_level = level;
+        nav_publication_count = nav_publication_count + 1;
+    }
+
+    // ========================================================================
+    // AIFMD Art. 18 — Concentration limits
+    // ========================================================================
+
+    entry update_largest_position(new_pct: int) {
+        require sender == compliance_oracle with "only oracle";
+        require new_pct >= 0 with "percent must be non-negative";
+        require new_pct <= 100 with "percent must be <= 100";
+        largest_position_pct = new_pct;
+    }
+
+    // ========================================================================
+    // MiFID II Art. 24 — Best execution
+    // ========================================================================
+
+    // Compliance oracle increments after verifying a best-exec attestation
+    // for a recently executed trade (off-chain).
+    entry record_trade_with_best_execution(at_level: int) {
+        require sender == compliance_oracle with "only oracle";
+        trades_with_best_exec_attestation_count = trades_with_best_exec_attestation_count + 1;
+        total_trades_count = total_trades_count + 1;
+        last_trade_attestation_level = at_level;
+    }
+
+    // Record a trade WITHOUT best-execution attestation (anomaly counter
+    // for regulator review). If this counter is ever non-zero, the regulator
+    // will receive an alert via off-chain monitoring.
+    entry record_trade_without_best_execution() {
+        require sender == compliance_oracle with "only oracle";
+        total_trades_count = total_trades_count + 1;
+    }
+
+    // ========================================================================
+    // MAR Art. 14 — Blackout
+    // ========================================================================
+
+    entry start_blackout() {
+        require sender == compliance_oracle with "only oracle";
+        blackout_active = true;
+    }
+
+    entry end_blackout() {
+        require sender == compliance_oracle with "only oracle";
+        blackout_active = false;
+    }
+
+    // ========================================================================
+    // SUBSCRIPTION (issuance)
+    // ========================================================================
+
+    entry subscribe(token_amount: int) {
+        require !frozen with "fund frozen";
+        require !blackout_active with "subscription blocked: blackout (MAR Art. 14)";
+        require prospectus_registered with "prospectus not registered (Prospectus Regulation Art. 3)";
+        require token_amount > 0 with "amount must be positive";
+        require amount > 0 with "must send KRN payment";
+
+        // Cash flows into the depositary's custody, not to the AIFM.
+        // (Enforced at runtime; the contract just tracks the aggregate.)
+        funds_cash_in_custody = funds_cash_in_custody + amount;
+        total_supply_issued = total_supply_issued + token_amount;
+        outstanding_supply = outstanding_supply + token_amount;
+    }
+
+    // ========================================================================
+    // AIFM allocation: cash → invested assets
+    // ========================================================================
+
+    entry allocate_to_asset(amount_to_invest: int) {
+        require !frozen with "fund frozen";
+        require sender == aifm with "only AIFM can allocate capital";
+        require amount_to_invest > 0 with "amount must be positive";
+        require funds_cash_in_custody >= amount_to_invest with "insufficient cash in custody";
+        funds_cash_in_custody = funds_cash_in_custody - amount_to_invest;
+        funds_invested_mukrn = funds_invested_mukrn + amount_to_invest;
+        // Side effect: KRN transferred from custody to AIFM's trading wallet.
+    }
+
+    // ========================================================================
+    // REDEMPTION
+    // ========================================================================
+
+    // Investor requests redemption — receives NAV-priced KRN back.
+    // NAV staleness is checked: if NAV is too old, redemption is blocked.
+    entry request_redemption(token_amount: int, current_level: int) {
+        require !frozen with "fund frozen";
+        require !blackout_active with "redemption blocked: blackout";
+        require nav_publication_count > 0 with "no NAV published yet";
+        require current_level - nav_published_at_level <= nav_max_staleness_levels
+            with "NAV too stale (AIFMD Art. 22)";
+        require token_amount > 0 with "amount must be positive";
+        require outstanding_supply >= token_amount with "insufficient outstanding supply";
+
+        let redemption_value: int = token_amount * nav_per_token_mukrn;
+        redemptions_pending_mukrn = redemptions_pending_mukrn + redemption_value;
+        total_supply_redeemed = total_supply_redeemed + token_amount;
+        outstanding_supply = outstanding_supply - token_amount;
+    }
+
+    // Depositary processes a pending redemption (transfers KRN to investor).
+    entry fulfill_redemption(amount_to_pay: int) {
+        require sender == depositary with "only depositary can fulfill";
+        require amount_to_pay > 0 with "amount must be positive";
+        require redemptions_pending_mukrn >= amount_to_pay with "exceeds pending";
+        require funds_cash_in_custody >= amount_to_pay with "insufficient cash";
+        redemptions_pending_mukrn = redemptions_pending_mukrn - amount_to_pay;
+        funds_cash_in_custody = funds_cash_in_custody - amount_to_pay;
+        redemptions_fulfilled = redemptions_fulfilled + amount_to_pay;
+    }
+
+    // ========================================================================
+    // REGULATOR controls
+    // ========================================================================
+
+    entry regulator_freeze() {
+        require sender == regulator with "only regulator";
+        frozen = true;
+    }
+
+    entry regulator_unfreeze() {
+        require sender == regulator with "only regulator";
+        frozen = false;
+    }
+
+    // ========================================================================
+    // VIEWS
+    // ========================================================================
+
+    view is_compliant() -> bool {
+        prospectus_registered && !frozen
+    }
+
+    view is_aifmd_compliant(current_level: int) -> bool {
+        prospectus_registered && (current_level - nav_published_at_level <= nav_max_staleness_levels)
+        && largest_position_pct <= concentration_cap_pct
+    }
+
+    view total_aum_mukrn() -> int {
+        funds_cash_in_custody + funds_invested_mukrn
+    }
+
+    view best_execution_coverage_pct() -> int {
+        trades_with_best_exec_attestation_count * 100 / total_trades_count
+    }
+
+    view nav_is_fresh(current_level: int) -> bool {
+        nav_publication_count > 0 && (current_level - nav_published_at_level <= nav_max_staleness_levels)
+    }
+}

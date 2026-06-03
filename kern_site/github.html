@@ -1,0 +1,1005 @@
+<!--
+  SPDX-License-Identifier: Apache-2.0
+  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+
+  Kern — Source code & GitHub landing page.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Source — Kern</title>
+  <meta name="description" content="Kern reference implementation on GitHub. Open source, Apache-2.0, 692 tests passing, ready to clone and run locally.">
+
+  <meta property="og:title" content="Kern — Source code">
+  <meta property="og:description" content="Open source Layer-1 protocol reference implementation in Python. Apache-2.0.">
+  <meta property="og:type" content="website">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..900,0..100,0..1&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-paper: #FAFAF7;
+      --bg-elevated: #FFFFFF;
+      --bg-deep: #0E1A2B;
+      --bg-deep-soft: #16243A;
+      --ink-primary: #0E1A2B;
+      --ink-secondary: #3D4A5E;
+      --ink-muted: #7A8595;
+      --ink-faint: #B5BDC9;
+      --ink-inverse: #FAFAF7;
+      --rule: #E5E1D8;
+      --rule-strong: #C9C3B5;
+      --amber: #C2885E;
+      --amber-deep: #8E5E3A;
+      --bifrost: #1E3A8A;
+      --moss: #5C7553;
+      --rust: #A24E3C;
+
+      --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+      --font-body:    "Instrument Sans", "Söhne", "Helvetica Neue", system-ui, sans-serif;
+      --font-mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font-body);
+      color: var(--ink-primary);
+      background: var(--bg-paper);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      background-image:
+        radial-gradient(at 80% 0%, rgba(194, 136, 94, 0.04) 0%, transparent 50%),
+        radial-gradient(at 0% 100%, rgba(30, 58, 138, 0.025) 0%, transparent 50%);
+      background-attachment: fixed;
+    }
+    a { color: inherit; text-decoration: none; }
+    ::selection { background: var(--ink-primary); color: var(--bg-paper); }
+
+    .skip-link {
+      position: absolute; left: -9999px;
+      background: var(--ink-primary); color: var(--ink-inverse);
+      padding: 0.5rem 1rem; z-index: 100;
+    }
+    .skip-link:focus { left: 1rem; top: 1rem; }
+
+    /* ===================================================================
+       Header (shared visual language with other pages)
+       =================================================================== */
+    .site-header {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(250, 250, 247, 0.92);
+      backdrop-filter: saturate(180%) blur(12px);
+      -webkit-backdrop-filter: saturate(180%) blur(12px);
+      border-bottom: 1px solid var(--rule);
+    }
+    .header-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0.85rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1.5rem;
+    }
+    .brand {
+      display: flex; align-items: baseline; gap: 0.55rem;
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      letter-spacing: -0.02em;
+      font-variation-settings: "opsz" 144;
+    }
+    .brand .rune {
+      font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display);
+      font-size: 1.4em; color: var(--amber); transform: translateY(2px);
+    }
+    .brand .where {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin-left: 0.6rem;
+    }
+    .header-nav {
+      display: flex; gap: 1.25rem; align-items: center;
+      font-family: var(--font-body);
+      font-size: 0.875rem;
+      color: var(--ink-secondary);
+    }
+    .header-nav a:hover { color: var(--ink-primary); }
+
+    /* ===================================================================
+       Cover / hero
+       =================================================================== */
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+    .cover {
+      padding: 6rem 1.5rem 4rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .cover::before {
+      content: "ᛗ";  /* mannaz rune — human / self */
+      position: absolute;
+      top: 12%;
+      right: -2%;
+      font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display);
+      font-size: clamp(18rem, 30vw, 26rem);
+      color: var(--amber);
+      opacity: 0.045;
+      line-height: 1;
+      pointer-events: none;
+      user-select: none;
+    }
+    .cover-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      position: relative;
+    }
+    .cover-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin: 0 0 1.5rem;
+    }
+    .cover-eyebrow::before {
+      content: "";
+      display: inline-block;
+      width: 1.5rem;
+      height: 1px;
+      background: currentColor;
+      vertical-align: middle;
+      margin-right: 0.5rem;
+      transform: translateY(-2px);
+    }
+    .cover h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2.5rem, 6vw, 5rem);
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+      font-weight: 350;
+      font-variation-settings: "opsz" 144, "SOFT" 60, "WONK" 1;
+      margin: 0;
+      max-width: 18ch;
+    }
+    .cover h1 em {
+      font-style: italic;
+      color: var(--amber-deep);
+      font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1;
+    }
+    .cover-lead {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      line-height: 1.5;
+      color: var(--ink-secondary);
+      font-weight: 350;
+      max-width: 56ch;
+      margin: 2rem 0 0;
+      font-variation-settings: "opsz" 30, "SOFT" 30;
+    }
+    .cover-actions {
+      margin-top: 2.5rem;
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .btn-primary, .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem;
+      border-radius: 999px;
+      font-family: var(--font-body);
+      font-size: 0.9375rem;
+      font-weight: 500;
+      transition: all 0.18s;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: var(--ink-primary);
+      color: var(--ink-inverse);
+      border: 1px solid var(--ink-primary);
+    }
+    .btn-primary:hover { background: var(--amber-deep); border-color: var(--amber-deep); transform: translateY(-1px); }
+    .btn-ghost {
+      background: transparent;
+      color: var(--ink-primary);
+      border: 1px solid var(--rule-strong);
+    }
+    .btn-ghost:hover { border-color: var(--ink-primary); }
+    .btn-icon {
+      width: 18px; height: 18px; flex-shrink: 0;
+    }
+
+    /* ===================================================================
+       Stat strip
+       =================================================================== */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1rem;
+      margin: 4rem 0;
+      padding: 2rem 0;
+      border-top: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+    }
+    @media (min-width: 760px) {
+      .stats { grid-template-columns: repeat(4, 1fr); }
+    }
+    .stat-card .stat-label {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin-bottom: 0.5rem;
+    }
+    .stat-card .stat-value {
+      font-family: var(--font-display);
+      font-size: 2.25rem;
+      line-height: 1;
+      color: var(--ink-primary);
+      font-variation-settings: "opsz" 144, "SOFT" 50;
+      font-feature-settings: "tnum";
+      letter-spacing: -0.02em;
+    }
+    .stat-card .stat-value em {
+      font-style: normal;
+      color: var(--amber-deep);
+    }
+    .stat-card .stat-sub {
+      font-family: var(--font-body);
+      font-size: 0.8125rem;
+      color: var(--ink-muted);
+      margin-top: 0.3rem;
+    }
+
+    /* ===================================================================
+       Sections
+       =================================================================== */
+    section { padding: 4rem 0; }
+    .section-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--amber);
+      margin-bottom: 1rem;
+    }
+    .section-eyebrow::before {
+      content: "";
+      display: inline-block;
+      width: 1.5rem;
+      height: 1px;
+      background: currentColor;
+      vertical-align: middle;
+      margin-right: 0.5rem;
+      transform: translateY(-2px);
+    }
+    section h2 {
+      font-family: var(--font-display);
+      font-size: clamp(1.875rem, 4vw, 2.75rem);
+      line-height: 1.1;
+      letter-spacing: -0.025em;
+      font-weight: 350;
+      font-variation-settings: "opsz" 144, "SOFT" 40;
+      margin: 0 0 1rem;
+      max-width: 22ch;
+    }
+    section .lead {
+      font-family: var(--font-display);
+      font-size: 1.125rem;
+      line-height: 1.55;
+      color: var(--ink-secondary);
+      max-width: 56ch;
+      font-variation-settings: "opsz" 30;
+      margin: 0 0 2.5rem;
+    }
+
+    /* ===================================================================
+       Terminal mockup (quick-start)
+       =================================================================== */
+    .quickstart-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+      align-items: start;
+    }
+    @media (min-width: 980px) {
+      .quickstart-grid { grid-template-columns: 1fr 1.3fr; }
+    }
+    .terminal {
+      background: var(--bg-deep);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow:
+        0 1px 2px rgba(14, 26, 43, 0.06),
+        0 14px 40px -10px rgba(14, 26, 43, 0.22);
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      line-height: 1.65;
+    }
+    .terminal-bar {
+      display: flex;
+      gap: 0.4rem;
+      padding: 0.55rem 0.75rem;
+      background: #16243A;
+      align-items: center;
+    }
+    .terminal-bar .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #3D4A5E;
+    }
+    .terminal-bar .label {
+      flex: 1;
+      text-align: center;
+      color: rgba(250, 250, 247, 0.4);
+      font-size: 0.6875rem;
+    }
+    .terminal-body {
+      padding: 1.25rem 1.5rem;
+      color: rgba(250, 250, 247, 0.85);
+      white-space: pre-wrap;
+    }
+    .terminal-body .prompt { color: var(--amber); }
+    .terminal-body .cmd { color: rgba(250, 250, 247, 0.95); }
+    .terminal-body .comment { color: rgba(250, 250, 247, 0.4); font-style: italic; }
+    .terminal-body .ok { color: var(--moss); }
+
+    /* ===================================================================
+       Repo tree (codebase map)
+       =================================================================== */
+    .tree-section {
+      background: var(--bg-deep);
+      color: var(--ink-inverse);
+    }
+    .tree-section .section-eyebrow { color: var(--amber); }
+    .tree-section h2 { color: var(--ink-inverse); }
+    .tree-section .lead { color: rgba(250, 250, 247, 0.7); }
+    .tree {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      line-height: 1.7;
+      color: rgba(250, 250, 247, 0.78);
+      padding: 1.5rem 0;
+    }
+    .tree .dir { color: var(--amber); font-weight: 500; }
+    .tree .note { color: rgba(250, 250, 247, 0.45); font-style: italic; }
+    .tree .star { color: var(--amber); }
+    .tree-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+    }
+    @media (min-width: 980px) {
+      .tree-grid { grid-template-columns: 1.2fr 1fr; gap: 4rem; align-items: start; }
+    }
+    .tree-aside h3 {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      color: var(--ink-inverse);
+      margin: 0 0 1rem;
+      font-variation-settings: "opsz" 144, "SOFT" 40;
+    }
+    .tree-aside p {
+      color: rgba(250, 250, 247, 0.7);
+      line-height: 1.65;
+      margin: 0 0 1rem;
+      font-family: var(--font-body);
+      font-size: 0.9375rem;
+    }
+    .tree-aside ul {
+      list-style: none;
+      padding: 0; margin: 1.5rem 0 0;
+      font-family: var(--font-body);
+      font-size: 0.875rem;
+      color: rgba(250, 250, 247, 0.7);
+    }
+    .tree-aside ul li {
+      padding: 0.6rem 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex; gap: 0.75rem; align-items: baseline;
+    }
+    .tree-aside ul li::before {
+      content: "→";
+      color: var(--amber);
+    }
+
+    /* ===================================================================
+       Doc index (links to all setup guides etc)
+       =================================================================== */
+    .docs-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+    @media (min-width: 760px) {
+      .docs-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (min-width: 1080px) {
+      .docs-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .doc-card {
+      background: var(--bg-elevated);
+      border: 1px solid var(--rule);
+      padding: 1.5rem;
+      border-radius: 8px;
+      transition: border-color 0.18s, transform 0.18s;
+      display: flex; flex-direction: column;
+    }
+    .doc-card:hover {
+      border-color: var(--amber);
+      transform: translateY(-2px);
+    }
+    .doc-card .doc-kind {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--amber);
+      margin-bottom: 0.6rem;
+    }
+    .doc-card h3 {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 400;
+      letter-spacing: -0.015em;
+      color: var(--ink-primary);
+      margin: 0 0 0.5rem;
+      font-variation-settings: "opsz" 144, "SOFT" 30;
+    }
+    .doc-card p {
+      font-family: var(--font-body);
+      font-size: 0.875rem;
+      color: var(--ink-secondary);
+      line-height: 1.5;
+      margin: 0;
+      flex: 1;
+    }
+    .doc-card .doc-path {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--ink-muted);
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px dashed var(--rule);
+    }
+
+    /* ===================================================================
+       Contribute section
+       =================================================================== */
+    .contribute {
+      background: linear-gradient(180deg, var(--bg-paper) 0%, #F2EFE8 100%);
+    }
+    .contribute-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2rem;
+      margin-top: 2rem;
+    }
+    @media (min-width: 880px) {
+      .contribute-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .contrib {
+      background: var(--bg-elevated);
+      border: 1px solid var(--rule);
+      padding: 2rem;
+      border-radius: 8px;
+    }
+    .contrib .contrib-num {
+      font-family: var(--font-display);
+      font-size: 3rem;
+      line-height: 1;
+      color: var(--amber);
+      font-variation-settings: "opsz" 144, "SOFT" 80, "WONK" 1;
+      margin: 0 0 1rem;
+      font-style: italic;
+    }
+    .contrib h3 {
+      font-family: var(--font-display);
+      font-size: 1.375rem;
+      font-weight: 400;
+      margin: 0 0 0.75rem;
+      font-variation-settings: "opsz" 144, "SOFT" 40;
+    }
+    .contrib p {
+      font-size: 0.9375rem;
+      color: var(--ink-secondary);
+      line-height: 1.6;
+      margin: 0 0 1.25rem;
+    }
+    .contrib .contrib-link {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: var(--amber-deep);
+      border-bottom: 1px solid rgba(194, 136, 94, 0.4);
+      padding-bottom: 1px;
+    }
+    .contrib .contrib-link:hover {
+      color: var(--ink-primary);
+      border-bottom-color: var(--ink-primary);
+    }
+
+    /* ===================================================================
+       License / authorship
+       =================================================================== */
+    .license-box {
+      background: var(--bg-elevated);
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      padding: 2rem;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+    @media (min-width: 760px) {
+      .license-box { grid-template-columns: 1fr 1fr; gap: 3rem; }
+    }
+    .license-box h3 {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 400;
+      margin: 0 0 0.75rem;
+      font-variation-settings: "opsz" 144;
+    }
+    .license-box p {
+      font-size: 0.9375rem;
+      line-height: 1.6;
+      color: var(--ink-secondary);
+      margin: 0;
+    }
+    .license-box .badge {
+      display: inline-block;
+      padding: 0.3rem 0.7rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      background: rgba(194, 136, 94, 0.12);
+      color: var(--amber-deep);
+      border-radius: 4px;
+      margin-bottom: 0.75rem;
+    }
+
+    /* ===================================================================
+       Footer (shared)
+       =================================================================== */
+    .site-footer {
+      background: var(--bg-deep);
+      color: var(--ink-inverse);
+      padding: 3rem 0 1.5rem;
+      margin-top: 5rem;
+    }
+    .footer-inner { max-width: 1080px; margin: 0 auto; padding: 0 1.5rem; }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2.5rem;
+      margin-bottom: 2.5rem;
+    }
+    @media (min-width: 760px) {
+      .footer-grid { grid-template-columns: 2fr 1fr 1fr; }
+    }
+    .footer-brand {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      margin-bottom: 0.75rem;
+      font-variation-settings: "opsz" 144;
+    }
+    .footer-brand .rune {
+      color: var(--amber);
+      font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display);
+    }
+    .footer-tagline {
+      font-family: var(--font-display);
+      font-style: italic;
+      color: rgba(250, 250, 247, 0.55);
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      max-width: 36ch;
+      font-variation-settings: "opsz" 30, "SOFT" 80, "WONK" 1;
+      margin: 0;
+    }
+    .footer-grid h5 {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(250, 250, 247, 0.5);
+      margin: 0 0 1rem;
+      font-weight: 500;
+    }
+    .footer-grid ul {
+      list-style: none; padding: 0; margin: 0;
+      display: flex; flex-direction: column; gap: 0.5rem;
+      font-size: 0.875rem;
+    }
+    .footer-grid a {
+      color: rgba(250, 250, 247, 0.75);
+      transition: color 0.18s;
+    }
+    .footer-grid a:hover { color: var(--ink-inverse); }
+    .footer-bottom {
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      padding-top: 1.25rem;
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: rgba(250, 250, 247, 0.4);
+      letter-spacing: 0.04em;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="favicon-dark.svg" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="apple-touch-icon" href="apple-touch-icon.svg">
+  <meta name="theme-color" content="#FAFAF7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E1A2B" media="(prefers-color-scheme: dark)">
+</head>
+<body>
+
+<a href="#main" class="skip-link">Skip to main content</a>
+
+<header class="site-header">
+  <div class="header-inner">
+    <a href="index.html" class="brand">
+      <span class="rune" aria-hidden="true">ᚴ</span>
+      <span>Kern</span>
+      <span class="where">source</span>
+    </a>
+    <nav class="header-nav" aria-label="Sections">
+      <a href="index.html">Home</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="use-cases.html">Use cases</a>
+      <a href="whitepaper.html">Whitepaper</a>
+      <a href="manifesto.html">Manifesto</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="index.html#subscribe">Follow</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ====================================================================
+     COVER
+     ==================================================================== -->
+<section class="cover">
+  <div class="cover-inner">
+    <p class="cover-eyebrow">Repository · Apache-2.0 · v1.1 release candidate</p>
+    <h1>The source. <em>Read it. Run it. Audit it.</em></h1>
+    <p class="cover-lead">
+      Kern is an open protocol. The reference implementation in Python is ~33 000 lines of code with 692 tests passing, ready to clone, run, and review. Every design decision is in the code. The whitepaper is the spec; the repository is the implementation.
+    </p>
+    <div class="cover-actions">
+      <a href="https://github.com/vaneeckhoutnicolas/kern" class="btn-primary" target="_blank" rel="noopener">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2C5.67 21 4.97 18.96 4.97 18.96c-.55-1.4-1.34-1.77-1.34-1.77-1.1-.75.08-.73.08-.73 1.21.09 1.85 1.24 1.85 1.24 1.08 1.85 2.83 1.32 3.52 1.01.11-.78.42-1.32.76-1.62-2.66-.3-5.46-1.33-5.46-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.53.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.65.24 2.87.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22 0 1.6-.01 2.89-.01 3.29 0 .31.21.67.8.56C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/>
+        </svg>
+        View on GitHub
+      </a>
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-developer.md" class="btn-ghost" target="_blank" rel="noopener">
+        Setup developer guide →
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================================
+     STATS STRIP
+     ==================================================================== -->
+<div class="container">
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Lines of code</div>
+      <div class="stat-value">~<em>33</em>k</div>
+      <div class="stat-sub">Pure Python, no dependencies on other chains</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Tests passing</div>
+      <div class="stat-value"><em>692</em></div>
+      <div class="stat-sub">Unit, integration, property-based</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Markdown specs</div>
+      <div class="stat-value"><em>55</em></div>
+      <div class="stat-sub">Architecture, setup, protocol details</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">License</div>
+      <div class="stat-value" style="font-family: var(--font-mono); font-size: 1.25rem;">Apache-2.0</div>
+      <div class="stat-sub">Forever. No asterisks.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ====================================================================
+     QUICK START
+     ==================================================================== -->
+<section>
+  <div class="container">
+    <p class="section-eyebrow">Five minutes to a running node</p>
+    <div class="quickstart-grid">
+      <div>
+        <h2>Run Kern locally in three commands.</h2>
+        <p class="lead">
+          Clone the repository, install the explorer extras, run the tests, and start a local devnet with three validators. Open Heimdall in your browser and watch blocks arrive in real time.
+        </p>
+        <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-developer.md" class="btn-ghost" target="_blank" rel="noopener">Read the full developer guide →</a>
+      </div>
+
+      <div class="terminal">
+        <div class="terminal-bar">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="label">~/code · kern · bash</span>
+        </div>
+        <div class="terminal-body"><span class="comment"># Clone the reference implementation</span>
+<span class="prompt">$</span> <span class="cmd">git clone https://github.com/vaneeckhoutnicolas/kern</span>
+<span class="prompt">$</span> <span class="cmd">cd kern</span>
+
+<span class="comment"># Install with dev + explorer extras</span>
+<span class="prompt">$</span> <span class="cmd">pip install -e ".[dev,explorer]"</span>
+
+<span class="comment"># Run the full test suite</span>
+<span class="prompt">$</span> <span class="cmd">pytest tests/</span>
+<span class="ok">  692 passed, 2 skipped in 18.87s</span>
+
+<span class="comment"># Start a 3-validator local devnet</span>
+<span class="prompt">$</span> <span class="cmd">python networks/devnet_bootstrap.py</span>
+
+<span class="comment"># In another terminal, start Heimdall (explorer)</span>
+<span class="prompt">$</span> <span class="cmd">heimdall</span>
+<span class="ok">  → http://127.0.0.1:8800</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================================
+     REPO TREE
+     ==================================================================== -->
+<section class="tree-section">
+  <div class="container">
+    <p class="section-eyebrow">What you'll find</p>
+    <h2>The repository, top-down.</h2>
+    <p class="lead">Two top-level packages: the protocol (<span class="mono" style="font-family: var(--font-mono); color: var(--ink-inverse);">kern/</span>) and the explorer (<span class="mono" style="font-family: var(--font-mono); color: var(--ink-inverse);">kern_explorer/</span>). Everything else is documentation, setup scripts, or tests.</p>
+
+    <div class="tree-grid">
+      <pre class="tree">kern/
+├── <span class="dir">kern/</span>                       <span class="note"># Core protocol (L1)</span>
+│   ├── crypto.py               <span class="note"># Ed25519, blake2b, base58check</span>
+│   ├── transaction.py          <span class="note"># 11 OpKinds incl. attestations</span>
+│   ├── block.py                <span class="note"># BlockHeader, merkle root</span>
+│   ├── chain.py                <span class="note"># State machine + governance + delegation</span>
+│   ├── consensus.py            <span class="note"># Tenderbake-style BFT</span>
+│   ├── network.py              <span class="note"># asyncio P2P gossip</span>
+│   ├── rpc.py                  <span class="note"># JSON-over-HTTP + /metrics</span>
+│   ├── storage.py              <span class="note"># SQLite-backed persistence</span>
+│   ├── rollup.py               <span class="note"># Optimistic rollup</span>
+│   ├── governance.py           <span class="note"># Dual-track + equivocation</span>
+│   ├── <span class="star">attestation.py</span>           <span class="note">★ v1.1-rc slashable primitive</span>
+│   ├── <span class="star">zk_claims.py</span>             <span class="note">★ v1.1-rc Groth16 / BN254</span>
+│   ├── evm/                    <span class="note"># EVM (for rollups)</span>
+│   └── <span class="dir">skald/</span>                   <span class="note"># Skald language + 10 templates</span>
+├── <span class="dir">kern_explorer/</span>              <span class="note"># Heimdall — explorer + monitoring</span>
+│   ├── app.py                  <span class="note"># FastAPI: 19 HTML + 12 JSON routes</span>
+│   ├── indexer.py              <span class="note"># Async chain follower</span>
+│   ├── templates/              <span class="note"># 19 Jinja2 templates</span>
+│   └── monitoring/             <span class="note"># 7 Grafana dashboards + alerts</span>
+├── <span class="dir">docs/</span>                       <span class="note"># 55 markdown specs and guides</span>
+├── <span class="dir">tests/</span>                      <span class="note"># 692 tests</span>
+├── <span class="dir">scripts/</span>                    <span class="note"># keygen, genesis, wallet CLI</span>
+├── <span class="dir">networks/</span>                   <span class="note"># devnet bootstrap</span>
+├── pyproject.toml
+└── README.md</pre>
+
+      <div class="tree-aside">
+        <h3>Two things this repository is not</h3>
+        <p>
+          It is <em>not</em> a fork of another L1. Every line of Python was written for Kern, with one external dependency (<span style="font-family: var(--font-mono);">py_ecc</span> for BN128 curve, imported as a package). The originality is documented and audited per file via SPDX headers and authorship lines.
+        </p>
+        <p>
+          It is <em>not</em> a marketing repository. There is no roadmap of vapourware features. What is in <span style="font-family: var(--font-mono);">main</span> is what runs.
+        </p>
+        <ul>
+          <li>Every <span style="font-family: var(--font-mono);">.py</span> file carries the SPDX header and founder attribution line — verified by the originality test suite</li>
+          <li>The whitepaper is in <span style="font-family: var(--font-mono);">docs/whitepaper.md</span> (source of the rendered version on this site)</li>
+          <li>The roadmap is in <span style="font-family: var(--font-mono);">docs/roadmap.md</span> and <span style="font-family: var(--font-mono);">docs/post-code-roadmap.md</span> — honest about what's done vs. planned</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================================
+     DOCS INDEX
+     ==================================================================== -->
+<section>
+  <div class="container">
+    <p class="section-eyebrow">Documentation</p>
+    <h2>Find the guide for your role.</h2>
+    <p class="lead">Setup guides are organised by who's reading. Each one is precise enough that a competent practitioner can follow it end-to-end with copy-paste commands. Click through to the rendered version on GitHub.</p>
+
+    <div class="docs-grid">
+
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-developer.md" class="doc-card" target="_blank" rel="noopener">
+        <div class="doc-kind">For developers</div>
+        <h3>Setup — Developer</h3>
+        <p>Set up your local dev environment, run the test suite, build a contract, contribute to the core.</p>
+        <div class="doc-path">docs/setup-developer.md</div>
+      </a>
+
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-dapp-developer.md" class="doc-card" target="_blank" rel="noopener">
+        <div class="doc-kind">For dApp developers</div>
+        <h3>Setup — dApp developer</h3>
+        <p>Write and originate Skald contracts. Use the v1.1-rc templates (STO, PGF, oracle) as a starting point.</p>
+        <div class="doc-path">docs/setup-dapp-developer.md</div>
+      </a>
+
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-validator.md" class="doc-card" target="_blank" rel="noopener">
+        <div class="doc-kind">For validators</div>
+        <h3>Setup — Validator</h3>
+        <p>Run a Kern validator: hardware, keys, monitoring, slashing avoidance, governance participation.</p>
+        <div class="doc-path">docs/setup-validator.md</div>
+      </a>
+
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-delegator.md" class="doc-card" target="_blank" rel="noopener">
+        <div class="doc-kind">For delegators</div>
+        <h3>Setup — Delegator</h3>
+        <p>Delegate to a validator without giving up custody, Liquid PoS. Check rewards via Heimdall.</p>
+        <div class="doc-path">docs/setup-delegator.md</div>
+      </a>
+
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-heimdall-operator.md" class="doc-card" target="_blank" rel="noopener">
+        <div class="doc-kind">For operators</div>
+        <h3>Setup — Heimdall operator</h3>
+        <p>Run the official block explorer + monitoring stack. Production deployment patterns included.</p>
+        <div class="doc-path">docs/setup-heimdall-operator.md</div>
+      </a>
+
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-rollup-operator.md" class="doc-card" target="_blank" rel="noopener">
+        <div class="doc-kind">For rollup operators</div>
+        <h3>Setup — Rollup operator</h3>
+        <p>Operate an optimistic rollup anchored to Kern L1. EVM-compatible sequencer setup.</p>
+        <div class="doc-path">docs/setup-rollup-operator.md</div>
+      </a>
+
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-explorer-ops.md" class="doc-card" target="_blank" rel="noopener">
+        <div class="doc-kind">For infrastructure</div>
+        <h3>Setup — Explorer ops</h3>
+        <p>Run public infrastructure: read-only node behind reverse proxy, rate limits, HTTPS. Generic to any explorer.</p>
+        <div class="doc-path">docs/setup-explorer-ops.md</div>
+      </a>
+
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-foundation.md" class="doc-card" target="_blank" rel="noopener">
+        <div class="doc-kind">For Foundation</div>
+        <h3>Setup — Foundation</h3>
+        <p>Incorporate the Kern Foundation. Multisig, treasury, genesis ceremony.</p>
+        <div class="doc-path">docs/setup-foundation.md</div>
+      </a>
+
+      <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-auditor.md" class="doc-card" target="_blank" rel="noopener">
+        <div class="doc-kind">For auditors</div>
+        <h3>Setup — Auditor</h3>
+        <p>Engagement guide for security audit firms reviewing Kern v1.1-rc. Scope, deliverables, references.</p>
+        <div class="doc-path">docs/setup-auditor.md</div>
+      </a>
+
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================================
+     CONTRIBUTE
+     ==================================================================== -->
+<section class="contribute">
+  <div class="container">
+    <p class="section-eyebrow">Contribute</p>
+    <h2>Three ways to engage with the project.</h2>
+    <p class="lead">There is a contributors program with KRN allocations earmarked for sustained work in any of these three directions. See <span style="font-family: var(--font-mono); font-size: 0.875em;">docs/contributors-program.md</span> for the criteria.</p>
+
+    <div class="contribute-grid">
+      <div class="contrib">
+        <div class="contrib-num">01</div>
+        <h3>Code</h3>
+        <p>Core protocol, Skald language enhancements, Heimdall improvements (sessions 2-4 of the Heimdall plan are still open), additional Skald templates for new institutional use cases. The 4 sessions in the Heimdall delivery plan are all candidates for further work.</p>
+        <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/contributors-program.md" class="contrib-link" target="_blank" rel="noopener">contributors-program.md →</a>
+      </div>
+
+      <div class="contrib">
+        <div class="contrib-num">02</div>
+        <h3>Audit</h3>
+        <p>Independent review of the v1.1-rc reference implementation. The internal review found and fixed seven issues; a professional audit is the next gating item before Yggdrasil testnet. Firms welcome to engage.</p>
+        <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-auditor.md" class="contrib-link" target="_blank" rel="noopener">setup-auditor.md →</a>
+      </div>
+
+      <div class="contrib">
+        <div class="contrib-num">03</div>
+        <h3>Use cases</h3>
+        <p>If you are an institution with a real STO, PGF round, oracle network, or attestation use case you want to deploy, reach out. The v1.1-rc verticals exist to be used; pilots will shape v1.2 priorities.</p>
+        <a href="manifesto.html#section-viii" class="contrib-link">Read the invitation in the manifesto →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================================
+     LICENSE
+     ==================================================================== -->
+<section>
+  <div class="container">
+    <p class="section-eyebrow">Licensing & authorship</p>
+    <h2>Open source, attributed forever.</h2>
+
+    <div class="license-box">
+      <div>
+        <span class="badge">Apache-2.0</span>
+        <h3>The reference implementation</h3>
+        <p>
+          Every Python file in <span style="font-family: var(--font-mono); font-size: 0.9em;">kern/</span> and <span style="font-family: var(--font-mono); font-size: 0.9em;">kern_explorer/</span> is published under Apache-2.0. You can use it, modify it, link to it from proprietary software, redistribute it. There is no copyleft requirement: you are not obliged to open-source your own code. The conditions are the usual permissive ones — retain the copyright and license notices, include the license and NOTICE file, and state significant changes. Apache-2.0 also grants an express patent license, which is why it is a common choice for protocols that want broad institutional and commercial adoption.
+        </p>
+      </div>
+      <div>
+        <span class="badge">CC-BY-SA-4.0</span>
+        <h3>Documentation, whitepaper, manifesto</h3>
+        <p>
+          Markdown documentation, the whitepaper, and the manifesto are under Creative Commons Attribution-ShareAlike 4.0. You can quote, translate, and adapt them as long as you credit the author and preserve the license. Translations and adaptations are explicitly encouraged. The author of the original work — Nicolas Van Eeckhout — is named in every file, and Belgian moral rights law (Article XI.165, Code of Economic Law) protects this attribution.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <span class="rune" aria-hidden="true">ᚴ</span> Kern
+        </div>
+        <p class="footer-tagline">
+          The kernel. The grain of state that endures.
+        </p>
+      </div>
+      <div>
+        <h5>Read</h5>
+        <ul>
+          <li><a href="index.html">Landing page</a></li>
+          <li><a href="whitepaper.html">Whitepaper</a></li>
+          <li><a href="manifesto.html">Manifesto</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Source</h5>
+        <ul>
+          <li><a href="https://github.com/vaneeckhoutnicolas/kern" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://github.com/vaneeckhoutnicolas/kern/issues" target="_blank" rel="noopener">Issues</a></li>
+          <li><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/LICENSE" target="_blank" rel="noopener">License</a></li>
+          <li><a href="https://www.linkedin.com/in/vaneeckhout/" target="_blank" rel="noopener">Follow on LinkedIn</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors</span>
+      <span>Reference impl: Apache-2.0 · Docs: CC-BY-SA-4.0 · <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/disclaimer.md" target="_blank" rel="noopener" style="color:inherit;border-bottom:1px solid rgba(255,255,255,0.2);">Disclaimer</a></span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

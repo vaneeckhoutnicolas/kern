@@ -1,0 +1,77 @@
+{
+  "_comment": "SPDX-License-Identifier: Apache-2.0  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors",
+  "description": "Oracle network health: feeders, circuit breakers, anomaly rate. Vertical-3 surveillance.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_oracle_feeds_count", "refId": "A"}],
+      "title": "Oracle feeds",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_oracle_feeds_circuit_breaker_tripped", "refId": "A"}],
+      "title": "Circuit breakers tripped",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "orange", "value": 10}, {"color": "red", "value": 100}]}}},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_oracle_anomalies_total", "refId": "A"}],
+      "title": "Total anomalies recorded",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_oracle_feeders_total", "refId": "A"}],
+      "title": "Sum of feeder slots",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Anomalies recorded per minute. Anomalies that don't immediately trip a circuit breaker still warrant investigation if persistent.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}, "unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 5,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["sum", "max"], "showLegend": true}},
+      "targets": [{"expr": "rate(kern_oracle_anomalies_total[1m]) * 60", "legendFormat": "anomalies/min", "refId": "A"}],
+      "title": "Anomaly rate (per minute)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Number of feeds with circuit breakers tripped. ANY non-zero value warrants paging the on-call operator.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "custom": {"drawStyle": "bars", "fillOpacity": 100, "lineWidth": 1}}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 6,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"], "showLegend": true}},
+      "targets": [{"expr": "kern_oracle_feeds_circuit_breaker_tripped", "legendFormat": "tripped count", "refId": "A"}],
+      "title": "Circuit breaker history",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["kern", "oracles", "v1.1-rc"],
+  "templating": {"list": [{"current": {"text": "Prometheus", "value": "Prometheus"}, "label": "Datasource", "name": "DS_PROMETHEUS", "query": "prometheus", "refresh": 1, "type": "datasource"}]},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Kern — Oracle networks",
+  "uid": "kern-oracles",
+  "version": 1
+}

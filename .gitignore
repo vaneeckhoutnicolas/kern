@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+
+# Node data dirs (runtime state)
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Secrets
+keys/
+*.key
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+site/
+networks/devnet/

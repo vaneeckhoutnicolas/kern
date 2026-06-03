@@ -1,0 +1,91 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Oracle health — Heimdall{% endblock %}
+{% block content %}
+
+<section class="mb-6">
+  <h1 class="text-2xl font-bold">Oracle network health</h1>
+  <p class="text-sm text-gray-600 dark:text-gray-400 mt-1 max-w-3xl">
+    Oracle feeds whose feeders post attestations slashable on equivocation.
+    A tripped circuit breaker indicates aggregator-detected anomalies;
+    feeder stake and reputation evolve under the slashable attestation primitive.
+    See <a href="/oracle-network.md" class="text-kern-accent hover:underline">the spec</a>.
+  </p>
+</section>
+
+<section class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">Oracle feeds</div>
+    <div class="text-2xl font-bold mt-1">{{ summary.total }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">Healthy feeds</div>
+    <div class="text-2xl font-bold mt-1 text-emerald-600">{{ summary.healthy }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">Circuit breakers tripped</div>
+    <div class="text-2xl font-bold mt-1 {% if summary.tripped > 0 %}text-red-600{% endif %}">{{ summary.tripped }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">Anomalies recorded</div>
+    <div class="text-2xl font-bold mt-1 {% if summary.total_anomalies > 0 %}text-amber-600{% endif %}">{{ summary.total_anomalies }}</div>
+  </div>
+</section>
+
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+      <tr>
+        <th class="text-left p-2">Oracle</th>
+        <th class="text-left p-2">Kind</th>
+        <th class="text-right p-2">Feeders</th>
+        <th class="text-right p-2">Latest value</th>
+        <th class="text-right p-2">Updated at</th>
+        <th class="text-left p-2">Status</th>
+        <th class="text-right p-2">Anomalies</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for c in oracles %}
+      <tr class="border-t border-gray-100 dark:border-kern-700">
+        <td class="p-2"><a href="/contract/{{ c.address }}" class="hash truncate-hash" title="{{ c.address }}">{{ c.address }}</a></td>
+        <td class="p-2">
+          <span class="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300">{{ c.skald_template }}</span>
+          {% if c.vertical_summary and c.vertical_summary.get('base_asset') %}
+            <span class="text-xs ml-1">{{ c.vertical_summary.base_asset }}/{{ c.vertical_summary.quote_asset }}</span>
+          {% endif %}
+        </td>
+        <td class="p-2 text-right">{{ c.vertical_summary.get('feeder_count', 0) if c.vertical_summary else 0 }}</td>
+        <td class="p-2 text-right font-mono text-xs">
+          {% if c.vertical_summary and c.vertical_summary.get('human_price') is defined %}
+            {{ '%.4f'|format(c.vertical_summary.human_price) }}
+          {% elif c.vertical_summary %}
+            {{ c.vertical_summary.get('latest_value', '—') }}
+          {% else %}—{% endif %}
+        </td>
+        <td class="p-2 text-right">
+          {% if c.vertical_summary and c.vertical_summary.get('latest_aggregation_level') %}
+            <a href="/block/{{ c.vertical_summary.latest_aggregation_level }}" class="text-kern-accent hover:underline">{{ c.vertical_summary.latest_aggregation_level }}</a>
+          {% else %}—{% endif %}
+        </td>
+        <td class="p-2">
+          {% if c.vertical_summary and c.vertical_summary.get('circuit_breaker_tripped') %}
+            <span class="text-xs px-2 py-0.5 rounded bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300">🚨 TRIPPED</span>
+          {% else %}
+            <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">✓ healthy</span>
+          {% endif %}
+        </td>
+        <td class="p-2 text-right">
+          {% set ac = c.vertical_summary.get('anomaly_count', 0) if c.vertical_summary else 0 %}
+          <span class="{% if ac > 0 %}text-amber-600 font-bold{% endif %}">{{ ac }}</span>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="p-4 text-center text-gray-500">No oracle feeds deployed yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

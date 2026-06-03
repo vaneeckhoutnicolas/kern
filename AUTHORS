@@ -1,0 +1,71 @@
+# AUTHORS
+
+This file recognizes the people who designed and built Kern.
+
+---
+
+## Founder and original author
+
+**Nicolas Van Eeckhout** — founder, lead architect, and original author of the Kern protocol and reference implementation. Designed the dual-track on-chain governance, the integration of Ethereum-style developer ecosystem with Liquid Proof-of-Stake delegation, the Skald contract language with declared invariants, the multi-frame EVM with bisection fraud proofs, and the v1.0 economy structure (100M KRN, Ethereum-template distribution with modern vesting).
+
+The repository, every commit, and the v1.0 design decisions originate with Nicolas Van Eeckhout. The Norse-themed naming convention (Kern, Skald, Yggdrasil, Midgard) is part of the original conception.
+
+Background: Nicolas is a Tezos protocol contributor and Digital Domain Manager at Orange Belgium, bringing 27 years of telecommunications and distributed systems experience to the Kern design.
+
+---
+
+## Reference implementation
+
+The Python reference implementation at v1.0-rc was written under Nicolas's direction and design specification. All design decisions trace to Nicolas; the implementation realizes them.
+
+---
+
+## Contributors
+
+This section will be populated as the project receives external contributions. Per the [contributors program](docs/contributors-program.md), pre-mainnet contributors are recognized with allocations from the 3M KRN early contributors pool, with individual vesting schedules.
+
+Format for contributor entries (alphabetical by surname, populated as contributions are merged):
+
+```
+Name <email or github handle> — area of contribution (e.g., "audit work
+on the governance state machine") — KRN allocation X (vesting Y).
+```
+
+To be a recognized contributor:
+
+1. Submit a substantive contribution (code, audit, documentation, tooling, ecosystem integration).
+2. The contribution is merged or formally accepted.
+3. The Foundation publishes an allocation proposal naming the contributor and the grant size.
+4. After the 14-day public comment period, the entry is added here and the vesting begins.
+
+See [docs/contributors-program.md](docs/contributors-program.md) for the full process.
+
+---
+
+## License and originality
+
+The Kern reference implementation is licensed under [Apache-2.0](LICENSE). Every Python file in this repository carries a `SPDX-License-Identifier: Apache-2.0` header and a copyright line crediting "Nicolas Van Eeckhout (founder) and Kern contributors".
+
+The implementation is **original work**, not a fork. Where external public specifications are cited (Ethereum EIPs, the Yellow Paper, the BN128/BN254 curve parameters) those are public standards anyone may implement. Where design patterns are credited to Tezos (Liquid PoS delegation, dual-track governance, baker terminology), those are noted in code comments and documentation as design *influence*, not copied code.
+
+The single external library dependency at v1.0-rc is `py_ecc` (Ethereum Foundation's reference Python BN128 library, MIT-licensed) used for the BN254 elliptic-curve pairing precompile. This is imported and called via Python's import mechanism, not vendored.
+
+For a more detailed account of originality and attribution policy, see [docs/originality-and-attribution.md](docs/originality-and-attribution.md).
+
+---
+
+## Acknowledgments
+
+Kern's design draws design inspiration — not code — from several earlier protocols. These are acknowledged with gratitude:
+
+- **Bitcoin** (Satoshi Nakamoto, 2008) — for the original proof-of-work blockchain design and the address encoding patterns Kern reuses.
+- **Ethereum** (Vitalik Buterin et al., 2014) — for the EVM architecture, the gas market, the EIP standards process, and the public-sale-led genesis distribution model that Kern follows.
+- **Tezos** (L.M. Goodman / Arthur Breitman / Kathleen Breitman, 2014) — for Liquid Proof-of-Stake, baking delegation without LSTs, and on-chain self-amending governance, all of which Kern adopts.
+- **Cosmos** — for the validator set / unbonding / slashing patterns that informed Kern's specifics.
+- **Optimism Collective** — for the optimistic rollup model and the Retroactive Public Goods Funding mechanism that Kern plans to adopt in Year 2.
+
+Citing inspiration is *not* a license obligation; it is academic and professional courtesy.
+
+---
+
+*This file is the canonical record of authorship. Modifications require a pull request co-signed by Nicolas Van Eeckhout (or the founder's designated representative after a future succession event).*

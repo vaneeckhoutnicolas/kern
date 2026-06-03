@@ -1,0 +1,79 @@
+{
+  "_comment": "SPDX-License-Identifier: Apache-2.0  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors",
+  "description": "Public goods funding rounds: QF contributors, raised, RPGF nominations.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_pgf_quadratic_funding_projects", "refId": "A"}],
+      "title": "Quadratic Funding projects",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_pgf_quadratic_funding_contributors_total", "refId": "A"}],
+      "title": "QF contributors total",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_pgf_quadratic_funding_raised_mukrn / 1000000", "legendFormat": "KRN raised", "refId": "A"}],
+      "title": "QF total raised (KRN, pre-match)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_pgf_retroactive_nominations", "refId": "A"}],
+      "title": "RPGF nominations",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Per-round QF momentum: contributors growth vs raised growth. A healthy round shows both lines moving together — broad participation supplementing the matching pool.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 5,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["last", "max"], "showLegend": true}},
+      "targets": [
+        {"expr": "kern_pgf_quadratic_funding_contributors_total", "legendFormat": "Contributors", "refId": "A"},
+        {"expr": "kern_pgf_quadratic_funding_raised_mukrn / 1000000", "legendFormat": "Raised (KRN)", "refId": "B"}
+      ],
+      "title": "QF momentum: contributors and raised over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Average contribution per contributor in KRN. A high value means few large contributors (Sybil risk if not personhood-attested); a low value means broad small contributions (the QF ideal).",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}, "unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 6,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean"], "showLegend": true}},
+      "targets": [{"expr": "(kern_pgf_quadratic_funding_raised_mukrn / 1000000) / (kern_pgf_quadratic_funding_contributors_total > 0 OR on() vector(1))", "legendFormat": "Avg contribution (KRN)", "refId": "A"}],
+      "title": "Avg contribution per contributor (signal for Sybil patterns)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "tags": ["kern", "public-goods", "pgf", "v1.1-rc"],
+  "templating": {"list": [{"current": {"text": "Prometheus", "value": "Prometheus"}, "label": "Datasource", "name": "DS_PROMETHEUS", "query": "prometheus", "refresh": 1, "type": "datasource"}]},
+  "time": {"from": "now-24h", "to": "now"},
+  "title": "Kern — Public goods funding",
+  "uid": "kern-pgf",
+  "version": 1
+}

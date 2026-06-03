@@ -1,0 +1,94 @@
+{
+  "_comment": "SPDX-License-Identifier: Apache-2.0  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors",
+  "description": "Slashable attestation registry: active counts, bond locked, slashing events. The vertical-1 surveillance dashboard.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "blue", "value": null}]}}},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_attestations_active", "refId": "A"}],
+      "title": "Active attestations",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_attestations_total_bond_locked_mukrn / 1000000", "refId": "A", "legendFormat": "KRN locked"}],
+      "title": "Total bond locked (KRN)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}, {"color": "red", "value": 10}]}}},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_attestation_slashings_total", "refId": "A"}],
+      "title": "Slashing events (lifetime)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_zk_attestations_total", "refId": "A"}],
+      "title": "ZK-claim attestations",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Active attestations per schema. Discovers which institutions are using Kern as a claim registry.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "stacking": {"mode": "normal"}}}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 5,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"], "showLegend": true}},
+      "targets": [{"expr": "kern_attestations_active_by_schema", "legendFormat": "{{schema_id}}", "refId": "A"}],
+      "title": "Active attestations per schema",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Rate of slashing-on-equivocation events. Any spike is an incident — investigate the slashed_amount and the schema.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1}, "unit": "ops"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 6,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["sum"], "showLegend": true}},
+      "targets": [{"expr": "rate(kern_attestation_slashings_total[15m])", "legendFormat": "slashings/s", "refId": "A"}],
+      "title": "Slashings per 15-min window",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Cumulative slashed amount vs amount burned. Whistleblower rewards = slashed - burned.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 20, "lineWidth": 2}, "unit": "short"}},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "id": 7,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"], "showLegend": true}},
+      "targets": [
+        {"expr": "kern_attestation_slashed_amount_total_mukrn / 1000000", "legendFormat": "Slashed (KRN)", "refId": "A"},
+        {"expr": "kern_attestation_burned_amount_total_mukrn / 1000000", "legendFormat": "Burned (KRN)", "refId": "B"},
+        {"expr": "kern_attestation_whistleblower_rewards_total_mukrn / 1000000", "legendFormat": "Whistleblower rewards (KRN)", "refId": "C"}
+      ],
+      "title": "Slashing economy: slashed / burned / whistleblower rewards (cumulative KRN)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["kern", "attestations", "v1.1-rc"],
+  "templating": {"list": [{"current": {"text": "Prometheus", "value": "Prometheus"}, "label": "Datasource", "name": "DS_PROMETHEUS", "query": "prometheus", "refresh": 1, "type": "datasource"}]},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Kern — Attestation registry",
+  "uid": "kern-attestations",
+  "version": 1
+}

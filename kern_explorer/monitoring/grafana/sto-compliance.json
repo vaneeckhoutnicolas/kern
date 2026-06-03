@@ -1,0 +1,89 @@
+{
+  "_comment": "SPDX-License-Identifier: Apache-2.0  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors",
+  "description": "STO compliance state across all originated tokenized-securities templates (MiFID II / AIFMD / Prospectus Regulation). Regulator-facing dashboard.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_sto_contracts_count", "refId": "A"}],
+      "title": "STO contracts deployed",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}]}}},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_sto_contracts_compliant", "refId": "A"}],
+      "title": "Currently compliant",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_sto_contracts_count - kern_sto_contracts_compliant", "refId": "A"}],
+      "title": "Non-compliant (require attention)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}}},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "auto"},
+      "targets": [{"expr": "kern_sto_contracts_trading_paused", "refId": "A"}],
+      "title": "Trading paused (active intervention)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "STO contracts by template. STO-startup-equity is the simplest path; STO-institutional-fund layers in AIFMD; STO-real-estate adds notary attestations.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 20, "lineWidth": 2, "stacking": {"mode": "normal"}}}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "id": 5,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean"], "showLegend": true}},
+      "targets": [{"expr": "kern_originated_contracts_by_template{template=~\"sto-.*\"}", "legendFormat": "{{template}}", "refId": "A"}],
+      "title": "STO contracts by template (over time)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Total supply issued across all STOs (sum of token units, not mukrn). For internal use; the per-contract drill-down is in /sto-dashboard.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}, "unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "id": 6,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["last"], "showLegend": true}},
+      "targets": [{"expr": "kern_sto_total_supply_issued_units", "legendFormat": "Total supply issued", "refId": "A"}],
+      "title": "Total supply issued across STOs",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Compliance pass rate. 100% = every deployed STO satisfies its template invariants. <100% = an incident or test deployment.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.9}, {"color": "green", "value": 1}]}, "unit": "percentunit"}},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "id": 7,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "min"], "showLegend": true}},
+      "targets": [{"expr": "kern_sto_contracts_compliant / kern_sto_contracts_count", "legendFormat": "Compliance pass rate", "refId": "A"}],
+      "title": "Compliance pass rate (over time)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "tags": ["kern", "sto", "securities", "v1.1-rc"],
+  "templating": {"list": [{"current": {"text": "Prometheus", "value": "Prometheus"}, "label": "Datasource", "name": "DS_PROMETHEUS", "query": "prometheus", "refresh": 1, "type": "datasource"}]},
+  "time": {"from": "now-24h", "to": "now"},
+  "title": "Kern — STO compliance",
+  "uid": "kern-sto",
+  "version": 1
+}

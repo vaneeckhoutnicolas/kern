@@ -1,0 +1,80 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Schema {{ schema_id }} — Heimdall{% endblock %}
+{% block content %}
+
+<section class="mb-6">
+  <a href="/attestations" class="text-xs text-kern-accent hover:underline">← Attestation registry</a>
+  <h1 class="text-2xl font-bold mt-1">Schema</h1>
+  <p class="font-mono text-base text-gray-700 dark:text-gray-300">{{ schema_id }}</p>
+</section>
+
+<section class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+  <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 p-3">
+    <div class="text-xs text-gray-500 uppercase">Active</div>
+    <div class="text-2xl font-bold mt-1">{{ summary.active }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 p-3">
+    <div class="text-xs text-gray-500 uppercase">Total issued</div>
+    <div class="text-2xl font-bold mt-1">{{ summary.total }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 p-3">
+    <div class="text-xs text-gray-500 uppercase">Bond locked</div>
+    <div class="text-2xl font-bold mt-1 font-mono">{{ summary.bond_locked_krn }} KRN</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 p-3">
+    <div class="text-xs text-gray-500 uppercase">Slashings on this schema</div>
+    <div class="text-2xl font-bold mt-1 {% if summary.slashings > 0 %}text-amber-600{% endif %}">{{ summary.slashings }}</div>
+  </div>
+</section>
+
+<section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div>
+    <h2 class="text-lg font-semibold mb-3">Active attestations under this schema</h2>
+    <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+          <tr><th class="text-left p-2">ID</th><th class="text-left p-2">Issuer</th><th class="text-left p-2">Subject</th><th class="text-right p-2">Bond</th></tr>
+        </thead>
+        <tbody>
+        {% for a in attestations %}
+          <tr class="border-t border-gray-100 dark:border-kern-700">
+            <td class="p-2"><a href="/attestation/{{ a.attestation_id }}" class="hash truncate-hash" title="{{ a.attestation_id }}">{{ a.attestation_id }}</a></td>
+            <td class="p-2"><a href="/account/{{ a.issuer }}" class="hash truncate-hash" title="{{ a.issuer }}">{{ a.issuer }}</a></td>
+            <td class="p-2 truncate-hash" title="{{ a.subject }}">{{ a.subject }}</td>
+            <td class="p-2 text-right font-mono text-xs">{{ a.bond_krn }} KRN</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="p-4 text-center text-gray-500">No active attestations.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div>
+    <h2 class="text-lg font-semibold mb-3">Slashings on this schema</h2>
+    <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+          <tr><th class="text-left p-2">Issuer slashed</th><th class="text-left p-2">Whistleblower</th><th class="text-right p-2">Amount</th><th class="text-right p-2">Block</th></tr>
+        </thead>
+        <tbody>
+        {% for s in slashings %}
+          <tr class="border-t border-gray-100 dark:border-kern-700">
+            <td class="p-2"><a href="/account/{{ s.issuer }}" class="hash truncate-hash" title="{{ s.issuer }}">{{ s.issuer }}</a></td>
+            <td class="p-2"><a href="/account/{{ s.whistleblower }}" class="hash truncate-hash" title="{{ s.whistleblower }}">{{ s.whistleblower }}</a></td>
+            <td class="p-2 text-right font-mono text-amber-600">{{ s.slashed_amount_krn }} KRN</td>
+            <td class="p-2 text-right"><a href="/block/{{ s.block_level }}" class="text-kern-accent hover:underline">{{ s.block_level }}</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="p-4 text-center text-gray-500">No slashings on this schema.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

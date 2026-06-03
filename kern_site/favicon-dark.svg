@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Kern — favicon-dark.svg
+  SPDX-License-Identifier: Apache-2.0
+  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+
+  Dark-mode favicon variant. Same rune (ᚴ Kaun) as favicon.svg, but on a
+  Nordic-night background so it remains visible against dark browser
+  chrome (Safari, Chrome dark mode tab bars).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Kern">
+  <title>Kern</title>
+  <rect x="0" y="0" width="64" height="64" rx="12" ry="12" fill="#0E1A2B"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="11.5" ry="11.5"
+        fill="none" stroke="#16243A" stroke-width="1"/>
+  <g fill="none" stroke="#C2885E" stroke-width="5.5"
+     stroke-linecap="round" stroke-linejoin="round">
+    <line x1="22" y1="12" x2="22" y2="52"/>
+    <line x1="22" y1="32" x2="46" y2="14"/>
+    <line x1="22" y1="32" x2="46" y2="50"/>
+  </g>
+</svg>

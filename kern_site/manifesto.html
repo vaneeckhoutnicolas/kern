@@ -1,0 +1,787 @@
+<!--
+  SPDX-License-Identifier: Apache-2.0 (page chrome) + CC-BY-SA-4.0 (manifesto content)
+  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+
+  Kern — Manifesto.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manifesto — Kern</title>
+  <meta name="description" content="A statement of conviction by Nicolas Van Eeckhout, founder of Kern. Why this protocol exists, what it refuses to be, and what it commits to.">
+  <meta name="author" content="Nicolas Van Eeckhout">
+
+  <meta property="og:title" content="Kern Manifesto">
+  <meta property="og:description" content="EU regulation is the spec sheet. Kern is the implementation.">
+  <meta property="og:type" content="article">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..900,0..100,0..1&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-paper: #FAFAF7;
+      --bg-elevated: #FFFFFF;
+      --bg-deep: #0E1A2B;
+      --bg-deep-soft: #16243A;
+      --ink-primary: #0E1A2B;
+      --ink-secondary: #3D4A5E;
+      --ink-muted: #7A8595;
+      --ink-faint: #B5BDC9;
+      --ink-inverse: #FAFAF7;
+      --rule: #E5E1D8;
+      --rule-strong: #C9C3B5;
+      --amber: #C2885E;
+      --amber-deep: #8E5E3A;
+      --bifrost: #1E3A8A;
+      --moss: #5C7553;
+      --rust: #A24E3C;
+
+      --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+      --font-body:    "Instrument Sans", "Söhne", "Helvetica Neue", system-ui, sans-serif;
+      --font-mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font-display);
+      color: var(--ink-primary);
+      background: var(--bg-paper);
+      font-feature-settings: "kern", "liga";
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    a { color: inherit; text-decoration: none; }
+    ::selection { background: var(--ink-primary); color: var(--bg-paper); }
+
+    .skip-link {
+      position: absolute; left: -9999px;
+      background: var(--ink-primary); color: var(--ink-inverse);
+      padding: 0.5rem 1rem; z-index: 100;
+    }
+    .skip-link:focus { left: 1rem; top: 1rem; }
+
+    /* ===================================================================
+       Header
+       =================================================================== */
+    .site-header {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(250, 250, 247, 0.92);
+      backdrop-filter: saturate(180%) blur(12px);
+      -webkit-backdrop-filter: saturate(180%) blur(12px);
+      border-bottom: 1px solid var(--rule);
+    }
+    .header-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0.85rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1.5rem;
+    }
+    .brand {
+      display: flex; align-items: baseline; gap: 0.55rem;
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      letter-spacing: -0.02em;
+      font-variation-settings: "opsz" 144;
+    }
+    .brand .rune {
+      font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display);
+      font-size: 1.4em; color: var(--amber); transform: translateY(2px);
+    }
+    .brand .where {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin-left: 0.6rem;
+    }
+    .header-nav {
+      display: flex; gap: 1.25rem; align-items: center;
+      font-family: var(--font-body);
+      font-size: 0.875rem;
+      color: var(--ink-secondary);
+    }
+    .header-nav a {
+      text-decoration: none; transition: color 0.18s;
+    }
+    .header-nav a:hover { color: var(--ink-primary); }
+
+    /* ===================================================================
+       Cover
+       =================================================================== */
+    .cover {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 7rem 1.5rem 5rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .cover::before {
+      content: "ᛟ";  /* othala rune — heritage / homeland / sovereignty */
+      position: absolute;
+      top: 30%;
+      left: 50%;
+      transform: translate(-50%, 0);
+      font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display);
+      font-size: clamp(20rem, 35vw, 28rem);
+      color: var(--amber);
+      opacity: 0.04;
+      line-height: 1;
+      pointer-events: none;
+      user-select: none;
+    }
+    .cover > * { position: relative; z-index: 1; }
+    .cover-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin: 0 0 2rem;
+    }
+    .cover h1 {
+      font-family: var(--font-display);
+      font-size: clamp(3.5rem, 9vw, 8rem);
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+      font-weight: 350;
+      font-variation-settings: "opsz" 144, "SOFT" 80, "WONK" 1;
+      margin: 0;
+      color: var(--ink-primary);
+    }
+    .cover h1 em {
+      display: block;
+      font-style: italic;
+      font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1;
+      color: var(--amber-deep);
+    }
+    .cover .meta-line {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-size: 1.125rem;
+      color: var(--ink-muted);
+      margin: 3rem 0 0;
+      font-variation-settings: "opsz" 30, "SOFT" 80, "WONK" 1;
+    }
+    .cover-rule {
+      width: 60px; height: 1px; background: var(--ink-primary);
+      margin: 3.5rem auto 0;
+    }
+
+    /* ===================================================================
+       Article — manifesto layout
+       =================================================================== */
+    .article {
+      max-width: 660px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+      font-family: var(--font-display);
+      font-size: 1.1875rem;
+      line-height: 1.7;
+      color: var(--ink-primary);
+      font-variation-settings: "opsz" 18, "SOFT" 50;
+    }
+    .article p {
+      margin: 0 0 1.5rem;
+    }
+    .article p strong { font-weight: 600; }
+    .article p em {
+      font-style: italic;
+      font-variation-settings: "opsz" 18, "SOFT" 100, "WONK" 1;
+    }
+    .article a {
+      color: var(--amber-deep);
+      border-bottom: 1px solid rgba(194, 136, 94, 0.4);
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .article a:hover {
+      color: var(--ink-primary);
+      border-bottom-color: var(--ink-primary);
+    }
+
+    /* Section markers — Roman numerals, dramatic */
+    .section {
+      padding: 6rem 0 2rem;
+      position: relative;
+    }
+    .section + .section { padding-top: 4rem; }
+    .section h2 {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.24em;
+      text-transform: uppercase;
+      color: var(--amber);
+      font-weight: 500;
+      margin: 0 0 0.4rem;
+    }
+    .section h2 .ord {
+      display: inline-block;
+      font-family: var(--font-display);
+      font-size: 3rem;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      color: var(--amber);
+      font-variation-settings: "opsz" 144, "SOFT" 80, "WONK" 1;
+      vertical-align: middle;
+      margin-right: 1rem;
+      transform: translateY(-2px);
+    }
+    .section h2 .lbl {
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    /* Lead paragraph in each section — slightly larger */
+    .section > p:first-of-type {
+      font-size: 1.25rem;
+      line-height: 1.65;
+    }
+    .section > p:first-of-type::first-letter {
+      font-family: var(--font-display);
+      font-size: 1.1em;
+      font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1;
+    }
+
+    /* List of commitments and refusals */
+    .article ul, .article ol {
+      list-style: none;
+      padding: 0;
+      margin: 1.75rem 0;
+      counter-reset: cmt;
+    }
+    .article ul li, .article ol li {
+      position: relative;
+      padding: 1.25rem 0 1.25rem 0;
+      border-bottom: 1px solid var(--rule);
+    }
+    .article ul li:first-child, .article ol li:first-child {
+      border-top: 1px solid var(--rule);
+    }
+    .article p strong:first-child {
+      display: inline;
+    }
+
+    /* Pull-quote — appears mid-article for impact */
+    .pull {
+      background: var(--bg-deep);
+      color: var(--ink-inverse);
+      margin: 5rem 0;
+      padding: 5rem 1.5rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .pull::before {
+      content: "ᚱ";
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display);
+      font-size: clamp(22rem, 40vw, 30rem);
+      color: var(--amber);
+      opacity: 0.05;
+      line-height: 1;
+      pointer-events: none;
+      user-select: none;
+    }
+    .pull-inner {
+      max-width: 760px;
+      margin: 0 auto;
+      position: relative;
+    }
+    .pull blockquote {
+      font-family: var(--font-display);
+      font-size: clamp(1.875rem, 4vw, 3rem);
+      line-height: 1.2;
+      font-style: italic;
+      font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1;
+      margin: 0;
+      color: var(--ink-inverse);
+      font-weight: 350;
+    }
+    .pull blockquote::before { content: "❝ "; color: var(--amber); }
+    .pull cite {
+      display: block;
+      margin-top: 2rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-style: normal;
+      color: rgba(250, 250, 247, 0.6);
+    }
+
+    /* Signature block */
+    .signature {
+      max-width: 660px;
+      margin: 5rem auto 0;
+      padding: 3rem 1.5rem;
+      border-top: 1px solid var(--rule);
+      text-align: left;
+    }
+    .signature .name {
+      font-family: var(--font-display);
+      font-size: 1.875rem;
+      font-style: italic;
+      color: var(--amber-deep);
+      font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1;
+      margin: 0 0 0.5rem;
+    }
+    .signature .name::before { content: "— "; }
+    .signature .role {
+      font-family: var(--font-body);
+      font-size: 0.9rem;
+      color: var(--ink-secondary);
+      line-height: 1.6;
+    }
+    .signature .place {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      color: var(--ink-muted);
+      margin-top: 1rem;
+    }
+
+    /* Final CTA */
+    .cta {
+      background: linear-gradient(180deg, var(--bg-paper) 0%, #F2EFE8 100%);
+      padding: 5rem 1.5rem;
+      text-align: center;
+      border-top: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+      margin-top: 5rem;
+    }
+    .cta-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--amber);
+    }
+    .cta h2 {
+      font-family: var(--font-display);
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      line-height: 1.1;
+      letter-spacing: -0.025em;
+      font-weight: 350;
+      font-variation-settings: "opsz" 144, "SOFT" 60, "WONK" 1;
+      margin: 1rem auto 1.5rem;
+      max-width: 22ch;
+    }
+    .cta p {
+      font-family: var(--font-display);
+      font-size: 1.125rem;
+      color: var(--ink-secondary);
+      max-width: 36ch;
+      margin: 0 auto 2rem;
+      line-height: 1.5;
+      font-variation-settings: "opsz" 30;
+    }
+    .cta-actions {
+      display: inline-flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .btn-primary, .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.65rem 1.2rem;
+      border-radius: 999px;
+      font-family: var(--font-body);
+      font-size: 0.875rem;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      transition: all 0.18s;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: var(--ink-primary);
+      color: var(--ink-inverse);
+      border: 1px solid var(--ink-primary);
+    }
+    .btn-primary:hover { background: var(--amber-deep); border-color: var(--amber-deep); }
+    .btn-ghost {
+      background: transparent;
+      color: var(--ink-primary);
+      border: 1px solid var(--rule-strong);
+    }
+    .btn-ghost:hover { border-color: var(--ink-primary); }
+
+    /* Footer */
+    .site-footer {
+      background: var(--bg-deep);
+      color: var(--ink-inverse);
+      padding: 3rem 0 1.5rem;
+    }
+    .footer-inner {
+      max-width: 1080px; margin: 0 auto; padding: 0 1.5rem;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2.5rem;
+      margin-bottom: 2.5rem;
+    }
+    @media (min-width: 760px) {
+      .footer-grid { grid-template-columns: 2fr 1fr 1fr; }
+    }
+    .footer-brand {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      margin-bottom: 0.75rem;
+      font-variation-settings: "opsz" 144;
+    }
+    .footer-brand .rune {
+      color: var(--amber);
+      font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display);
+    }
+    .footer-tagline {
+      font-family: var(--font-display);
+      font-style: italic;
+      color: rgba(250, 250, 247, 0.55);
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      max-width: 36ch;
+      font-variation-settings: "opsz" 30, "SOFT" 80, "WONK" 1;
+      margin: 0;
+    }
+    .footer-grid h5 {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(250, 250, 247, 0.5);
+      margin: 0 0 1rem;
+      font-weight: 500;
+    }
+    .footer-grid ul {
+      list-style: none; padding: 0; margin: 0;
+      display: flex; flex-direction: column; gap: 0.5rem;
+      font-size: 0.875rem;
+    }
+    .footer-grid a {
+      color: rgba(250, 250, 247, 0.75);
+      transition: color 0.18s;
+    }
+    .footer-grid a:hover { color: var(--ink-inverse); }
+    .footer-bottom {
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      padding-top: 1.25rem;
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: rgba(250, 250, 247, 0.4);
+      letter-spacing: 0.04em;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="favicon-dark.svg" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="apple-touch-icon" href="apple-touch-icon.svg">
+  <meta name="theme-color" content="#FAFAF7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E1A2B" media="(prefers-color-scheme: dark)">
+</head>
+<body>
+
+<a href="#article" class="skip-link">Skip to manifesto content</a>
+
+<header class="site-header">
+  <div class="header-inner">
+    <a href="index.html" class="brand">
+      <span class="rune" aria-hidden="true">ᚴ</span>
+      <span>Kern</span>
+      <span class="where">manifesto</span>
+    </a>
+    <nav class="header-nav" aria-label="Sections">
+      <a href="index.html">Home</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="use-cases.html">Use cases</a>
+      <a href="whitepaper.html">Whitepaper</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="github.html">Source</a>
+      <a href="index.html#subscribe">Follow</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<!-- ====================================================================
+     COVER
+     ==================================================================== -->
+<section class="cover">
+  <p class="cover-eyebrow">Manifesto · v1 · May 2026</p>
+  <h1>
+    EU regulation is the spec sheet.
+    <em>Kern is the implementation.</em>
+  </h1>
+  <p class="meta-line">A statement of conviction by Nicolas Van Eeckhout, founder.</p>
+  <div class="cover-rule"></div>
+</section>
+
+<!-- ====================================================================
+     ARTICLE
+     ==================================================================== -->
+<article id="article" class="article">
+
+  <div class="section">
+    <h2><span class="ord">I.</span><span class="lbl">The opening</span></h2>
+    <p>
+      I am building Kern because I believe <strong>the next decade of blockchain adoption will not be won by the protocol that maximises transactions per second</strong>.
+    </p>
+    <p>
+      It will be won by the protocol that institutions can adopt without lying to their regulators, their auditors, or the people they are accountable to.
+    </p>
+    <p>
+      That requires a different kind of L1. One that treats EU regulation — MiCA, AIFMD, MiFID II, DORA — not as obstacles to be circumvented, but as specifications to be encoded.
+    </p>
+    <p>
+      That protocol does not yet exist. Kern is my attempt to build it.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2><span class="ord">II.</span><span class="lbl">What the current Layer-1s get wrong</span></h2>
+    <p>
+      I have spent the last ten years close to this field.
+    </p>
+    <p>
+      Co-founder of the <a href="https://www.meetup.com/meetup-blockchain-ethereum-bruxelles/" style="color: var(--amber-deep); border-bottom: 1px solid rgba(194,136,94,0.4);" target="_blank" rel="noopener">Meetup Blockchain-Ethereum group in Brussels</a>. <a href="https://github.com/tezos-checker/checker-ui" style="color: var(--amber-deep); border-bottom: 1px solid rgba(194,136,94,0.4);" target="_blank" rel="noopener">Contributor to the Tezos ecosystem</a>. Founder of <a href="https://www.cogarius.com" style="color: var(--amber-deep); border-bottom: 1px solid rgba(194,136,94,0.4);" target="_blank" rel="noopener">Cogarius</a>. I have watched institutions try to adopt this technology, and I have watched almost all of them either give up or wrap it in so many compliance layers that the technology becomes invisible.
+    </p>
+    <p>Here is what I have observed:</p>
+    <p>
+      <strong>Ethereum</strong> is brilliant engineering. It is also a regulatory mismatch for any serious institution outside a few sandboxed pilots. The L1 enforces no semantics that a regulator can read; Solidity contracts hide their assumptions; the audit perimeter is custom and expensive every single time. The institutional response is to wrap everything in permissioned overlays, which defeats the point.
+    </p>
+    <p>
+      <strong>Tezos</strong> has the right governance instinct — on-chain amendments, no hard forks, Liquid PoS that preserves custody. But it never closed the institutional gap with first-class compliance primitives at the protocol layer.
+    </p>
+    <p>
+      <strong>Solana</strong> optimises for throughput and developer growth. Neither is what matters when an institution is asked to demonstrate to a regulator that an STO continuously satisfies Prospectus Regulation Art. 3.
+    </p>
+    <p>
+      <strong>Cosmos / Polkadot / others</strong> offer modularity — fine engineering for protocol designers, opaque for institutions.
+    </p>
+    <p>
+      The pattern: every existing L1 forces institutions to choose between <em>not adopting</em> the protocol or <em>adopting it badly</em> (with so many compliance wrappers that the protocol itself becomes a footnote).
+    </p>
+    <p>
+      I want a third option.
+    </p>
+  </div>
+
+</article>
+
+<!-- ====================================================================
+     PULL QUOTE — full-bleed dark section mid-document
+     ==================================================================== -->
+<section class="pull" aria-hidden="false">
+  <div class="pull-inner">
+    <blockquote>
+      The protocol that institutions can adopt without lying to their regulators wins the decade.
+    </blockquote>
+    <cite>Manifesto · §I</cite>
+  </div>
+</section>
+
+<article class="article">
+
+  <div class="section">
+    <h2><span class="ord">III.</span><span class="lbl">The thesis</span></h2>
+    <p>
+      The third option is what I call <strong>institutional legibility</strong>.
+    </p>
+    <p>
+      It means: the rules that an institution must follow — whether regulatory, procedural, or evidentiary — are encoded as protocol-enforced invariants that regulators, auditors, and counterparties can read directly, without trusting any intermediary.
+    </p>
+    <p>
+      When an STO contract is deployed on Kern, the regulator does not need to wait for an annual audit report. They open the explorer. They read the invariants. They see the compliance state, live.
+    </p>
+    <p>
+      When an oracle posts a value on Kern, that posting carries a slashable bond. If the oracle equivocates, anyone can submit evidence and earn 10% of the slashed amount. The reliability of the data is not a vendor promise; it is a cryptoeconomic property.
+    </p>
+    <p>
+      When a public goods round runs on Kern, the matching formula is explicit on-chain — not a committee's discretion translated into an opaque grant decision.
+    </p>
+    <p>
+      Institutional legibility is the property that makes Kern usable where other L1s are not. Everything else — consensus, language, governance — supports this thesis.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2><span class="ord">IV.</span><span class="lbl">Five commitments</span></h2>
+    <p>I commit to the following, as the founder and as a signature on this manifesto:</p>
+    <ul>
+      <li><p><strong>1. The protocol stays narrow.</strong> The L1 does one thing well: provide deterministic finality, verifiable execution, and the smallest possible set of primitives that institutions need. Application complexity belongs in Skald contracts, in rollups, or off-chain. I will resist every pressure to bloat the base layer.</p></li>
+      <li><p><strong>2. The language is small.</strong> Skald has runtime-enforced invariants, a static type system, and a deliberately limited surface. A small language is one that auditors and regulators can actually read. A large language is one where compliance becomes an act of faith.</p></li>
+      <li><p><strong>3. Governance is on-chain, not off-chain.</strong> Decisions about Kern — including consensus parameters, gas costs, even Skald itself — go through on-chain governance with equivocation slashing. No hard forks. No founder veto. The protocol can outlive me.</p></li>
+      <li><p><strong>4. The reference implementation is open source.</strong> Forever. Apache-2.0, no asterisks, no rug-pulls. The Foundation may build proprietary tools on top; the L1 itself is everyone's.</p></li>
+      <li><p><strong>5. I will not pretend.</strong> Where Kern has limits, I will document them. Where the audit is not done, I will say so. Where the Foundation is forming, I will not write press releases about a Foundation that does not yet exist. The reference implementation is the spec; the documentation is honest; the roadmap acknowledges what is and is not in scope. There will be no marketing fluff.</p></li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h2><span class="ord">V.</span><span class="lbl">What I refuse</span></h2>
+    <p>A manifesto is also a refusal. Here is what Kern will not become:</p>
+    <ul>
+      <li><p><strong>Kern is not a memecoin platform.</strong> The 70/10/15/3/2 KRN distribution is designed for institutional bootstrap, not for speculation. There is no "fair launch" theatre. There is no aggressive marketing schedule.</p></li>
+      <li><p><strong>Kern is not Ethereum with extra steps.</strong> EVM compatibility exists through optimistic rollups, where it belongs. The L1 is its own design, in its own language, with its own values. Solidity has a home on Kern; it does not get to dictate Kern.</p></li>
+      <li><p><strong>Kern is not a private chain wearing a public chain costume.</strong> Validators are open. Governance is on-chain. The KRN allocation is documented. Foundation operations are auditable. If you want a permissioned chain, use Hyperledger.</p></li>
+      <li><p><strong>Kern is not a "compliance product" sold to institutions.</strong> It is an open protocol whose properties happen to be what institutions need. The distinction matters. The protocol is owned by no one. The Foundation is its steward, not its proprietor.</p></li>
+      <li><p><strong>Kern is not in a hurry.</strong> The roadmap to Midgard mainnet is 12-18 months. Two professional security audits, a public testnet (Yggdrasil), regulatory dialogue. I would rather launch one year late than launch with one vulnerability.</p></li>
+    </ul>
+  </div>
+
+</article>
+
+<section class="pull">
+  <div class="pull-inner">
+    <blockquote>
+      I would rather launch one year late than launch with one vulnerability.
+    </blockquote>
+    <cite>Manifesto · §V</cite>
+  </div>
+</section>
+
+<article class="article">
+
+  <div class="section">
+    <h2><span class="ord">VI.</span><span class="lbl">Why this is built from Europe</span></h2>
+    <p>
+      Kern is built from Brussels, for the European Union's regulatory map, and that is deliberate.
+    </p>
+    <p>
+      Europe has done the hard work that the rest of the world has not:
+    </p>
+    <p>
+      <strong>MiCA</strong> (Markets in Crypto-Assets, 2024) is the world's most coherent crypto framework. <strong>AIFMD</strong> governs institutional fund structures with rigour the US has never approached. <strong>MiFID II and DORA</strong> structure how financial services and digital operations interact with technology. The <strong>eIDAS</strong> framework, e-Residency, and the European Digital Identity Wallet provide the identity infrastructure that on-chain attestations need.
+    </p>
+    <p>
+      These frameworks are an asset, not a liability. They constitute the <em>specification</em> for what an institutionally-usable blockchain must look like. The protocol that takes them seriously gets to be the default for the European institutional market.
+    </p>
+    <p>
+      The reference implementation, the Skald templates, and the explorer are all built with European institutional adoption as the primary use case.
+    </p>
+    <p>
+      This is not a bet against the rest of the world. It is a bet that the rest of the world will, eventually, build the equivalent frameworks — and that protocols designed for them will travel.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2><span class="ord">VII.</span><span class="lbl">The personal note</span></h2>
+    <p>
+      I have a day job in technology. I have no foundation behind me, no token sale, no team, no mandate. By any reasonable measure, I am exactly the wrong person to ship a Layer-1.
+    </p>
+    <p>
+      What I have is not certainty — it is a long view from the side of the room. Over the years I have watched many institutional pilots fail, almost never for reasons that were really about the technology, and almost always because of the gap between what the technology offered and what a regulator or an auditor could actually verify. I don't claim to have the answer. I think I have come to understand the question, and I wanted to set it down properly at least once.
+    </p>
+    <p>
+      So I built Kern in evenings and weekends, slowly, with the discipline of someone who has shipped institutional software before. The reference implementation is real Python — tested, documented, originated under my own authorship. The whitepaper is the design document. This manifesto is the conviction.
+    </p>
+    <p>
+      I'll be honest about what this is, for me. It is, in part, a door closing — the blockchain chapter of my own work — and an attempt to close it on something finished rather than something left half-built. One last try at finding out whether I had something to give to this community, something larger than myself. I'm not asking anyone's permission, and I'm not claiming Kern is the answer. I'm offering it, in good faith, to the people still trying to build a chain that institutions can genuinely read and trust. If it helps even a few of them, the evenings were worth it; and if it doesn't, then at least it was built once, carefully, and left for whoever comes next.
+    </p>
+    <p>
+      And if you recognize yourself in any of this — whether you're one person building on evenings like me, or an organization that has watched its own pilots stall in that same gap between what the technology promised and what it could actually prove — then make yourself known. Reach out, build on it, challenge it, carry it further. You'll find me on <a href="https://www.linkedin.com/in/vaneeckhout/" style="color: var(--amber-deep); border-bottom: 1px solid rgba(194,136,94,0.4);" target="_blank" rel="noopener">LinkedIn</a>. Kern was never meant to stay one person's project; if it's going to live, it will be because others — individuals and organizations alike — choose to make it theirs too.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2><span class="ord">VIII.</span><span class="lbl">An invitation</span></h2>
+    <p>
+      If this manifesto reads true to you, there are three things you can do.
+    </p>
+    <p>
+      <strong>If you are an engineer</strong> — read the <a href="whitepaper.html">whitepaper</a>, read the <a href="https://github.com/vaneeckhoutnicolas/kern" target="_blank" rel="noopener">reference implementation</a>, open the setup guides. Tell me what is wrong with the design. Critical feedback at this stage is more valuable than any other contribution.
+    </p>
+    <p>
+      <strong>If you are an institution or organization</strong> — a fund, an STO issuer, an oracle network operator, a foundation considering on-chain grant-making, a telco settling cross-border with EU peers, or any other organization that needs infrastructure it can actually account for — the Kern verticals exist for you. The Skald templates ship audited and ready. Reach out before you build a custom Solidity contract; reach out before you give up on this technology entirely.
+    </p>
+    <p>
+      <strong>If you are a regulator, auditor, or compliance counsel</strong> — the STO compliance spec and the Heimdall explorer are written for you. Read them, push back where they oversimplify, tell me what they would need to be useful in your workflow.
+    </p>
+    <p>
+      Follow the work on LinkedIn. Watch the GitHub repository. Join the conversation when it opens.
+    </p>
+  </div>
+
+  <div class="signature">
+    <p class="name"><a href="https://www.linkedin.com/in/vaneeckhout/" target="_blank" rel="noopener" style="color:inherit;border-bottom:1px solid rgba(142,94,58,0.4);">Nicolas Van Eeckhout</a></p>
+    <p class="role">
+      Founder, <a href="https://www.cogarius.com" style="color: var(--amber-deep); border-bottom: 1px solid rgba(194,136,94,0.4);" target="_blank" rel="noopener">Cogarius</a> · <a href="https://github.com/tezos-checker/checker-ui" style="color: var(--amber-deep); border-bottom: 1px solid rgba(194,136,94,0.4);" target="_blank" rel="noopener">Tezos ecosystem contributor</a><br>
+      Co-founder, <a href="https://www.meetup.com/meetup-blockchain-ethereum-bruxelles/" style="color: var(--amber-deep); border-bottom: 1px solid rgba(194,136,94,0.4);" target="_blank" rel="noopener">Brussels Meetup Blockchain-Ethereum</a>
+    </p>
+    <p class="place">Brussels · May 2026</p>
+  </div>
+
+  <p class="manifesto-license" style="max-width:62ch;margin:2.5rem auto 0;font-size:0.85rem;font-style:italic;opacity:0.7;text-align:center;">
+    This manifesto is published under CC-BY-SA-4.0. You may share, adapt, and translate it provided you credit the author and preserve the licence.
+  </p>
+
+</article>
+
+<!-- ====================================================================
+     CTA
+     ==================================================================== -->
+<section class="cta">
+  <span class="cta-eyebrow">Next</span>
+  <h2>Watch this protocol grow up.</h2>
+  <p>Follow along on LinkedIn: protocol milestones, audit results, Foundation establishment, testnet launches.</p>
+  <div class="cta-actions">
+    <a href="https://www.linkedin.com/in/vaneeckhout/" class="btn-primary" target="_blank" rel="noopener">Follow on LinkedIn →</a>
+    <a href="whitepaper.html" class="btn-ghost">Read the whitepaper</a>
+    <a href="https://github.com/vaneeckhoutnicolas/kern" target="_blank" rel="noopener" class="btn-ghost">View on GitHub</a>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <span class="rune" aria-hidden="true">ᚴ</span> Kern
+        </div>
+        <p class="footer-tagline">
+          The kernel. The grain of state that endures.
+        </p>
+      </div>
+      <div>
+        <h5>Read</h5>
+        <ul>
+          <li><a href="index.html">Landing page</a></li>
+          <li><a href="whitepaper.html">Whitepaper</a></li>
+          <li><a href="manifesto.html">Manifesto</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Source</h5>
+        <ul>
+          <li><a href="https://github.com/vaneeckhoutnicolas/kern" target="_blank" rel="noopener">GitHub repository</a></li>
+          <li><a href="index.html#heimdall">Heimdall explorer</a></li>
+          <li><a href="index.html#roadmap">Roadmap</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors</span>
+      <span>Manifesto: CC-BY-SA-4.0 · Reference impl: Apache-2.0 · <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/disclaimer.md" target="_blank" rel="noopener" style="color:inherit;border-bottom:1px solid rgba(255,255,255,0.2);">Disclaimer</a></span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

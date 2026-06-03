@@ -1,0 +1,66 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% from "_macros.html" import pagination_controls %}
+{% block title %}Contracts — Heimdall{% endblock %}
+{% block content %}
+<div class="flex justify-between items-center mb-4 flex-wrap gap-3">
+  <h1 class="text-2xl font-bold">Skald contracts</h1>
+  <div class="flex gap-2 text-xs flex-wrap" role="group" aria-label="Filter by Skald template">
+    {% for t in known_templates %}
+      <a href="/contracts?template={{ t }}" class="px-2 py-1 rounded {{ 'bg-kern-accent text-white' if t == template_filter else 'bg-gray-200 dark:bg-kern-700 hover:bg-gray-300' }}"
+         {% if t == template_filter %}aria-current="true"{% endif %}>{{ t }}</a>
+    {% endfor %}
+    {% if template_filter or q %}<a href="/contracts" class="px-2 py-1 rounded text-gray-500 hover:text-kern-accent">all</a>{% endif %}
+  </div>
+</div>
+
+<form action="/contracts" method="get" class="mb-4" role="search">
+  {% if template_filter %}<input type="hidden" name="template" value="{{ template_filter }}">{% endif %}
+  <label for="contract-search" class="sr-only">Search contract source code</label>
+  <input id="contract-search" type="text" name="q" value="{{ q }}"
+         placeholder="Full-text search on Skald source (e.g. 'whitepaper_registered', 'circuit_breaker_tripped')"
+         class="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-kern-600 bg-white dark:bg-kern-700 focus:outline-none focus:ring-2 focus:ring-kern-accent"
+         autocomplete="off">
+  {% if q %}<div class="text-xs text-gray-500 mt-1">Searching for: <span class="font-mono">"{{ q }}"</span> — <a href="/contracts{% if template_filter %}?template={{ template_filter }}{% endif %}" class="text-kern-accent hover:underline">clear</a></div>{% endif %}
+</form>
+
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden" x-data="sortableTable('originated_at_level', 'desc')">
+  <table class="w-full text-sm" role="table" aria-label="Contracts list, sortable">
+    <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+      <tr>
+        <th class="text-left p-2">Address</th>
+        <th class="text-left p-2 cursor-pointer select-none" role="button" tabindex="0"
+            @click="sortBy('skald_template')" @keydown.enter="sortBy('skald_template')" @keydown.space.prevent="sortBy('skald_template')"
+            :aria-sort="sortAttr('skald_template')">
+          <span class="inline-flex items-center gap-1">Template
+            <span class="text-xs opacity-60" x-text="sortCol === 'skald_template' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+          </span>
+        </th>
+        <th class="text-left p-2">Originated by</th>
+        <th class="text-right p-2 cursor-pointer select-none" role="button" tabindex="0"
+            @click="sortBy('originated_at_level')" @keydown.enter="sortBy('originated_at_level')" @keydown.space.prevent="sortBy('originated_at_level')"
+            :aria-sort="sortAttr('originated_at_level')">
+          <span class="inline-flex items-center gap-1">At level
+            <span class="text-xs opacity-60" x-text="sortCol === 'originated_at_level' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+          </span>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for c in contracts %}
+      <tr x-sort:skald_template="{{ c.skald_template or '' }}" x-sort:originated_at_level="{{ c.originated_at_level or 0 }}"
+          class="border-t border-gray-100 dark:border-kern-700">
+        <td class="p-2"><a href="/contract/{{ c.address }}" class="hash truncate-hash" title="{{ c.address }}">{{ c.address }}</a></td>
+        <td class="p-2">{% if c.skald_template %}<span class="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300">{{ c.skald_template }}</span>{% else %}<span class="text-xs text-gray-500">—</span>{% endif %}</td>
+        <td class="p-2">{% if c.originated_by %}<a href="/account/{{ c.originated_by }}" class="hash truncate-hash" title="{{ c.originated_by }}">{{ c.originated_by }}</a>{% else %}—{% endif %}</td>
+        <td class="p-2 text-right">{{ c.originated_at_level or '—' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="p-4 text-center text-gray-500">{% if q %}No contracts match "{{ q }}".{% else %}No contracts indexed yet.{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{{ pagination_controls(pagination, "/contracts") }}
+{% endblock %}

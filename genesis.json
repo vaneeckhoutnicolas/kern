@@ -1,0 +1,38 @@
+{
+  "balances": {
+    "kn1KU1aiU6MZxJXV4CiDtkAGBzfHPTD24qmx": 10000000000000,
+    "kn1LsLG7LvXzwYiJ2CyKPGRdxTyDkuHydMtn": 14000000000000,
+    "kn1Mxpj91W2k3u5jbaSu5Eh2F9Zc5dQjwuuV": 2000000000000,
+    "kn1PsVFT5DmqK3Jamp8rGXJmzkLwjMibvyFi": 3000000000000,
+    "kn1QtCF6n4zmShWdecJKMrAUhwTvCo7L97tB": 70000000000000,
+    "kn1dSwF8xJXHXkv3BFRgHShj79xFjxn7zapT": 1000000000000
+  },
+  "chain_id": "kern-mainnet-midgard",
+  "genesis_time": "2027-Q3 (target)",
+  "issuance_params": {
+    "block_time_seconds": 1.0,
+    "i_max": 0.06,
+    "i_min": 0.0025,
+    "proposer_bonus": 0.15,
+    "target_staking_ratio": 0.5,
+    "treasury_share": 0.1
+  },
+  "pool_addresses": {
+    "bootstrap_baker": "kn1dSwF8xJXHXkv3BFRgHShj79xFjxn7zapT",
+    "early_contributors": "kn1PsVFT5DmqK3Jamp8rGXJmzkLwjMibvyFi",
+    "foundation": "kn1LsLG7LvXzwYiJ2CyKPGRdxTyDkuHydMtn",
+    "founder": "kn1KU1aiU6MZxJXV4CiDtkAGBzfHPTD24qmx",
+    "public_sale": "kn1QtCF6n4zmShWdecJKMrAUhwTvCo7L97tB",
+    "validator_bootstrap": "kn1Mxpj91W2k3u5jbaSu5Eh2F9Zc5dQjwuuV"
+  },
+  "state_root_function": "trie",
+  "total_supply": 100000000000000,
+  "treasury_address": "kn1LsLG7LvXzwYiJ2CyKPGRdxTyDkuHydMtn",
+  "validators": [
+    {
+      "address": "kn1dSwF8xJXHXkv3BFRgHShj79xFjxn7zapT",
+      "pubkey": "9XYehPUoHDmgi4NPiLb3Fi2zUuzbD4vv1NCANDu8G6jd5trExYu6h",
+      "stake": 1000000000000
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+
+{# Pagination — render the prev/next controls plus the page indicator.
+   Expects: pagination dict {page, total_pages, has_prev, has_next, prev_page, next_page, total, per_page, qs}
+            base_url: the base path (e.g. "/blocks") that the page links should target #}
+{% macro pagination_controls(pagination, base_url) %}
+  {% if pagination.total_pages > 1 %}
+    <nav class="flex items-center justify-between gap-3 mt-3 text-sm" aria-label="Pagination">
+      <div class="text-xs text-gray-500">
+        Page <span class="font-medium">{{ pagination.page }}</span> of
+        <span class="font-medium">{{ pagination.total_pages }}</span>
+        <span class="ml-2 text-gray-400">·
+          {{ pagination.total }} total ·
+          {{ pagination.per_page }} per page</span>
+      </div>
+      <div class="flex gap-1">
+        {% if pagination.has_prev %}
+          <a href="{{ base_url }}?page=1{{ pagination.qs }}"
+             class="px-3 py-1 rounded bg-gray-200 dark:bg-kern-700 hover:bg-gray-300 dark:hover:bg-kern-600"
+             aria-label="First page">« First</a>
+          <a href="{{ base_url }}?page={{ pagination.prev_page }}{{ pagination.qs }}"
+             class="px-3 py-1 rounded bg-gray-200 dark:bg-kern-700 hover:bg-gray-300 dark:hover:bg-kern-600"
+             aria-label="Previous page" rel="prev">‹ Prev</a>
+        {% else %}
+          <span class="px-3 py-1 rounded bg-gray-100 dark:bg-kern-800 text-gray-400 cursor-not-allowed"
+                aria-disabled="true">« First</span>
+          <span class="px-3 py-1 rounded bg-gray-100 dark:bg-kern-800 text-gray-400 cursor-not-allowed"
+                aria-disabled="true">‹ Prev</span>
+        {% endif %}
+        {% if pagination.has_next %}
+          <a href="{{ base_url }}?page={{ pagination.next_page }}{{ pagination.qs }}"
+             class="px-3 py-1 rounded bg-gray-200 dark:bg-kern-700 hover:bg-gray-300 dark:hover:bg-kern-600"
+             aria-label="Next page" rel="next">Next ›</a>
+          <a href="{{ base_url }}?page={{ pagination.total_pages }}{{ pagination.qs }}"
+             class="px-3 py-1 rounded bg-gray-200 dark:bg-kern-700 hover:bg-gray-300 dark:hover:bg-kern-600"
+             aria-label="Last page">Last »</a>
+        {% else %}
+          <span class="px-3 py-1 rounded bg-gray-100 dark:bg-kern-800 text-gray-400 cursor-not-allowed"
+                aria-disabled="true">Next ›</span>
+          <span class="px-3 py-1 rounded bg-gray-100 dark:bg-kern-800 text-gray-400 cursor-not-allowed"
+                aria-disabled="true">Last »</span>
+        {% endif %}
+      </div>
+    </nav>
+  {% endif %}
+{% endmacro %}
+
+
+{# Sortable table header.
+   Produces a <th> with an Alpine.js x-on:click that sorts the parent's
+   sortable rows by the given column name. The parent table must be wrapped
+   in x-data="sortableTable('col_name', 'asc')" with each <tbody> child <tr>
+   carrying x-sort:colname="<value>" attributes.
+
+   Use the simpler <th> + the <script> at bottom of base.html for now. #}
+{% macro sortable_th(label, col, default_dir='asc', extra_classes='') %}
+  <th class="text-left p-2 cursor-pointer select-none {{ extra_classes }}"
+      role="button"
+      tabindex="0"
+      aria-sort="none"
+      @click="sortBy('{{ col }}')"
+      @keydown.enter="sortBy('{{ col }}')"
+      @keydown.space.prevent="sortBy('{{ col }}')"
+      :aria-sort="sortCol === '{{ col }}' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'">
+    <span class="inline-flex items-center gap-1">
+      {{ label }}
+      <span class="text-xs opacity-60"
+            x-text="sortCol === '{{ col }}' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+    </span>
+  </th>
+{% endmacro %}

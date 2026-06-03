@@ -1,0 +1,116 @@
+# Kern — A Layer-1 Blockchain with On-Chain Evolution
+
+*Draft whitepaper, v0.1*
+
+---
+
+## 1. Motivation
+
+The blockchain ecosystem has produced two dominant Layer-1 families: those optimized for developer gravity (Ethereum and its descendants), and those optimized for protocol-level rigor (Tezos, Cardano, and a handful of formal-methods-first chains). The two families have evolved largely in parallel, and the trade-offs they make are real:
+
+- **Ethereum's strength** is the size of its ecosystem — tooling, libraries, exchanges, custody, oracles, developers. Its weakness is that its evolution depends on socially-coordinated hard forks, and that Solidity makes formal reasoning about contract behavior unreasonably difficult.
+- **Tezos's strength** is on-chain self-amendment, Liquid Proof-of-Stake, and a contract language (Michelson) that admits formal verification. Its weakness is the relative scarcity of developers and applications.
+
+Kern is designed to inherit the protocol-level rigor of Tezos while remaining accessible to developers coming from Ethereum. It does this by combining four ideas:
+
+1. **Tenderbake-style BFT consensus with Liquid Proof-of-Stake**, for fast deterministic finality and accessible validation.
+2. **On-chain protocol amendment** in two separate tracks (protocol and treasury), so the chain can evolve without hard forks.
+3. **Skald**, a resource-typed contract language with declarative invariants, compiled to a verifiable bytecode (the Kern Virtual Machine, KVM).
+4. **Optimistic Smart Rollups** for EVM compatibility, so existing Ethereum tooling can target Kern as a settlement layer.
+
+## 2. Design principles
+
+Kern's design follows four principles, each of which constrains the protocol's evolution.
+
+**Determinism over throughput.** A predictable, deterministic finality time (≈ 2 seconds) is preferred over peak transactions-per-second. Applications that need higher throughput live in rollups; the L1 is a settlement and governance layer.
+
+**Formal properties over expressive convenience.** Skald deliberately omits features that make static analysis intractable. There is no dynamic dispatch in the EVM sense, no unbounded recursion, no implicit state mutation. Every contract declares its invariants; the runtime checks them on every entry call. The language is small enough that a contract's semantics can be reasoned about line by line.
+
+**On-chain evolution over off-chain coordination.** Protocol changes — including consensus parameters, gas pricing, treasury allocations, and changes to Skald itself — are proposed, voted on, and activated on-chain. Hard forks remain physically possible but are not the path of intended evolution.
+
+**Compatibility over purity.** Existing Ethereum developers and existing Ethereum assets need a path into Kern. Optimistic Smart Rollups, with an EVM-compatible execution layer settling to Kern, provide that path without compromising the L1's design properties.
+
+## 3. Consensus
+
+Kern uses a variant of Tenderbake (the consensus algorithm of Tezos since the Ithaca upgrade). The full spec lives in [`consensus.md`](consensus.md); the short version is:
+
+- Block time targets 1 second; finality is achieved within 2 blocks (~2 seconds) under normal conditions.
+- Validators ("bakers") stake the native KRN token. Token holders can delegate stake without giving up custody (Liquid PoS).
+- Each round, a proposer is selected from the active validator set, weighted by stake. The proposer assembles a block from the mempool and broadcasts it.
+- Validators emit pre-endorsements and endorsements; a block is final once more than 2/3 of the validator-weighted stake has endorsed it.
+- Adaptive issuance ties block rewards to the actual staking participation rate, so rewards scale down when participation is high and scale up when it is low.
+
+## 4. State and accounts
+
+Kern has a single, unified account space. There is no protocol-level distinction between externally-owned accounts (EOAs) and contracts: every account has an address, a balance, a nonce, and an optional code+storage tuple. Account abstraction is therefore not an opt-in layer; it is the default model.
+
+Addresses are derived as `blake2b-160(public_key)` for keypair-controlled accounts, and `blake2b-160(origination_tx_hash)` for contracts. All addresses are 20 bytes, base58check-encoded with the `kn1` prefix.
+
+The native token is **KRN**. The smallest unit is the **mutez** (a deliberate Tezos homage): 1 KRN = 10^6 mutez.
+
+## 5. Skald and the KVM
+
+[Skald](skald-language.md) is the contract language. A Skald contract declares:
+
+- A typed storage schema (`storage { ... }`).
+- A set of declarative invariants (`invariant name { expr }`) that must hold after every state-mutating call.
+- A set of functions, classified as `entry` (state-mutating, externally callable), `view` (pure read, externally callable), or `internal` (callable only from within the contract).
+
+Invariants are first-class. They are checked automatically by the runtime; a transaction that would leave the storage in a state violating any invariant is rejected and reverted. This makes invariants — solvency, supply caps, ownership constraints — part of the contract's specification, not commentary in a comment.
+
+The KVM is the deterministic execution environment. It exposes built-in identifiers (`sender`, `amount`, `self`, `balance`) for the chain context and operates on a small set of types: `int` (arbitrary precision), `address`, `string`, `bool`. Future extensions will add maps, lists, options, and pair types.
+
+## 6. EVM compatibility via rollups
+
+Kern's first-class compatibility story with the EVM is provided by **Optimistic Smart Rollups**: an EVM execution layer whose state commitments are posted to Kern. The rollup inherits Kern's finality after a fraud-proof challenge window expires. Developers use Hardhat, Foundry, MetaMask, and their existing toolchains; the rollup's bridge handles asset and message passing in both directions.
+
+This is the same architectural pattern Tezos uses with its Etherlink rollup, and it lets Kern's L1 design optimize for what only an L1 can do (settlement, governance, formal properties) while EVM applications run where they belong.
+
+## 7. Governance
+
+Two governance tracks run in parallel on-chain, each with its own voting cycle:
+
+- **Protocol amendments** — changes to the consensus rules, the KVM, gas pricing, or Skald itself. These follow a four-phase Tezos-style cycle (Proposal, Exploration, Cooldown, Adoption) and require a supermajority of validator-weighted stake.
+- **Treasury allocations** — disbursements from the protocol treasury (funded by a small fraction of block rewards) to ecosystem projects. These follow a simpler quadratic-voting-with-stake-weighting cycle.
+
+The two tracks are kept separate so that protocol evolution is not bottlenecked by funding decisions, and vice versa.
+
+## 8. What Kern is not
+
+Kern is **not** a general-purpose high-throughput chain. The L1 is deliberately throughput-limited in service of finality and verifiability. Applications that need thousands of transactions per second should run on a rollup.
+
+Kern is **not** EVM-equivalent at L1. Solidity does not compile to KVM bytecode. Existing Solidity contracts run on the EVM rollup, not on Kern itself.
+
+Kern is **not** anonymous-by-default. Privacy primitives are a planned extension (along the lines of Sapling) but are not part of the v0.1 base protocol.
+
+## 9. Reference implementation status
+
+This repository contains a working reference implementation of (as of v1.0-rc):
+
+- The block, transaction, and account model.
+- Ed25519 signatures, blake2b-256 hashing, base58check encoding.
+- Multi-validator BFT consensus with proposer selection, pre-endorsement, endorsement aggregation, slashing for double-baking and double-endorsing.
+- A peer-to-peer gossip layer for blocks and transactions.
+- A JSON-over-HTTP RPC server with 12+ endpoints including `/chain/governance` and `/metrics`.
+- The Skald lexer, parser, tree-walking interpreter, with declared invariant enforcement and static type checker.
+- Tezos-style Liquid Proof-of-Stake: validator registration, baking delegation, commission-based reward splitting, proportional delegator slashing.
+- Adaptive issuance with on-chain governance-amendable parameters.
+- On-chain governance — two parallel tracks (protocol amendments + treasury allocations), proposal bonds, quadratic + delegated voting, equivocation detection, slashing-via-transaction settlement.
+- Optimistic Smart Rollups with multi-frame EVM (CALL/STATICCALL/DELEGATECALL/CREATE/CREATE2), forced-inclusion mailbox, bisection-based fraud proofs, 6 precompiles (ECRECOVER/SHA256/RIPEMD160/IDENTITY/MODEXP/BLAKE2F) plus BN254 scaffolding.
+- Binary Merkle trie with O(log n) light-client inclusion proofs.
+- Structured logs, Prometheus metrics, property-based fuzzing harness, devnet bootstrap script.
+- Genesis distribution per Ethereum 2014 template: 70% public / 10% founder (4y vest, 1y cliff) / 15% Foundation / 3% contributors / 2% validator bootstrap.
+
+The current implementation is sufficient to demonstrate end-to-end transaction flow, contract origination and call, invariant enforcement, multi-validator block production at ~1 second cadence, governance proposals and votes flowing through the RPC, and rollup fraud proofs to single-step.
+
+What remains for v1.0:
+
+- External security audit cycle 1 (Foundation pre-requisite).
+- Real BN254 pairing (currently a placeholder; needs py_ecc or blst FFI).
+- API stability formal specification document.
+- Hosted documentation site (mkdocs).
+- Public testnet (Yggdrasil) launch.
+
+---
+
+*See [`architecture.md`](architecture.md) for the component layout, [`consensus.md`](consensus.md) for the consensus protocol, [`skald-language.md`](skald-language.md) for the contract language, and [`use-cases.md`](use-cases.md) for the targeted applications.*

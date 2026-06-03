@@ -1,0 +1,31 @@
+{
+  "_doc": "Vesting schedules for non-public pools. These are enforced off-chain by holding the locked KRN in a multisig and releasing per schedule. The protocol does NOT enforce vesting in v1.0-rc; on-chain balances appear immediately spendable. A future protocol amendment may add native vesting enforcement.",
+  "schedules": {
+    "early_contributors": {
+      "amount_krn": 3000000,
+      "cliff_months": 6,
+      "individual_grants": [],
+      "pool_address": "kn1PsVFT5DmqK3Jamp8rGXJmzkLwjMibvyFi",
+      "recipient": "Foundation-managed pool, individual schedules per recipient",
+      "schedule_type": "linear_after_cliff",
+      "vesting_months": 36
+    },
+    "founder": {
+      "address": "kn1KU1aiU6MZxJXV4CiDtkAGBzfHPTD24qmx",
+      "amount_krn": 10000000,
+      "cliff_months": 12,
+      "recipient": "Nicolas Van Eeckhout (Kern founder)",
+      "schedule_type": "linear_after_cliff",
+      "vesting_months": 48
+    },
+    "validator_bootstrap": {
+      "amount_krn": 2000000,
+      "cliff_months": 0,
+      "individual_grants": [],
+      "pool_address": "kn1Mxpj91W2k3u5jbaSu5Eh2F9Zc5dQjwuuV",
+      "recipient": "Foundation-managed pool, distributed to early validators",
+      "schedule_type": "linear_after_cliff",
+      "vesting_months": 12
+    }
+  }
+}

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Kern — favicon.svg
+  SPDX-License-Identifier: Apache-2.0
+  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+
+  The Kaun rune (ᚴ, Younger Futhark) — the K of Kern.
+  Drawn as a path (not as text) so it renders identically regardless of
+  whether the system has a runic font installed.
+
+  Stave (vertical bar) on the left; two diagonal arms pointing to the
+  right forming an open angle. Strokes use Kern's amber accent on a
+  warm off-white (paper) ground, mirroring the brand palette.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Kern">
+  <title>Kern</title>
+
+  <!-- Rounded square background (warm paper) -->
+  <rect x="0" y="0" width="64" height="64" rx="12" ry="12" fill="#FAFAF7"/>
+
+  <!-- Subtle inset frame, almost imperceptible at small sizes -->
+  <rect x="0.5" y="0.5" width="63" height="63" rx="11.5" ry="11.5"
+        fill="none" stroke="#E5E1D8" stroke-width="1"/>
+
+  <!-- The Kaun rune ᚴ : vertical stave + two diagonal arms to the right.
+       Stroke colour = Skald amber. Linecap rounded for a softer feel
+       consistent with the Fraunces serif used everywhere else. -->
+  <g fill="none" stroke="#C2885E" stroke-width="5.5"
+     stroke-linecap="round" stroke-linejoin="round">
+    <!-- Vertical stave -->
+    <line x1="22" y1="12" x2="22" y2="52"/>
+    <!-- Upper diagonal arm: from middle of stave to upper-right -->
+    <line x1="22" y1="32" x2="46" y2="14"/>
+    <!-- Lower diagonal arm: from middle of stave to lower-right -->
+    <line x1="22" y1="32" x2="46" y2="50"/>
+  </g>
+</svg>

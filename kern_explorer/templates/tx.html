@@ -1,0 +1,41 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Tx {{ tx.hash[:12] }} — Heimdall{% endblock %}
+{% block content %}
+<section class="mb-6">
+  <a href="/txs" class="text-xs text-kern-accent hover:underline">← Transactions</a>
+  <h1 class="text-2xl font-bold mt-1">Transaction <span class="font-mono text-base">{{ tx.hash[:24] }}…</span></h1>
+  <div class="mt-2">
+    <span class="text-xs px-2 py-1 rounded {{ 'bg-emerald-100 text-emerald-800' if tx.success else 'bg-red-100 text-red-800' }}">{{ 'SUCCESS' if tx.success else 'FAILED' }}</span>
+    <span class="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300 ml-2">{{ tx.kind }}</span>
+  </div>
+</section>
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden mb-6">
+  <table class="w-full text-sm">
+    <tbody>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 w-1/4 text-xs uppercase text-gray-500">Hash</td><td class="p-2 hash">{{ tx.hash }}</td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Block</td><td class="p-2"><a href="/block/{{ tx.block_level }}" class="text-kern-accent hover:underline">#{{ tx.block_level }}</a></td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Sender</td><td class="p-2 hash"><a href="/account/{{ tx.sender }}" class="text-kern-accent hover:underline">{{ tx.sender }}</a></td></tr>
+      {% if tx.recipient %}<tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Recipient</td><td class="p-2 hash"><a href="/account/{{ tx.recipient }}" class="text-kern-accent hover:underline">{{ tx.recipient }}</a></td></tr>{% endif %}
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Amount</td><td class="p-2 font-mono">{{ tx.amount_krn }} KRN <span class="text-xs text-gray-500">({{ tx.amount }} mukrn)</span></td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Fee</td><td class="p-2 font-mono">{{ tx.fee }} mukrn</td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Nonce</td><td class="p-2 font-mono">{{ tx.nonce }}</td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Gas used</td><td class="p-2 font-mono">{{ tx.gas_used }}</td></tr>
+      {% if tx.error %}<tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Error</td><td class="p-2 text-red-700 dark:text-red-300">{{ tx.error }}</td></tr>{% endif %}
+    </tbody>
+  </table>
+</div>
+{% if tx.params %}
+<section class="mb-6">
+  <h2 class="text-sm font-semibold uppercase text-gray-500 mb-2">Params</h2>
+  <pre class="bg-white dark:bg-kern-800 rounded border border-gray-200 dark:border-kern-700 p-3 text-xs overflow-x-auto">{{ tx.params | tojson(indent=2) }}</pre>
+</section>
+{% endif %}
+{% if tx.extra %}
+<section>
+  <h2 class="text-sm font-semibold uppercase text-gray-500 mb-2">Handler result</h2>
+  <pre class="bg-white dark:bg-kern-800 rounded border border-gray-200 dark:border-kern-700 p-3 text-xs overflow-x-auto">{{ tx.extra | tojson(indent=2) }}</pre>
+</section>
+{% endif %}
+{% endblock %}

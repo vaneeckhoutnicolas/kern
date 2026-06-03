@@ -1,0 +1,74 @@
+version: "3.9"
+
+# Three-node local Kern network.
+#
+# - node1 is the baker (mounts a baker key).
+# - node2 and node3 are observer peers that gossip with node1.
+#
+# Before bringing this stack up:
+#   1. Generate keys in ../keys/  (scripts/generate_keys.py)
+#   2. Build ../genesis.json      (scripts/build_genesis.py)
+#   3. Init each node's data dir locally:
+#        for i in 1 2 3; do
+#          python -m kern.node init --genesis ./genesis.json --data-dir ./data/node$i
+#        done
+
+services:
+  node1:
+    build: ..
+    container_name: kern_node1
+    command:
+      - start
+      - --data-dir=/data
+      - --rpc-port=8732
+      - --p2p-port=9732
+      - --baker-key=/keys/baker1.json
+      - --block-time=1.0
+    ports:
+      - "8731:8732"
+      - "9731:9732"
+    volumes:
+      - ../data/node1:/data
+      - ../keys:/keys:ro
+      - ../genesis.json:/genesis.json:ro
+    networks: [kern_net]
+
+  node2:
+    build: ..
+    container_name: kern_node2
+    command:
+      - start
+      - --data-dir=/data
+      - --rpc-port=8732
+      - --p2p-port=9732
+      - --peer=node1:9732
+    ports:
+      - "8732:8732"
+      - "9732:9732"
+    volumes:
+      - ../data/node2:/data
+      - ../genesis.json:/genesis.json:ro
+    depends_on: [node1]
+    networks: [kern_net]
+
+  node3:
+    build: ..
+    container_name: kern_node3
+    command:
+      - start
+      - --data-dir=/data
+      - --rpc-port=8732
+      - --p2p-port=9732
+      - --peer=node1:9732
+    ports:
+      - "8733:8732"
+      - "9733:9732"
+    volumes:
+      - ../data/node3:/data
+      - ../genesis.json:/genesis.json:ro
+    depends_on: [node1]
+    networks: [kern_net]
+
+networks:
+  kern_net:
+    driver: bridge

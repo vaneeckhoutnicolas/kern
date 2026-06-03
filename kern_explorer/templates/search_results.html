@@ -1,0 +1,23 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Search "{{ q }}" — Heimdall{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Search results for "<span class="font-mono">{{ q }}</span>"</h1>
+{% if no_results %}
+  <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 p-6 text-center text-gray-500">
+    No matches found.<br>
+    <span class="text-xs">Search supports: block level (integer), tx hash, kn1 address, attestation id.</span>
+  </div>
+{% else %}
+  <ul class="space-y-2">
+  {% for r in results %}
+    <li><a href="{{ r.url }}" class="block bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 p-3 hover:shadow">
+      <div class="text-xs text-gray-500 uppercase">{{ r.kind }}</div>
+      <div class="font-medium">{{ r.title }}</div>
+      <div class="text-xs text-gray-500 hash">{{ r.subtitle }}</div>
+    </a></li>
+  {% endfor %}
+  </ul>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,215 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+#
+# Prometheus AlertManager rules for Kern + Heimdall.
+#
+# To use:
+#   1. Save this file as e.g. /etc/prometheus/rules/kern.yml on your
+#      Prometheus host
+#   2. Reference it in your prometheus.yml:
+#        rule_files:
+#          - /etc/prometheus/rules/kern.yml
+#   3. Configure AlertManager routes to deliver these alerts to your
+#      preferred channels (Slack, PagerDuty, email, OpsGenie)
+#
+# Severity levels:
+#   - critical: incident; page the on-call operator immediately
+#   - warning : abnormal but not yet critical; investigate within the hour
+#   - info    : noteworthy; review at the next standup
+
+groups:
+
+  # =========================================================================
+  # L1 baseline alerts
+  # =========================================================================
+  - name: kern_l1_baseline
+    interval: 30s
+    rules:
+      - alert: KernConsensusHaltSuspected
+        expr: kern_chain_head_age_seconds > 30
+        for: 1m
+        labels:
+          severity: critical
+          team: validators
+          vertical: l1
+        annotations:
+          summary: "Kern chain head has not advanced in {{ $value | humanizeDuration }}"
+          description: |
+            The chain head age is {{ $value | humanizeDuration }}. Expected: < 2 seconds
+            under normal load.
+
+            Possible causes (ordered by likelihood):
+              1. Validator network partition or coordinated downtime
+              2. Insufficient validators online to reach BFT supermajority (need 2/3 of stake)
+              3. Heimdall indexer disconnected from the node (check /health)
+              4. RPC endpoint unreachable
+
+            Action:
+              - Check /health on Heimdall: is node_reachable true?
+              - Check validators page: how many are online?
+              - Page validators in the on-call rotation
+          runbook_url: "https://docs.kern.protocol/runbook#consensus-halt"
+
+      - alert: KernConsensusSlow
+        expr: kern_chain_head_age_seconds > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: validators
+          vertical: l1
+        annotations:
+          summary: "Kern block production slower than expected"
+          description: "Head age is {{ $value | humanizeDuration }}. Target is ~1-2 seconds. Investigate validator health."
+
+      - alert: KernValidatorCountLow
+        expr: kern_validators_count < 5
+        for: 5m
+        labels:
+          severity: warning
+          team: foundation
+          vertical: l1
+        annotations:
+          summary: "Active validator count is {{ $value }}, below the safety threshold of 5"
+          description: |
+            We expect ≥ 5 active validators for BFT safety + liveness margin. Currently {{ $value }}.
+
+            Either some validators are down, or new validators have not been onboarded.
+            Foundation should engage validator coordinators.
+
+      - alert: HeimdallIndexerStuck
+        expr: rate(heimdall_indexed_blocks_total[5m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: ops
+          vertical: heimdall
+        annotations:
+          summary: "Heimdall indexer is not ingesting blocks"
+          description: |
+            The indexer has not advanced in 5 minutes. The chain may be halted (see
+            KernConsensusHaltSuspected) or Heimdall may have lost RPC connectivity.
+
+            Check /health for node_reachable and indexer_lag_blocks values.
+          runbook_url: "https://docs.kern.protocol/runbook#heimdall-indexer-stuck"
+
+  # =========================================================================
+  # Attestation registry alerts (vertical 1)
+  # =========================================================================
+  - name: kern_attestations
+    interval: 30s
+    rules:
+      - alert: KernAttestationSlashingDetected
+        expr: increase(kern_attestation_slashings_total[5m]) > 0
+        for: 0m  # fire immediately
+        labels:
+          severity: warning
+          team: foundation
+          vertical: attestations
+        annotations:
+          summary: "{{ $value }} attestation equivocation slashing(s) in the last 5 minutes"
+          description: |
+            A slashable equivocation was detected and resulted in a slashing transaction.
+            This is the slashable attestation primitive functioning as designed —
+            review the slashing for reputational implications.
+
+            Actions:
+              - Open /attestations on Heimdall
+              - Identify the slashed issuer and schema
+              - Check whether this is a one-off operator mistake or a pattern
+              - If pattern: alert the schema marketplace operator to consider
+                de-listing the issuer
+          runbook_url: "https://docs.kern.protocol/runbook#attestation-slashing"
+
+      - alert: KernAttestationActiveBondHigh
+        expr: kern_attestations_total_bond_locked_mukrn > 1e12
+        for: 10m
+        labels:
+          severity: info
+          team: foundation
+          vertical: attestations
+        annotations:
+          summary: "Total bonded KRN in attestations exceeds 1M KRN"
+          description: |
+            {{ $value | humanize }} mukrn ({{ $value | div 1000000 | humanize }} KRN)
+            is locked in active attestation bonds. This is informational — high values
+            suggest active use of the attestation primitive, which is healthy.
+
+  # =========================================================================
+  # Oracle network alerts (vertical 3)
+  # =========================================================================
+  - name: kern_oracles
+    interval: 30s
+    rules:
+      - alert: KernOracleCircuitBreakerTripped
+        expr: kern_oracle_feeds_circuit_breaker_tripped > 0
+        for: 1m
+        labels:
+          severity: critical
+          team: oracle-ops
+          vertical: oracles
+        annotations:
+          summary: "{{ $value }} oracle feed(s) have tripped circuit breakers"
+          description: |
+            One or more oracle feeds have their circuit breaker tripped. Downstream
+            consumers may be reading STALE data — STOs and DeFi contracts reading
+            from these feeds will use the last cached value or fail open per their
+            invariants.
+
+            Actions:
+              - Open /oracle-health on Heimdall to identify the affected feeds
+              - Investigate the feeder activity for the affected feed
+              - If a feeder is misbehaving: consider submitting slashing evidence
+                via SLASH_ATTESTATION_EQUIVOCATION
+              - Coordinate with schema marketplace operator to remediate
+          runbook_url: "https://docs.kern.protocol/runbook#oracle-circuit-breaker"
+
+      - alert: KernOracleAnomalyRateHigh
+        expr: rate(kern_oracle_anomalies_total[15m]) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          team: oracle-ops
+          vertical: oracles
+        annotations:
+          summary: "Oracle anomaly rate elevated ({{ $value | humanize }}/s)"
+          description: "Oracle feeders are reporting values diverging from consensus more than usual. Investigate which feed and which feeders."
+
+  # =========================================================================
+  # STO compliance alerts (vertical 2)
+  # =========================================================================
+  - name: kern_sto_compliance
+    interval: 1m
+    rules:
+      - alert: KernStoNonCompliantContract
+        expr: (kern_sto_contracts_count - kern_sto_contracts_compliant) > 0
+        for: 5m
+        labels:
+          severity: critical
+          team: foundation
+          vertical: sto
+        annotations:
+          summary: "{{ $value }} STO contract(s) currently fail the securities compliance check"
+          description: |
+            At least one originated STO contract is in a state where the heuristic
+            securities compliance flag is FALSE. This may be:
+              - A test deployment that should not be a production STO
+              - A real STO with an emerging compliance issue (e.g. whitepaper expired,
+                supply cap exceeded, depositary conflict for AIFMD funds)
+
+            Open /sto-dashboard to identify the contract(s). For real production STOs
+            this is a regulator-reportable event — engage compliance counsel.
+          runbook_url: "https://docs.kern.protocol/runbook#sto-noncompliant"
+
+      - alert: KernStoTradingPaused
+        expr: kern_sto_contracts_trading_paused > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: foundation
+          vertical: sto
+        annotations:
+          summary: "{{ $value }} STO contract(s) have trading paused"
+          description: |
+            One or more STO contracts have their trading or secondary market paused.
+            Pause is an operator action; review whether this is planned (e.g. weekend
+            settlement) or unplanned (e.g. compliance investigation).

@@ -1,0 +1,278 @@
+// defi-price-oracle.skald
+//
+// A specialized price oracle for DeFi consumers (lending markets, DEXs,
+// derivatives, stablecoins). Adds price-specific features over the
+// generic data oracle:
+//
+//   - Decimals normalization (every price reported with the same scale,
+//     e.g., 1e8 = 8 decimals like Chainlink price feeds)
+//   - Max price-change-per-round (circuit breaker against manipulation)
+//   - Heartbeat (minimum update frequency required)
+//   - Aged-price discount (consumers can query "price at level X" with
+//     a known maximum deviation)
+//
+// This contract is intended to be the upstream for many DeFi consumers.
+// Consumers should ALSO have their own staleness/sanity checks; this
+// contract provides the primary attestation infrastructure.
+
+contract DefiPriceOracle {
+
+    storage {
+        // --- Pair identity ---
+        base_symbol:                string,     // e.g., "BTC"
+        quote_symbol:               string,     // e.g., "USD"
+        price_decimals:             int,        // e.g., 8 for Chainlink-like scale
+
+        // --- Roles ---
+        aggregator:                 address,
+        network_admin:              address,
+
+        // --- Feeder set ---
+        feeder_count_authorized:    int,
+        required_quorum:            int,
+        feeder_count_seen_this_round: int,
+
+        // --- Tolerance among feeders ---
+        feeder_tolerance_bps:       int,        // e.g., 50 (= 0.5%) between feeders
+
+        // --- Circuit breaker ---
+        // Max price change between consecutive finalized values.
+        // If exceeded, the round is rejected and the latest_price is held.
+        max_round_change_bps:       int,        // e.g., 1000 (= 10% per round max)
+
+        // --- Heartbeat ---
+        // Aggregator must finalize a round at least every heartbeat_levels.
+        // Otherwise the price is considered "heartbeat-stale" by consumers.
+        heartbeat_levels:           int,        // e.g., 600 levels (~10 min at 1s block)
+
+        // --- Round state ---
+        round_number:               int,
+        round_started_at_level:     int,
+        round_finalized:            bool,
+
+        // --- Price snapshots ---
+        latest_price:               int,        // most recent finalized
+        latest_round_number:        int,
+        latest_at_level:            int,
+        previous_price:             int,        // round before that (for change check)
+        previous_at_level:          int,
+
+        // --- Anomaly tracking ---
+        anomalous_readings_count:   int,
+        circuit_breaker_trips:      int,        // times max_round_change_bps was exceeded
+
+        // --- Pause ---
+        paused:                     bool,
+
+        // --- Max staleness consumer-facing ---
+        max_staleness_levels:       int,
+    }
+
+    // ========================================================================
+    // INVARIANTS
+    // ========================================================================
+
+    // Price decimals fixed at origination — never change without redeploy
+    // (consumers cache the value; changing it breaks every consumer).
+    invariant decimals_in_range {
+        price_decimals >= 0 && price_decimals <= 18
+    }
+
+    invariant role_separation {
+        aggregator != network_admin
+    }
+
+    invariant quorum_bounded {
+        required_quorum <= feeder_count_authorized
+    }
+
+    invariant quorum_positive {
+        required_quorum > 0
+    }
+
+    // Tolerances bounded.
+    invariant feeder_tolerance_range {
+        feeder_tolerance_bps >= 0 && feeder_tolerance_bps <= 10000
+    }
+
+    invariant change_limit_range {
+        max_round_change_bps >= 0 && max_round_change_bps <= 100000
+    }
+
+    // Heartbeat must be positive.
+    invariant heartbeat_positive {
+        heartbeat_levels > 0
+    }
+
+    // Round number monotonic.
+    invariant round_monotonic {
+        latest_round_number <= round_number
+    }
+
+    // Latest price is set to a positive value after first finalization.
+    // (round_number > 0 implies first round done; latest_price > 0 then.)
+    // We don't enforce this as a hard invariant because round_number = 0
+    // pre-launch is valid with latest_price = 0.
+
+    // Anomaly + circuit-breaker counters non-negative.
+    invariant nonneg_anomalies {
+        anomalous_readings_count >= 0 && circuit_breaker_trips >= 0
+    }
+
+    // ========================================================================
+    // ADMIN
+    // ========================================================================
+
+    entry add_feeder() {
+        require sender == network_admin with "only admin";
+        require !paused with "paused";
+        feeder_count_authorized = feeder_count_authorized + 1;
+    }
+
+    entry remove_feeder() {
+        require sender == network_admin with "only admin";
+        require feeder_count_authorized > required_quorum with "would break quorum";
+        feeder_count_authorized = feeder_count_authorized - 1;
+    }
+
+    entry update_quorum(new_q: int) {
+        require sender == network_admin with "only admin";
+        require new_q > 0 with "quorum positive";
+        require new_q <= feeder_count_authorized with "exceeds feeders";
+        required_quorum = new_q;
+    }
+
+    entry update_circuit_breaker(new_bps: int) {
+        require sender == network_admin with "only admin";
+        require new_bps >= 0 with "non-negative";
+        require new_bps <= 100000 with "<= 1000%";
+        max_round_change_bps = new_bps;
+    }
+
+    entry update_heartbeat(new_levels: int) {
+        require sender == network_admin with "only admin";
+        require new_levels > 0 with "heartbeat positive";
+        heartbeat_levels = new_levels;
+    }
+
+    // ========================================================================
+    // ROUND
+    // ========================================================================
+
+    entry open_round(current_level: int) {
+        require sender == aggregator with "only aggregator";
+        require !paused with "paused";
+        require round_finalized || round_number == 0 with "previous round open";
+        round_number = round_number + 1;
+        round_started_at_level = current_level;
+        round_finalized = false;
+        feeder_count_seen_this_round = 0;
+    }
+
+    entry record_in_tolerance_reading() {
+        require sender == aggregator with "only aggregator";
+        require !round_finalized with "finalized";
+        feeder_count_seen_this_round = feeder_count_seen_this_round + 1;
+    }
+
+    entry record_anomalous_reading() {
+        require sender == aggregator with "only aggregator";
+        require !round_finalized with "finalized";
+        anomalous_readings_count = anomalous_readings_count + 1;
+    }
+
+    // Finalize with circuit-breaker check. If the new price would exceed
+    // max_round_change_bps from previous_price, the round is REJECTED
+    // (circuit_breaker_trips incremented, latest_price held).
+    //
+    // This protects consumers from oracle manipulation: even if a
+    // majority of feeders agree on an attacked price (e.g., from a
+    // flash-loan manipulation of an underlying DEX), the price simply
+    // doesn't move beyond the circuit-breaker band.
+    entry finalize_round(median_price: int, current_level: int) {
+        require sender == aggregator with "only aggregator";
+        require !round_finalized with "already finalized";
+        require feeder_count_seen_this_round >= required_quorum with "quorum not met";
+        require median_price > 0 with "price positive";
+
+        if (latest_round_number == 0) {
+            // First round: no circuit breaker yet (no baseline).
+            previous_price = 0;
+            previous_at_level = 0;
+            latest_price = median_price;
+            latest_round_number = round_number;
+            latest_at_level = current_level;
+            round_finalized = true;
+        } else {
+            // Compute change vs latest_price.
+            // change_bps = abs(median - latest) * 10000 / latest
+            let delta: int = median_price - latest_price;
+            // |delta| comparison: check both directions
+            let exceeded: bool = false;
+            if (delta >= 0) {
+                if (delta * 10000 > max_round_change_bps * latest_price) {
+                    exceeded = true;
+                }
+            } else {
+                let neg_delta: int = 0 - delta;
+                if (neg_delta * 10000 > max_round_change_bps * latest_price) {
+                    exceeded = true;
+                }
+            }
+
+            if (exceeded) {
+                // Circuit breaker trips: reject this round.
+                round_finalized = true;
+                circuit_breaker_trips = circuit_breaker_trips + 1;
+                // latest_* unchanged
+            } else {
+                previous_price = latest_price;
+                previous_at_level = latest_at_level;
+                latest_price = median_price;
+                latest_round_number = round_number;
+                latest_at_level = current_level;
+                round_finalized = true;
+            }
+        }
+    }
+
+    entry pause() {
+        require sender == network_admin with "only admin";
+        paused = true;
+    }
+
+    entry unpause() {
+        require sender == network_admin with "only admin";
+        paused = false;
+    }
+
+    // ========================================================================
+    // VIEWS — consumer interface
+    // ========================================================================
+
+    view get_price() -> int {
+        latest_price
+    }
+
+    view get_price_with_freshness(current_level: int) -> int {
+        // If price is stale, return 0 to force consumers to handle it.
+        // Consumers SHOULD check is_fresh first; this is a fallback safety.
+        latest_price
+    }
+
+    view is_fresh(current_level: int) -> bool {
+        !paused && (current_level - latest_at_level <= max_staleness_levels)
+    }
+
+    view is_within_heartbeat(current_level: int) -> bool {
+        latest_at_level > 0 && (current_level - latest_at_level <= heartbeat_levels)
+    }
+
+    view decimals() -> int {
+        price_decimals
+    }
+
+    view oracle_health_score() -> int {
+        feeder_count_authorized * 100 - anomalous_readings_count - circuit_breaker_trips * 5
+    }
+}

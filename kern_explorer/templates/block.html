@@ -1,0 +1,42 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Block #{{ block.level }} — Heimdall{% endblock %}
+{% block content %}
+<section class="mb-6">
+  <a href="/blocks" class="text-xs text-kern-accent hover:underline">← Blocks</a>
+  <h1 class="text-2xl font-bold">Block <span class="font-mono">#{{ block.level }}</span></h1>
+</section>
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden mb-6">
+  <table class="w-full text-sm">
+    <tbody>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 w-1/4 text-xs uppercase text-gray-500">Hash</td><td class="p-2 hash">{{ block.hash }}</td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Parent</td><td class="p-2 hash">{% if block.parent_hash %}<a href="/block/{{ block.level - 1 }}" class="text-kern-accent hover:underline">{{ block.parent_hash }}</a>{% else %}—{% endif %}</td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Baker</td><td class="p-2 hash">{% if block.baker %}<a href="/account/{{ block.baker }}" class="text-kern-accent hover:underline">{{ block.baker }}</a>{% else %}—{% endif %}</td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Timestamp</td><td class="p-2">{{ block.timestamp }} <span class="text-xs text-gray-500">({{ block.age }})</span></td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Tx count</td><td class="p-2">{{ block.tx_count }}</td></tr>
+    </tbody>
+  </table>
+</div>
+{% if txs %}
+<section>
+  <h2 class="text-lg font-semibold mb-3">Transactions in this block</h2>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500"><tr><th class="text-left p-2">Kind</th><th class="text-left p-2">Hash</th><th class="text-left p-2">Sender</th><th class="text-left p-2">Recipient</th><th class="text-right p-2">Amount</th></tr></thead>
+      <tbody>
+      {% for tx in txs %}
+        <tr class="border-t border-gray-100 dark:border-kern-700">
+          <td class="p-2"><span class="text-xs px-1.5 py-0.5 rounded {{ 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' if tx.success else 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300' }}">{{ tx.kind }}</span></td>
+          <td class="p-2"><a href="/tx/{{ tx.hash }}" class="hash truncate-hash" title="{{ tx.hash }}">{{ tx.hash }}</a></td>
+          <td class="p-2"><a href="/account/{{ tx.sender }}" class="hash truncate-hash" title="{{ tx.sender }}">{{ tx.sender }}</a></td>
+          <td class="p-2">{% if tx.recipient %}<a href="/account/{{ tx.recipient }}" class="hash truncate-hash" title="{{ tx.recipient }}">{{ tx.recipient }}</a>{% else %}—{% endif %}</td>
+          <td class="p-2 text-right font-mono text-xs">{{ tx.amount_krn }} KRN</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

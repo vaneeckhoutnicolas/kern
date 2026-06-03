@@ -1,0 +1,1814 @@
+<!--
+  SPDX-License-Identifier: Apache-2.0
+  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+
+  Kern — whitepaper, rendered from docs/whitepaper.md.
+  Regenerate with: python3 build_whitepaper.py
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kern Whitepaper — Whitepaper</title>
+  <meta name="description" content="Whitepaper for Kern, a Layer-1 blockchain protocol for institutional legibility. Nicolas Van Eeckhout (founder) and contributors.">
+  <meta name="author" content="Nicolas Van Eeckhout">
+
+  <meta property="og:title" content="Kern Whitepaper — Kern Whitepaper">
+  <meta property="og:description" content="The full whitepaper for Kern: thesis, primitives, verticals, roadmap.">
+  <meta property="og:type" content="article">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..900,0..100,0..1&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    /* ===================================================================
+       Design tokens — Nordic editorial (shared with index.html)
+       =================================================================== */
+    :root {
+      --bg-paper: #FAFAF7;
+      --bg-elevated: #FFFFFF;
+      --bg-deep: #0E1A2B;
+      --ink-primary: #0E1A2B;
+      --ink-secondary: #3D4A5E;
+      --ink-muted: #7A8595;
+      --ink-faint: #B5BDC9;
+      --ink-inverse: #FAFAF7;
+      --rule: #E5E1D8;
+      --rule-strong: #C9C3B5;
+      --amber: #C2885E;
+      --amber-deep: #8E5E3A;
+      --bifrost: #1E3A8A;
+      --moss: #5C7553;
+      --rust: #A24E3C;
+
+      --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+      --font-body:    "Instrument Sans", "Söhne", "Helvetica Neue", system-ui, sans-serif;
+      --font-mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: 1.0625rem;          /* 17px body for long-form */
+      line-height: 1.7;
+      color: var(--ink-primary);
+      background: var(--bg-paper);
+      font-variation-settings: "opsz" 18, "SOFT" 50;
+      font-feature-settings: "kern", "liga", "calt";
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      background-image:
+        radial-gradient(at 90% 0%, rgba(194, 136, 94, 0.035) 0%, transparent 60%),
+        radial-gradient(at 0% 100%, rgba(30, 58, 138, 0.02) 0%, transparent 50%);
+      background-attachment: fixed;
+    }
+
+    ::selection { background: var(--ink-primary); color: var(--bg-paper); }
+    a { color: inherit; }
+
+    .skip-link {
+      position: absolute; left: -9999px; top: 0;
+      background: var(--ink-primary); color: var(--ink-inverse);
+      padding: 0.5rem 1rem; z-index: 100;
+    }
+    .skip-link:focus { left: 1rem; top: 1rem; }
+
+    /* Scroll progress bar */
+    .progress {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: transparent;
+      z-index: 60;
+      pointer-events: none;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(to right, var(--amber), var(--amber-deep));
+      width: 0;
+      transition: width 0.05s linear;
+    }
+
+    /* ===================================================================
+       Header
+       =================================================================== */
+    .site-header {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(250, 250, 247, 0.92);
+      backdrop-filter: saturate(180%) blur(12px);
+      -webkit-backdrop-filter: saturate(180%) blur(12px);
+      border-bottom: 1px solid var(--rule);
+    }
+    .header-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0.85rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1.5rem;
+    }
+    .brand {
+      display: flex; align-items: baseline; gap: 0.55rem;
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      letter-spacing: -0.02em;
+      font-variation-settings: "opsz" 144;
+      text-decoration: none;
+      color: var(--ink-primary);
+    }
+    .brand .rune {
+      font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display);
+      font-size: 1.4em; color: var(--amber); transform: translateY(2px);
+    }
+    .brand .where {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin-left: 0.6rem;
+    }
+    .header-nav {
+      display: flex; gap: 1.25rem; align-items: center;
+      font-family: var(--font-body);
+      font-size: 0.875rem;
+      color: var(--ink-secondary);
+    }
+    .header-nav a { text-decoration: none; transition: color 0.18s; }
+    .header-nav a:hover { color: var(--ink-primary); }
+    .header-actions { display: flex; gap: 0.6rem; align-items: center; }
+    .btn-ghost, .btn-primary {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.5rem 1rem;
+      border-radius: 999px;
+      font-family: var(--font-body);
+      font-size: 0.8125rem;
+      font-weight: 500;
+      text-decoration: none;
+      transition: all 0.18s;
+    }
+    .btn-ghost {
+      color: var(--ink-secondary);
+      border: 1px solid var(--rule-strong);
+      background: transparent;
+    }
+    .btn-ghost:hover { color: var(--ink-primary); border-color: var(--ink-primary); }
+    .btn-primary {
+      background: var(--ink-primary); color: var(--ink-inverse);
+      border: 1px solid var(--ink-primary);
+    }
+    .btn-primary:hover { background: var(--amber-deep); border-color: var(--amber-deep); }
+
+    /* ===================================================================
+       Layout: cover + (sidebar + article)
+       =================================================================== */
+    .cover {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 6rem 1.5rem 4rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .cover::before {
+      content: "ᚴ";
+      position: absolute;
+      top: 25%;
+      left: 50%;
+      transform: translate(-50%, 0);
+      font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display);
+      font-size: clamp(18rem, 30vw, 26rem);
+      color: var(--amber);
+      opacity: 0.04;
+      line-height: 1;
+      pointer-events: none;
+      user-select: none;
+      z-index: 0;
+    }
+    .cover > * { position: relative; z-index: 1; }
+    .cover-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin: 0 0 1.75rem;
+    }
+    .cover-eyebrow span { color: var(--amber-deep); }
+    .cover h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2.5rem, 6vw, 5rem);
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+      font-weight: 350;
+      font-variation-settings: "opsz" 144, "SOFT" 60, "WONK" 1;
+      margin: 0 auto;
+      max-width: 18ch;
+    }
+    .cover h1 em {
+      font-style: italic;
+      font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1;
+      color: var(--amber-deep);
+    }
+    .cover-byline {
+      font-family: var(--font-display);
+      font-style: italic;
+      font-size: 1rem;
+      color: var(--ink-muted);
+      margin: 2rem 0 0;
+      font-variation-settings: "opsz" 30, "SOFT" 80, "WONK" 1;
+    }
+    .cover-meta {
+      margin: 3rem 0 0;
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      flex-wrap: wrap;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+      color: var(--ink-muted);
+    }
+    .cover-meta .meta-item {
+      display: flex; flex-direction: column; align-items: center; gap: 0.25rem;
+    }
+    .cover-meta .meta-label {
+      font-size: 0.625rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+    }
+    .cover-meta .meta-value {
+      font-family: var(--font-display);
+      font-size: 1.125rem;
+      color: var(--ink-primary);
+      font-variation-settings: "opsz" 30;
+      font-feature-settings: "tnum";
+    }
+    .cover-rule {
+      width: 60px;
+      height: 1px;
+      background: var(--ink-primary);
+      margin: 3rem auto 0;
+    }
+
+    /* Two-column layout */
+    .layout {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 1.5rem 6rem;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 3rem;
+    }
+    @media (min-width: 980px) {
+      .layout {
+        grid-template-columns: 260px 1fr;
+        gap: 5rem;
+      }
+    }
+
+    /* ===================================================================
+       Sidebar TOC
+       =================================================================== */
+    .sidebar {
+      position: relative;
+    }
+    @media (min-width: 980px) {
+      .sidebar {
+        position: sticky;
+        top: 5rem;
+        height: calc(100vh - 7rem);
+        overflow-y: auto;
+        padding-right: 0.5rem;
+        scrollbar-width: thin;
+        scrollbar-color: var(--rule-strong) transparent;
+      }
+      .sidebar::-webkit-scrollbar { width: 6px; }
+      .sidebar::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 3px; }
+    }
+    .toc-title {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin-bottom: 1rem;
+      padding-bottom: 0.6rem;
+      border-bottom: 1px solid var(--rule);
+    }
+    .toc-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      counter-reset: toc-h2;
+    }
+    .toc-list .toc-h2 {
+      margin-bottom: 0.4rem;
+    }
+    .toc-list .toc-h2 > a {
+      display: grid;
+      grid-template-columns: 1.75rem 1fr;
+      gap: 0.4rem;
+      align-items: baseline;
+      padding: 0.35rem 0;
+      font-family: var(--font-body);
+      font-size: 0.875rem;
+      color: var(--ink-secondary);
+      text-decoration: none;
+      line-height: 1.35;
+      transition: color 0.15s;
+      border-left: 2px solid transparent;
+      padding-left: 0.5rem;
+      margin-left: -0.5rem;
+    }
+    .toc-list .toc-h2 > a:hover {
+      color: var(--ink-primary);
+    }
+    .toc-list .toc-h2.is-current > a {
+      color: var(--ink-primary);
+      border-left-color: var(--amber);
+    }
+    .toc-list .toc-h2.is-current .toc-num {
+      color: var(--amber-deep);
+    }
+    .toc-num {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--ink-muted);
+      font-feature-settings: "tnum";
+    }
+    .toc-list .toc-h2.toc-unnumbered > a {
+      grid-template-columns: 1fr;
+    }
+    .toc-sublist {
+      list-style: none;
+      padding: 0 0 0.25rem 2.25rem;
+      margin: 0 0 0.5rem;
+      font-family: var(--font-body);
+      font-size: 0.8125rem;
+    }
+    .toc-sublist li {
+      margin: 0.15rem 0;
+    }
+    .toc-sublist a {
+      color: var(--ink-muted);
+      text-decoration: none;
+      padding: 0.15rem 0;
+      display: block;
+      transition: color 0.15s;
+    }
+    .toc-sublist a:hover {
+      color: var(--ink-secondary);
+    }
+    .toc-sublist a.is-current {
+      color: var(--amber-deep);
+    }
+
+    /* ===================================================================
+       Article — long-form typography
+       =================================================================== */
+    .article {
+      max-width: 660px;
+      font-family: var(--font-display);
+      font-size: 1.0625rem;
+      line-height: 1.72;
+      color: var(--ink-primary);
+      font-variation-settings: "opsz" 18, "SOFT" 50;
+    }
+    .article p, .article ul, .article ol, .article blockquote {
+      margin: 0 0 1.5rem;
+    }
+    .article ul, .article ol { padding-left: 1.5rem; }
+    .article li { margin-bottom: 0.4rem; }
+    .article li::marker { color: var(--amber); }
+
+    /* H2 — major section markers with hanging § number */
+    .article h2 {
+      font-family: var(--font-display);
+      font-size: 2.25rem;
+      line-height: 1.1;
+      letter-spacing: -0.025em;
+      font-weight: 350;
+      font-variation-settings: "opsz" 144, "SOFT" 60, "WONK" 1;
+      margin: 5rem 0 1.75rem;
+      padding-top: 3rem;
+      border-top: 1px solid var(--rule);
+      color: var(--ink-primary);
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.5rem;
+    }
+    @media (min-width: 760px) {
+      .article h2 {
+        grid-template-columns: 1fr;
+      }
+    }
+    .article h2 .hash {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      color: var(--amber);
+      font-weight: 500;
+      text-transform: uppercase;
+      align-self: start;
+      margin-bottom: 0.2rem;
+      display: block;
+    }
+    .article h2 .htext {
+      display: block;
+    }
+    /* The Abstract H2 (unnumbered) */
+    .article > h2:first-of-type {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: 0;
+    }
+
+    .article h3 {
+      font-family: var(--font-display);
+      font-size: 1.375rem;
+      line-height: 1.3;
+      letter-spacing: -0.015em;
+      font-weight: 400;
+      font-variation-settings: "opsz" 144, "SOFT" 30;
+      margin: 2.5rem 0 1rem;
+      color: var(--ink-primary);
+    }
+    .article h4 {
+      font-family: var(--font-body);
+      font-size: 0.875rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--ink-secondary);
+      margin: 2rem 0 0.75rem;
+    }
+
+    /* Drop cap on the first paragraph of each section */
+    .article .lede {
+      font-size: 1.1875rem;
+      line-height: 1.65;
+      color: var(--ink-primary);
+    }
+    .article .dropcap {
+      float: left;
+      font-family: var(--font-display);
+      font-size: 4.5rem;
+      line-height: 0.85;
+      padding: 0.4rem 0.65rem 0 0;
+      margin-top: 0.15rem;
+      color: var(--amber-deep);
+      font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1;
+      font-weight: 400;
+    }
+
+    /* Strong + em + inline code */
+    .article strong {
+      font-weight: 600;
+      color: var(--ink-primary);
+    }
+    .article em {
+      font-style: italic;
+      font-variation-settings: "opsz" 18, "SOFT" 100, "WONK" 1;
+    }
+    .article code {
+      font-family: var(--font-mono);
+      font-size: 0.875em;
+      background: rgba(194, 136, 94, 0.08);
+      padding: 0.1em 0.35em;
+      border-radius: 3px;
+      color: var(--amber-deep);
+    }
+
+    /* Code blocks */
+    .article pre {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      line-height: 1.55;
+      background: var(--bg-deep);
+      color: var(--ink-inverse);
+      padding: 1.25rem 1.5rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 1.75rem 0;
+      border-left: 3px solid var(--amber);
+    }
+    .article pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+
+    /* Blockquotes — used as pull-style asides in the original markdown */
+    .article blockquote {
+      border-left: 2px solid var(--amber);
+      padding: 0.25rem 0 0.25rem 1.5rem;
+      margin: 1.75rem 0;
+      font-style: italic;
+      color: var(--ink-secondary);
+      font-variation-settings: "opsz" 18, "SOFT" 100, "WONK" 1;
+    }
+    .article blockquote p { margin-bottom: 0.6rem; }
+    .article blockquote p:last-child { margin-bottom: 0; }
+
+    /* Tables — keep them legible at narrow widths */
+    .article table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 2rem 0;
+      font-family: var(--font-body);
+      font-size: 0.875rem;
+      display: block;
+      overflow-x: auto;
+    }
+    .article table thead {
+      border-bottom: 2px solid var(--ink-primary);
+    }
+    .article table th {
+      text-align: left;
+      padding: 0.75rem 0.85rem;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      font-weight: 500;
+    }
+    .article table td {
+      padding: 0.9rem 0.85rem;
+      border-bottom: 1px solid var(--rule);
+      color: var(--ink-secondary);
+      vertical-align: top;
+      line-height: 1.5;
+    }
+    .article table tbody tr:last-child td { border-bottom: 0; }
+
+    /* Links */
+    .article a {
+      color: var(--amber-deep);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(194, 136, 94, 0.4);
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .article a:hover {
+      color: var(--ink-primary);
+      border-bottom-color: var(--ink-primary);
+    }
+
+    /* Horizontal rules from the markdown source */
+    .article hr {
+      border: 0;
+      height: 1px;
+      background: var(--rule);
+      margin: 4rem auto;
+      width: 60%;
+    }
+
+    /* The TOC inside the markdown body — we have a sidebar so de-emphasize */
+    .article .toc-h3-inline { display: none; }
+
+    /* Footnotes (from markdown extra) */
+    .article .footnote {
+      font-size: 0.875rem;
+      color: var(--ink-muted);
+      padding-top: 2rem;
+      margin-top: 4rem;
+      border-top: 1px solid var(--rule);
+    }
+
+    /* ===================================================================
+       Footer
+       =================================================================== */
+    .site-footer {
+      background: var(--bg-deep);
+      color: var(--ink-inverse);
+      padding: 3rem 0 1.5rem;
+      margin-top: 5rem;
+    }
+    .footer-inner {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 2.5rem;
+      margin-bottom: 2.5rem;
+    }
+    @media (min-width: 760px) {
+      .footer-grid { grid-template-columns: 2fr 1fr 1fr; }
+    }
+    .footer-brand {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      margin-bottom: 0.75rem;
+      font-variation-settings: "opsz" 144;
+    }
+    .footer-brand .rune { color: var(--amber); font-family: "Noto Sans Runic", "Segoe UI Historic", var(--font-display); }
+    .footer-tagline {
+      font-family: var(--font-display);
+      font-style: italic;
+      color: rgba(250, 250, 247, 0.55);
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      max-width: 36ch;
+      font-variation-settings: "opsz" 30, "SOFT" 80, "WONK" 1;
+      margin: 0;
+    }
+    .footer-grid h5 {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(250, 250, 247, 0.5);
+      margin: 0 0 1rem;
+      font-weight: 500;
+    }
+    .footer-grid ul {
+      list-style: none; padding: 0; margin: 0;
+      display: flex; flex-direction: column; gap: 0.5rem;
+      font-size: 0.875rem;
+    }
+    .footer-grid a {
+      color: rgba(250, 250, 247, 0.75);
+      text-decoration: none;
+      transition: color 0.18s;
+    }
+    .footer-grid a:hover { color: var(--ink-inverse); }
+    .footer-bottom {
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      padding-top: 1.25rem;
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: rgba(250, 250, 247, 0.4);
+      letter-spacing: 0.04em;
+    }
+
+    /* ===================================================================
+       Print stylesheet — give institutions a clean PDF
+       =================================================================== */
+    @media print {
+      .site-header, .sidebar, .progress, .site-footer { display: none !important; }
+      body { background: white; color: black; font-size: 11pt; }
+      .cover { padding: 2rem 0; }
+      .cover::before { display: none; }
+      .layout { display: block; padding: 0; max-width: none; }
+      .article { max-width: none; font-size: 11pt; line-height: 1.45; }
+      .article h2 { break-before: page; margin-top: 0; }
+      .article a { color: black; border-bottom: 0; }
+      .article a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 0.85em; color: #555; }
+      .article pre { background: #f4f4f4; color: black; border-left-color: #999; }
+      .article code { background: #f4f4f4; color: black; }
+    }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="favicon-dark.svg" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="apple-touch-icon" href="apple-touch-icon.svg">
+  <meta name="theme-color" content="#FAFAF7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E1A2B" media="(prefers-color-scheme: dark)">
+</head>
+<body>
+
+<a href="#article" class="skip-link">Skip to whitepaper content</a>
+
+<div class="progress" aria-hidden="true"><div class="progress-bar" id="progress-bar"></div></div>
+
+<header class="site-header">
+  <div class="header-inner">
+    <a href="index.html" class="brand">
+      <span class="rune" aria-hidden="true">ᚴ</span>
+      <span>Kern</span>
+      <span class="where">whitepaper</span>
+    </a>
+    <nav class="header-nav" aria-label="Section quick access">
+      <a href="how-it-works.html">How it works</a>
+      <a href="use-cases.html">Use cases</a>
+      <a href="#abstract">Abstract</a>
+      <a href="#4-the-core-thesis-institutional-legibility">Thesis</a>
+      <a href="#11-token-economy">Economy</a>
+      <a href="#14-v12-roadmap">Roadmap</a>
+      <a href="glossary.html">Glossary</a>
+    </nav>
+    <div class="header-actions">
+      <button class="btn-ghost" onclick="window.print()" title="Print or save as PDF">Print / PDF</button>
+      <a href="https://www.linkedin.com/in/vaneeckhout/" class="btn-primary" target="_blank" rel="noopener">Follow on LinkedIn →</a>
+    </div>
+  </div>
+</header>
+
+<main>
+<!-- ====================================================================
+     COVER
+     ==================================================================== -->
+<section class="cover">
+  <p class="cover-eyebrow">Whitepaper · <span>v1.1 release candidate</span> · June 2026</p>
+  <h1>Kern Whitepaper</h1>
+  <p class="cover-byline">Nicolas Van Eeckhout · Kern contributors</p>
+  <div class="cover-meta">
+    <div class="meta-item">
+      <span class="meta-label">Sections</span>
+      <span class="meta-value">20</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">Reading</span>
+      <span class="meta-value">~56 min</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">Words</span>
+      <span class="meta-value">11 107</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">License</span>
+      <span class="meta-value mono" style="font-family: var(--font-mono); font-size: 0.875rem;">CC-BY-SA-4.0</span>
+    </div>
+  </div>
+  <div class="cover-rule"></div>
+</section>
+
+<!-- ====================================================================
+     TWO-COLUMN: SIDEBAR + ARTICLE
+     ==================================================================== -->
+<div class="layout">
+  <aside class="sidebar">
+    <nav class="toc" aria-label="Whitepaper sections"><div class="toc-title">Contents</div><ol class="toc-list"><li class="toc-h2 toc-unnumbered"><a href="#abstract" data-anchor="abstract"><span class="toc-text">Abstract</span></a><ol class="toc-sublist"></ol></li><li class="toc-h2"><a href="#1-ambition" data-anchor="1-ambition"><span class="toc-num">01</span><span class="toc-text">Ambition</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#11-why-the-conviction-that-drives-kern" data-anchor="11-why-the-conviction-that-drives-kern">1.1 WHY — the conviction that drives Kern</a></li><li class="toc-h3"><a href="#12-how-the-design-principles-that-constrain-kern" data-anchor="12-how-the-design-principles-that-constrain-kern">1.2 HOW — the design principles that constrain Kern</a></li><li class="toc-h3"><a href="#13-what-the-deliverables" data-anchor="13-what-the-deliverables">1.3 WHAT — the deliverables</a></li></ol></li><li class="toc-h2"><a href="#2-motivation" data-anchor="2-motivation"><span class="toc-num">02</span><span class="toc-text">Motivation</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#21-the-structural-gap-in-existing-layer-1-protocols" data-anchor="21-the-structural-gap-in-existing-layer-1-protocols">2.1 The structural gap in existing Layer-1 protocols</a></li><li class="toc-h3"><a href="#22-what-this-thesis-implies" data-anchor="22-what-this-thesis-implies">2.2 What this thesis implies</a></li><li class="toc-h3"><a href="#23-what-kern-is-and-is-not" data-anchor="23-what-kern-is-and-is-not">2.3 What Kern is and is not</a></li></ol></li><li class="toc-h2"><a href="#3-use-cases-envisioned" data-anchor="3-use-cases-envisioned"><span class="toc-num">03</span><span class="toc-text">Use cases envisioned</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#31-persona-a-a-belgian-fintech-tokenizing-private-equity" data-anchor="31-persona-a-a-belgian-fintech-tokenizing-private-equity">3.1 Persona A — A Belgian fintech tokenizing private equity</a></li><li class="toc-h3"><a href="#32-persona-b-an-eu-institutional-fund-tokenizing-a-private-debt-strategy" data-anchor="32-persona-b-an-eu-institutional-fund-tokenizing-a-private-debt-strategy">3.2 Persona B — An EU institutional fund tokenizing a private-debt strategy</a></li><li class="toc-h3"><a href="#33-persona-c-a-french-scpi-real-estate-investment-vehicle" data-anchor="33-persona-c-a-french-scpi-real-estate-investment-vehicle">3.3 Persona C — A French SCPI (real estate investment vehicle)</a></li><li class="toc-h3"><a href="#34-persona-d-unesco-regional-office-running-heritage-preservation-grants" data-anchor="34-persona-d-unesco-regional-office-running-heritage-preservation-grants">3.4 Persona D — UNESCO regional office running heritage preservation grants</a></li><li class="toc-h3"><a href="#35-persona-e-an-eu-tso-transmission-system-operator-for-energy-settlement" data-anchor="35-persona-e-an-eu-tso-transmission-system-operator-for-energy-settlement">3.5 Persona E — An EU TSO (Transmission System Operator) for energy settlement</a></li><li class="toc-h3"><a href="#36-persona-f-an-eu-telco-settling-inter-operator-roaming-and-wholesale-traffic" data-anchor="36-persona-f-an-eu-telco-settling-inter-operator-roaming-and-wholesale-traffic">3.6 Persona F — An EU telco settling inter-operator roaming and wholesale traffic</a></li><li class="toc-h3"><a href="#37-persona-g-a-pharma-supply-chain-anti-counterfeiting-program" data-anchor="37-persona-g-a-pharma-supply-chain-anti-counterfeiting-program">3.7 Persona G — A pharma supply chain anti-counterfeiting program</a></li><li class="toc-h3"><a href="#38-persona-h-a-parametric-insurance-product-weather-based-farm-insurance" data-anchor="38-persona-h-a-parametric-insurance-product-weather-based-farm-insurance">3.8 Persona H — A parametric insurance product (weather-based farm insurance)</a></li><li class="toc-h3"><a href="#39-persona-i-a-carbon-credit-registry-tracking-offset-issuance-and-retirement" data-anchor="39-persona-i-a-carbon-credit-registry-tracking-offset-issuance-and-retirement">3.9 Persona I — A carbon-credit registry tracking offset issuance and retirement</a></li><li class="toc-h3"><a href="#310-what-this-catalog-establishes" data-anchor="310-what-this-catalog-establishes">3.10 What this catalog establishes</a></li></ol></li><li class="toc-h2"><a href="#4-the-core-thesis-institutional-legibility" data-anchor="4-the-core-thesis-institutional-legibility"><span class="toc-num">04</span><span class="toc-text">The core thesis: institutional legibility</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#41-what-kern-provides-that-other-l1s-dont-five-rows" data-anchor="41-what-kern-provides-that-other-l1s-dont-five-rows">4.1 What Kern provides that other L1s don&rsquo;t — five rows</a></li><li class="toc-h3"><a href="#42-what-no-competitor-has" data-anchor="42-what-no-competitor-has">4.2 What no competitor has</a></li><li class="toc-h3"><a href="#42-the-four-application-verticals" data-anchor="42-the-four-application-verticals">4.2 The four application verticals</a></li><li class="toc-h3"><a href="#43-how-the-verticals-compose" data-anchor="43-how-the-verticals-compose">4.3 How the verticals compose</a></li></ol></li><li class="toc-h2"><a href="#5-consensus" data-anchor="5-consensus"><span class="toc-num">05</span><span class="toc-text">Consensus</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#31-design-goals" data-anchor="31-design-goals">3.1 Design goals</a></li><li class="toc-h3"><a href="#32-validator-economics" data-anchor="32-validator-economics">3.2 Validator economics</a></li><li class="toc-h3"><a href="#53-the-block-lifecycle-step-by-step" data-anchor="53-the-block-lifecycle-step-by-step">5.3 The block lifecycle, step by step</a></li><li class="toc-h3"><a href="#54-the-block-reward-and-where-it-goes" data-anchor="54-the-block-reward-and-where-it-goes">5.4 The block reward, and where it goes</a></li></ol></li><li class="toc-h2"><a href="#6-skald-and-the-kvm" data-anchor="6-skald-and-the-kvm"><span class="toc-num">06</span><span class="toc-text">Skald and the KVM</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#41-the-language" data-anchor="41-the-language">4.1 The language</a></li><li class="toc-h3"><a href="#42-why-invariants-are-first-class" data-anchor="42-why-invariants-are-first-class">4.2 Why invariants are first-class</a></li><li class="toc-h3"><a href="#43-static-typing" data-anchor="43-static-typing">4.3 Static typing</a></li><li class="toc-h3"><a href="#44-the-kvm" data-anchor="44-the-kvm">4.4 The KVM</a></li></ol></li><li class="toc-h2"><a href="#7-evm-compatibility-via-optimistic-smart-rollups" data-anchor="7-evm-compatibility-via-optimistic-smart-rollups"><span class="toc-num">07</span><span class="toc-text">EVM compatibility via Optimistic Smart Rollups</span></a><ol class="toc-sublist"></ol></li><li class="toc-h2"><a href="#8-the-slashable-attestation-primitive" data-anchor="8-the-slashable-attestation-primitive"><span class="toc-num">08</span><span class="toc-text">The slashable attestation primitive</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#61-the-problem" data-anchor="61-the-problem">6.1 The problem</a></li><li class="toc-h3"><a href="#62-the-kern-primitive" data-anchor="62-the-kern-primitive">6.2 The Kern primitive</a></li><li class="toc-h3"><a href="#63-why-this-matters" data-anchor="63-why-this-matters">6.3 Why this matters</a></li><li class="toc-h3"><a href="#64-composition-with-other-verticals" data-anchor="64-composition-with-other-verticals">6.4 Composition with other verticals</a></li></ol></li><li class="toc-h2"><a href="#9-zk-claims-privacy-preserving-attestations" data-anchor="9-zk-claims-privacy-preserving-attestations"><span class="toc-num">09</span><span class="toc-text">ZK-claims: privacy-preserving attestations</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#71-the-format" data-anchor="71-the-format">7.1 The format</a></li><li class="toc-h3"><a href="#72-verification-on-chain" data-anchor="72-verification-on-chain">7.2 Verification on-chain</a></li><li class="toc-h3"><a href="#73-reference-circuits" data-anchor="73-reference-circuits">7.3 Reference circuits</a></li><li class="toc-h3"><a href="#74-production-deployment-workflow" data-anchor="74-production-deployment-workflow">7.4 Production deployment workflow</a></li></ol></li><li class="toc-h2"><a href="#10-on-chain-governance" data-anchor="10-on-chain-governance"><span class="toc-num">10</span><span class="toc-text">On-chain governance</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#81-protocol-amendment-track" data-anchor="81-protocol-amendment-track">8.1 Protocol amendment track</a></li><li class="toc-h3"><a href="#82-treasury-track" data-anchor="82-treasury-track">8.2 Treasury track</a></li><li class="toc-h3"><a href="#83-equivocation-slashing" data-anchor="83-equivocation-slashing">8.3 Equivocation slashing</a></li><li class="toc-h3"><a href="#84-why-dual-track" data-anchor="84-why-dual-track">8.4 Why dual track</a></li></ol></li><li class="toc-h2"><a href="#11-token-economy" data-anchor="11-token-economy"><span class="toc-num">11</span><span class="toc-text">Token economy</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#91-genesis-distribution" data-anchor="91-genesis-distribution">9.1 Genesis distribution</a></li><li class="toc-h3"><a href="#92-issuance" data-anchor="92-issuance">9.2 Issuance</a></li><li class="toc-h3"><a href="#93-slashing-economy" data-anchor="93-slashing-economy">9.3 Slashing economy</a></li><li class="toc-h3"><a href="#94-on-speculation-memecoins-and-fair-launch-mythology" data-anchor="94-on-speculation-memecoins-and-fair-launch-mythology">9.4 On speculation, memecoins, and &ldquo;fair launch&rdquo; mythology</a></li></ol></li><li class="toc-h2"><a href="#12-security-review-and-audit-path" data-anchor="12-security-review-and-audit-path"><span class="toc-num">12</span><span class="toc-text">Security review and audit path</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#101-internal-review-completed" data-anchor="101-internal-review-completed">10.1 Internal review (completed)</a></li><li class="toc-h3"><a href="#102-mandatory-professional-audit" data-anchor="102-mandatory-professional-audit">10.2 Mandatory professional audit</a></li><li class="toc-h3"><a href="#103-the-full-operational-path" data-anchor="103-the-full-operational-path">10.3 The full operational path</a></li></ol></li><li class="toc-h2"><a href="#13-from-whitepaper-to-running-node-technical-entry-points" data-anchor="13-from-whitepaper-to-running-node-technical-entry-points"><span class="toc-num">13</span><span class="toc-text">From whitepaper to running node — technical entry points</span></a><ol class="toc-sublist"><li class="toc-h3"><a href="#131-which-guide-is-for-me" data-anchor="131-which-guide-is-for-me">13.1 Which guide is for me?</a></li><li class="toc-h3"><a href="#132-spec-documents-the-protocol-details" data-anchor="132-spec-documents-the-protocol-details">13.2 Spec documents (the protocol details)</a></li><li class="toc-h3"><a href="#133-start-here-for-each-common-scenario" data-anchor="133-start-here-for-each-common-scenario">13.3 Start here, for each common scenario</a></li><li class="toc-h3"><a href="#134-the-reference-implementation" data-anchor="134-the-reference-implementation">13.4 The reference implementation</a></li></ol></li><li class="toc-h2"><a href="#14-v12-roadmap" data-anchor="14-v12-roadmap"><span class="toc-num">14</span><span class="toc-text">v1.2 roadmap</span></a><ol class="toc-sublist"></ol></li><li class="toc-h2"><a href="#15-the-position-kern-occupies" data-anchor="15-the-position-kern-occupies"><span class="toc-num">15</span><span class="toc-text">The position Kern occupies</span></a><ol class="toc-sublist"></ol></li><li class="toc-h2"><a href="#16-reference-implementation" data-anchor="16-reference-implementation"><span class="toc-num">16</span><span class="toc-text">Reference implementation</span></a><ol class="toc-sublist"></ol></li><li class="toc-h2"><a href="#17-acknowledgments" data-anchor="17-acknowledgments"><span class="toc-num">17</span><span class="toc-text">Acknowledgments</span></a><ol class="toc-sublist"></ol></li><li class="toc-h2"><a href="#18-license" data-anchor="18-license"><span class="toc-num">18</span><span class="toc-text">License</span></a><ol class="toc-sublist"></ol></li><li class="toc-h2"><a href="#19-disclaimer" data-anchor="19-disclaimer"><span class="toc-num">19</span><span class="toc-text">Disclaimer</span></a><ol class="toc-sublist"></ol></li></ol></nav>
+  </aside>
+  <article id="article" class="article">
+    <h1 id="kern-a-layer-1-protocol-for-institutional-legibility">Kern — A Layer-1 Protocol for Institutional Legibility</h1>
+<p><em>Whitepaper, v1.1-rc</em></p>
+<p><em>Nicolas Van Eeckhout (founder) and Kern contributors</em></p>
+<p><em>Published as part of the Kern v1.1-rc release. License: CC-BY-SA-4.0 for this document; Apache-2.0 for the reference implementation.</em></p>
+<hr />
+<h2 id="abstract">Abstract</h2>
+<p class="lede"><span class="dropcap">W</span>e present Kern, a Layer-1 blockchain protocol designed around a specific thesis we call <strong>institutional legibility</strong>: the property that the rules an institution must follow — whether regulatory (MiCA, AIFMD, MiFID II), procedural (grant-making, funding allocation), or evidentiary (oracle attestations, supply chain provenance) — are encoded as protocol-enforced invariants that regulators, auditors, and counterparties can read directly, without trusting any intermediary.</p>
+<p>Kern combines five primitives that together support this thesis. None of them is individually novel; the combination has not previously been delivered by any production Layer-1 protocol. Those primitives are: (1) Tenderbake-style BFT consensus with Liquid Proof-of-Stake delegation; (2) the Skald contract language with first-class runtime-enforced invariants and a static type system; (3) dual-track on-chain governance with equivocation slashing; (4) the slashable attestation primitive — generalized equivocation detection for any signed claim about the world; (5) BN254 zk-SNARK verification precompiles enabling privacy-preserving compliance attestations.</p>
+<p>We describe the protocol architecture, the four application verticals it enables (compliance-by-construction Security Token Offerings, public goods funding, generic data oracle networks, and ZK-claims-based identity), and the operational path from the v1.1-rc reference implementation to the Midgard mainnet. We are explicit about what Kern is not, what audits are required before launch, and which design decisions are deliberate trade-offs.</p>
+<p>The reference implementation is open-source under Apache-2.0 and ships with 483 passing tests. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.</p>
+<hr />
+<h2 id="1-ambition"><span class="hash">§&nbsp;01</span><span class="htext">Ambition</span></h2>
+<p class="lede"><span class="dropcap">T</span>his section states the project&rsquo;s ambition in the simplest terms we can. We follow the Why → How → What ordering popularized by Simon Sinek&rsquo;s <em>Start With Why</em>, which we find clarifying for protocol design as much as for product design.</p>
+<h3 id="11-why-the-conviction-that-drives-kern">1.1 WHY — the conviction that drives Kern</h3>
+<p>We are building Kern because we believe the next decade of blockchain adoption will not be won by the protocol that maximizes transactions per second, the protocol that lists on the most exchanges, or the protocol that builds the most aggressive growth incentives. It will be won by the protocol that <strong>institutions can adopt without lying to their regulators, auditors, or beneficiaries</strong>.</p>
+<p>The institutional gap is concrete. Today:</p>
+<ul>
+<li>A European bank cannot tokenize a financial product on a public chain without inheriting a regulatory burden so vast that the cost-benefit is negative. So they don&rsquo;t.</li>
+<li>A regulator cannot verify a smart contract&rsquo;s compliance with MiFID II Art. 16(9) (custody segregation) without commissioning an audit from a Big Four firm, reading the audit report, and trusting the auditor. So they don&rsquo;t approve the contract until the audit is done — a 6-12 month cycle that kills most launches.</li>
+<li>An NGO cannot run a public-goods funding round on-chain without one of two outcomes: either Sybil attacks drain the matching pool, or the manual sybil-detection process drives administrative cost above 15% of the disbursement.</li>
+<li>An identity service cannot attest a user&rsquo;s age without revealing the user&rsquo;s date of birth — and revealing the DOB creates GDPR exposure that the service can&rsquo;t carry.</li>
+</ul>
+<p>All four of these gaps exist not because the underlying problems are unsolvable, but because <strong>no production Layer-1 has assembled the right primitives in one place</strong>. Each gap requires a specific combination: declared invariants + privacy-preserving proofs + slashable attestations + on-chain governance + a regulator-readable contract language.</p>
+<p>The why is: <strong>institutions deserve infrastructure that lets them remain institutions while using blockchain rails</strong>. Not &ldquo;DeFi for everyone&rdquo; — DeFi for those who choose it. Beyond DeFi, <strong>accountable infrastructure for the institutions that make collective life work</strong>: banks, foundations, public bodies, regulators, NGOs, industry consortia.</p>
+<p>This conviction predates Kern; the Tezos community has been articulating something close to it since 2018. What&rsquo;s new is the convergence of MiCA (which gives institutions a clear regulatory framework to anchor to), zk-SNARKs reaching production maturity (Groth16 + BN254 is now standard), and the slashing primitive design (proven at consensus layer, generalizable to off-chain claims).</p>
+<h3 id="12-how-the-design-principles-that-constrain-kern">1.2 HOW — the design principles that constrain Kern</h3>
+<p>Five design principles constrain every protocol decision in Kern. They are not aspirations; they are constraints we test every PR against.</p>
+<p><strong>(1) Determinism over throughput.</strong> A predictable 2-second finality is preferred over peak TPS. Applications that need 50,000 TPS live in rollups; the L1 is a settlement and governance layer. This principle directly chooses against the Solana model.</p>
+<p><strong>(2) Formal properties over expressive convenience.</strong> Skald deliberately omits language features that make static analysis intractable. No dynamic dispatch in the EVM sense; no unbounded recursion; no implicit state mutation; every contract declares its invariants; the runtime checks them on every entry call. This principle directly chooses against the Solidity model.</p>
+<p><strong>(3) On-chain evolution over off-chain coordination.</strong> Protocol changes — including consensus parameters, gas pricing, treasury allocations, and changes to Skald itself — are proposed, voted on, and activated on-chain. Hard forks remain physically possible but are not the intended evolution path. This principle inherits from Tezos and extends it with dual-track governance.</p>
+<p><strong>(4) Cryptoeconomic accountability over reputation.</strong> Misbehavior — by validators (consensus equivocation), by governance participants (vote equivocation), or by off-chain claim issuers (attestation equivocation) — is detected on-chain by anyone and punished automatically through slashing. Reputation systems are slow, contestable, and depend on social consensus; slashing is immediate, mathematical, and provable. This principle is what produces the slashable attestation primitive in v1.1-rc.</p>
+<p><strong>(5) Compatibility over purity.</strong> Existing Ethereum developers and existing Ethereum assets need a path into Kern. Optimistic Smart Rollups, with EVM-compatible execution settling to Kern, provide that path without compromising L1 design properties. This principle is what justifies running EVM via rollup instead of natively.</p>
+<p>These five constraints, in conjunction, produce the rest of the protocol mechanically. There is little optionality left once you commit to all five.</p>
+<h3 id="13-what-the-deliverables">1.3 WHAT — the deliverables</h3>
+<p>What Kern ships, concretely:</p>
+<ol>
+<li>A <strong>Layer-1 blockchain protocol</strong> with the design above, running with Python reference implementation (Apache-2.0, ~33,000 LOC, 483 passing tests).</li>
+<li><strong>KRN</strong>, the native token, with a 100M genesis supply distributed per the Ethereum 2014 template.</li>
+<li><strong>Skald</strong>, a contract language with first-class runtime-enforced invariants, plus a static type system, plus a deterministic interpreter (the Kern Virtual Machine).</li>
+<li><strong>A dual-track governance system</strong> (protocol amendments + treasury) with equivocation slashing.</li>
+<li><strong>A slashable attestation registry</strong> as a protocol primitive, generalizing equivocation accountability beyond consensus to any signed claim.</li>
+<li><strong>A ZK-claims infrastructure</strong> built on BN254 pairing precompiles for privacy-preserving compliance attestations, with four reference circuits described.</li>
+<li><strong>An Optimistic Smart Rollup framework</strong> with multi-frame EVM, bisection-based fraud proofs, and forced inclusion.</li>
+<li><strong>Ten reference Skald contracts</strong> spanning compliance-by-construction STOs (3 templates), public goods funding (QF + RPGF), oracle networks (generic + DeFi prices + schema marketplace), and didactic examples (vault, counter).</li>
+<li><strong>A complete documentation set</strong> of 51 markdown files, including this whitepaper, nine role-specific setup guides (see §13), the four vertical specification documents, the API stability specification, the tokenomics specification, the governance specification, and the operational roadmap to mainnet.</li>
+<li><strong>An internal security review</strong> documenting seven findings (two Critical, two Major, two Medium, one Minor) all fixed prior to engaging the mandatory professional audit.</li>
+</ol>
+<p>The deliverables are reference-implementation-grade. Production deployment requires the professional audit (Phase 2 in the post-code roadmap), the Foundation incorporation (Phase 1), and the public testnet stability validation (Phase 3). See §12 for the security path and the <a href="post-code-roadmap.md">post-code roadmap</a> for the full operational timeline.</p>
+<hr />
+<h2 id="2-motivation"><span class="hash">§&nbsp;02</span><span class="htext">Motivation</span></h2>
+<h3 id="21-the-structural-gap-in-existing-layer-1-protocols">2.1 The structural gap in existing Layer-1 protocols</h3>
+<p class="lede"><span class="dropcap">T</span>he blockchain ecosystem has produced two dominant Layer-1 families.</p>
+<p><strong>The developer-gravity family</strong> (Ethereum and its many descendants — Polygon, Optimism, Arbitrum, Base, Avalanche, BNB Chain, Solana) optimizes for attracting builders. Their core asset is the size and depth of the developer ecosystem and tooling. Their characteristic weaknesses are: contract languages (Solidity, Move, Cairo, Rust) that make formal reasoning intractable in practice; governance that depends on off-chain social coordination and hard forks; and a primary application domain (decentralized finance speculation) that is poorly aligned with regulatory expectations.</p>
+<p><strong>The protocol-rigor family</strong> (Tezos, Cardano, Algorand, Polkadot to some extent) optimizes for formally-tractable protocols and self-amendment. Their characteristic weaknesses are: smaller developer ecosystems; contract languages (Michelson, Plutus) that have steep learning curves; and limited compatibility with the EVM-centric tooling ecosystem.</p>
+<p>Neither family addresses a third concern that has become acute in 2024-2026: <strong>regulatory legibility</strong>. The European Union&rsquo;s Markets in Crypto-Assets Regulation (MiCA) entered into force in 2024. The Digital Operational Resilience Act (DORA) entered into force in January 2025. Together these create a substantial compliance perimeter for any protocol or application interacting with EU users, EU funds, or EU regulated entities.</p>
+<p>The current state of compliance in DeFi is: a Solidity contract is audited once (or several times), the auditor&rsquo;s report is read by a compliance officer, the compliance officer writes a memo, and the memo is reviewed by the regulator. Each layer is a translation; each translation introduces interpretive risk; the regulator never directly verifies anything mechanically.</p>
+<p>We submit that this is not the necessary state of affairs. With the right primitives, the regulator can READ THE CONTRACT&rsquo;S INVARIANTS DIRECTLY and have machine-checkable assurance that the rules are followed. This is what we mean by institutional legibility, and it is the design thesis of Kern.</p>
+<h3 id="22-what-this-thesis-implies">2.2 What this thesis implies</h3>
+<p>If institutional legibility is the design goal, then the protocol must provide:</p>
+<p><strong>(a) A contract language whose static semantics admit human-readable invariants.</strong> Not &ldquo;we have formal verification tools you can run on Solidity&rdquo;: a language where invariants are part of the contract&rsquo;s text, are enforced by the runtime, and a regulator without formal verification training can read them.</p>
+<p><strong>(b) Cryptoeconomically secured attestations of off-chain facts.</strong> Regulators care about real-world facts (an investor is over 18; a counterparty is a licensed depositary; this trade was best-executed; this property&rsquo;s title is registered). The protocol must let off-chain authorities sign these claims with skin in the game.</p>
+<p><strong>(c) Privacy-preserving attestations.</strong> Regulators want PROOF that compliance holds; users want NOT TO REVEAL the underlying data. Zero-knowledge proofs solve this; the protocol must verify them efficiently on-chain.</p>
+<p><strong>(d) Equivocation slashing as a protocol primitive, not an off-chain reputation system.</strong> Reputation is slow, contestable, and depends on social consensus. Slashing is immediate, mathematical, and depends on signatures.</p>
+<p><strong>(e) Dual-track governance</strong> — one for protocol evolution (the rules of the rules), one for treasury allocation (the spending of common funds). Each operates under its own constraints; they should not interfere.</p>
+<p><strong>(f) Native EVM compatibility (via rollups), not native EVM emulation.</strong> The L1 is optimized for clarity and finality; high-throughput dApp execution belongs in rollups that settle to it. This preserves L1 design properties while accessing the developer ecosystem.</p>
+<p>Kern&rsquo;s reference implementation provides (a) through (f) as a coherent design. The four application verticals — compliance-by-construction STOs, public goods funding, decentralized oracle networks, and ZK-claims identity — are not bolted on; they are direct consequences of the primitives.</p>
+<h3 id="23-what-kern-is-and-is-not">2.3 What Kern is and is not</h3>
+<p><strong>Kern is</strong>:
+- A new Layer-1 protocol with native KRN token
+- A Tenderbake-derived BFT consensus engine
+- A Liquid Proof-of-Stake delegation model (no LSTs, no lockups)
+- The Skald contract language with declared, runtime-enforced invariants
+- An optimistic-rollup framework with EVM compatibility for application developers
+- A slashable attestation registry as a protocol primitive
+- A schema marketplace and ZK-claims infrastructure built on (5)
+- An on-chain governance system with dual tracks and equivocation slashing
+- 100,000,000 KRN genesis supply, distributed per the Ethereum 2014 template (70% public sale / 10% founder vested 4y / 15% Foundation / 3% contributors / 2% validator bootstrap)</p>
+<p><strong>Kern is not</strong>:
+- A general-purpose high-throughput chain. The L1 is throughput-limited in service of finality and verifiability. High-throughput applications live in rollups.
+- A privacy-by-default protocol. ZK-claims allow attestations to be privacy-preserving; bare transfers are visible on-chain.
+- A drop-in Ethereum competitor. Solidity contracts run on Kern&rsquo;s EVM rollup, not the L1. Native Kern contracts are written in Skald.
+- Audited yet. The reference implementation has had an internal security review only. Professional audit is mandatory before Midgard mainnet launch — see §12.
+- Production-ready for value custody. Until Midgard launches, Kern remains a reference implementation.</p>
+<hr />
+<h2 id="3-use-cases-envisioned"><span class="hash">§&nbsp;03</span><span class="htext">Use cases envisioned</span></h2>
+<p class="lede"><span class="dropcap">B</span>efore describing the protocol architecture, we describe <strong>who we are building for and what they would do with Kern</strong>. Architecture without target users is design fiction. Each persona below corresponds to a realistic actor we have either talked to, observed publicly tendering for blockchain infrastructure in the last 24 months, or whose operational profile we know from professional context.</p>
+<h3 id="31-persona-a-a-belgian-fintech-tokenizing-private-equity">3.1 Persona A — A Belgian fintech tokenizing private equity</h3>
+<p><strong>The actor</strong>: a Brussels-headquartered B2B fintech with ~50 employees raising a €15M Series B. They want to tokenize approximately 20% of their post-money equity (€3M) so secondary trading by employees and early backers becomes possible without an IPO.</p>
+<p><strong>Current state</strong>: they cannot do this because (a) the Prospectus Regulation requires a registered prospectus, (b) MiFID II Art. 16(9) requires custody segregation, and (c) MAR requires market-abuse controls. To address all three in Solidity would require a custom contract whose audit alone costs €80-150k and whose regulatory approval (from FSMA) is unpredictable because there is no template the regulator has previously approved.</p>
+<p><strong>With Kern</strong>: they deploy <a href="../kern/skald/examples/sto-startup-equity.skald"><code>sto-startup-equity.skald</code></a>, the canonical template encoding the EU securities regime (Prospectus Regulation, MiFID II, MAR) as Skald invariants — note security tokens are excluded from MiCA by Art. 2(4). The FSMA approval cycle may compress materially because the regulator reads the invariants directly. The audit perimeter shrinks (auditor only verifies that the deployment matches the template, not that the template itself is correct). Total cost to launch: ~€25-40k vs ~€150-300k via custom Solidity.</p>
+<p><strong>Why this is unique to Kern</strong>: no other production L1 has runtime-enforced invariants + a regulator-readable contract language + a community of templates a regulator can accumulate familiarity with over time.</p>
+<h3 id="32-persona-b-an-eu-institutional-fund-tokenizing-a-private-debt-strategy">3.2 Persona B — An EU institutional fund tokenizing a private-debt strategy</h3>
+<p><strong>The actor</strong>: a Luxembourg-domiciled alternative investment fund (€200M AUM) tokenizing access to a private-debt portfolio. The fund manager (AIFM) is a regulated entity; the depositary is an independent bank.</p>
+<p><strong>Current state</strong>: AIFMD compliance has them publishing NAV quarterly via reports, with depositary co-signing. Token holders cannot redeem outside the quarterly NAV window. The operational cycle is heavy: NAV calculation, depositary validation, distribution document, regulator notice.</p>
+<p><strong>With Kern</strong>: they deploy <a href="../kern/skald/examples/sto-institutional-fund.skald"><code>sto-institutional-fund.skald</code></a>. The contract encodes:
+- AIFMD Art. 21 (depositary independence) as the invariant <code>aifm != depositary</code> — single-line, regulator-checkable
+- AIFMD Art. 22 (NAV staleness) as <code>current_level - nav_published_at_level &lt;= nav_max_staleness_levels</code>, runtime-enforced
+- AIFMD Art. 18 (concentration limits) as <code>largest_position_pct &lt;= concentration_cap_pct</code>
+- MiFID II Art. 24 (best execution) as a per-trade attestation read from the attestation registry</p>
+<p>The depositary publishes signed NAV attestations on-chain; the AIFM cannot publish NAVs unilaterally. Redemptions become continuous (not quarterly) because the NAV freshness gate auto-enforces the publication SLA. Operational cost drops by ~40%; investor experience improves dramatically (real-time NAV, instant redemption when NAV is fresh).</p>
+<p><strong>Why this is unique to Kern</strong>: the combination of (a) regulator-readable invariants for AIFMD compliance, (b) slashable attestations for the depositary co-sign requirement, and (c) on-chain best-execution tracking is not assembled elsewhere.</p>
+<h3 id="33-persona-c-a-french-scpi-real-estate-investment-vehicle">3.3 Persona C — A French SCPI (real estate investment vehicle)</h3>
+<p><strong>The actor</strong>: a Paris-based real estate fund (SCPI) with €80M deployed across 12 commercial properties. Investors are mostly French retail (3,000+ holders), with secondary trading currently going through a paper-based broker process at quarterly intervals.</p>
+<p><strong>Current state</strong>: secondary liquidity is bad. Investors who need to exit before the quarterly window take significant haircuts. Acquisitions are slow (notary-attested title transfers take weeks). Tax distributions require manual reconciliation per investor jurisdiction.</p>
+<p><strong>With Kern</strong>: they deploy <a href="../kern/skald/examples/sto-real-estate.skald"><code>sto-real-estate.skald</code></a>. Key features:
+- Notary attestations (<code>schema_id = "realestate.title-registered"</code>) — the notary signs once, the SPV&rsquo;s title is provable on-chain forever
+- The invariant <code>rental_income_distributed &lt;= rental_income_received</code> prevents any Ponzi-style behavior (a distribution can only happen if rent was actually collected); read directly by the AMF
+- Secondary market with floor price set by the compliance oracle, auto-paused if valuation staleness exceeds threshold
+- Lock-up of 12 months enforced as a hard invariant</p>
+<p><strong>Why this is unique to Kern</strong>: the notary-attestation pattern (a tangible-asset trust anchor not naturally expressible in pure DeFi protocols) plus the anti-Ponzi invariant plus the lock-up + secondary-market staleness gates are all specific to the regulatory and operational pattern of European real-estate tokenization. Kern provides them as a deployable template; nowhere else are they pre-assembled.</p>
+<h3 id="34-persona-d-unesco-regional-office-running-heritage-preservation-grants">3.4 Persona D — UNESCO regional office running heritage preservation grants</h3>
+<p><strong>The actor</strong>: a UNESCO regional office (Africa or South Asia, for example) with a €10M annual budget for digital heritage preservation projects. The current grant process: applications submitted, expert committee reviews, allocations decided, disbursements made through traditional banking. Administrative overhead: ~15% of the budget.</p>
+<p><strong>Current state</strong>: the committee process is slow (6+ months from application to disbursement), opaque (no community signal on which projects matter most), and the administrative cost is significant relative to small grants (€10-50k size).</p>
+<p><strong>With Kern</strong>: they deploy quarterly Quadratic Funding rounds (<a href="../kern/skald/examples/quadratic-funding.skald"><code>quadratic-funding.skald</code></a>) for small grants and an annual Retroactive Public Goods Funding round (<a href="../kern/skald/examples/retroactive-pgf.skald"><code>retroactive-pgf.skald</code></a>) for proven-impact larger grants. Contributors include: affected communities, individual academics, partner foundations. Sybil resistance comes from <code>identity.proof-of-personhood</code> attestations (the UNESCO office signs these for verified individuals, with slashing). Administrative cost drops to ~2% (server infrastructure + badge-holder honoraria for RPGF).</p>
+<p><strong>Why this is unique to Kern</strong>: Gitcoin demonstrates QF works at small scale, but suffers persistent Sybil attacks; Optimism demonstrates RPGF works but is a closed-ecosystem distribution. Kern provides both as native primitives with cryptoeconomic Sybil resistance (via slashable personhood attestations) as a first-class capability.</p>
+<h3 id="35-persona-e-an-eu-tso-transmission-system-operator-for-energy-settlement">3.5 Persona E — An EU TSO (Transmission System Operator) for energy settlement</h3>
+<p><strong>The actor</strong>: a national electricity grid operator (e.g., Elia in Belgium, RTE in France, TenneT in the Netherlands) participating in inter-TSO settlement under the EU Central Western Europe (CWE) market coupling. Settlement requires consensus on grid frequency, regional supply/demand, and clearing prices, computed every 15 minutes across the 7 CWE member states.</p>
+<p><strong>Current state</strong>: settlement reconciliation between TSOs takes weeks. Disputes arise from measurement timing differences, methodology variations, and the absence of a single source of truth. A national TSO spends an estimated €30-100M/year on reconciliation, dispute resolution, and the back-office staff supporting them.</p>
+<p><strong>With Kern</strong>: each TSO posts grid-frequency measurements as attestations (<code>schema_id = "energy.grid-frequency-hz"</code>, subject = grid region, bond = ~10,000 KRN per attestation). Inter-TSO consensus on a 15-minute window is computed by aggregating attestations; equivocation (the same TSO posting different frequencies for the same window) is slashable. ENTSO-E operates the schema marketplace, publishing canonical schemas and recognized issuer lists.</p>
+<p><strong>Why this is unique to Kern</strong>: general-purpose oracle networks today (Chainlink, Pyth, and similar) primarily focus on DeFi price feeds and data delivery patterns; they are not architecturally optimised for the institutional structure of regulated industrial data networks. Kern&rsquo;s slashable attestation primitive plus the schema marketplace pattern together fit the institutional structure of ENTSO-E precisely. This is also one of two verticals (the other being telco settlement, Persona F) where Kern aligns directly with regulated-industry data exchange — EU telcos and grid operators face this exact reconciliation problem.</p>
+<h3 id="36-persona-f-an-eu-telco-settling-inter-operator-roaming-and-wholesale-traffic">3.6 Persona F — An EU telco settling inter-operator roaming and wholesale traffic</h3>
+<p><strong>The actor</strong>: a tier-1 European telco (Deutsche Telekom, Vodafone, Telefónica, and peers) settling roaming agreements with hundreds of counterparts globally, plus MVNO settlement, plus wholesale traffic exchange. The volume is in the hundreds of millions of euros per year per major telco.</p>
+<p><strong>Current state</strong>: GSMA&rsquo;s Billing &amp; Charging Evolution (BCE) framework is the industry standard; bilateral reconciliation happens monthly or quarterly. Disputes resolve over weeks via mutual auditor engagement.</p>
+<p><strong>With Kern</strong>: operators post subscriber-count attestations (<code>schema_id = "telco.subscriber-count"</code>) and roaming-minute attestations (<code>schema_id = "telco.roaming-minutes"</code>) with bonds. Equivocation between settlement windows is detectable and slashable. GSMA operates the canonical schema marketplace. The result: settlement reconciliation moves from monthly batch to continuous attestation; back-office cost drops; disputes drop because the cryptographic proof replaces the dispute.</p>
+<p><strong>Why this is unique to Kern</strong>: this is the same argument as the energy case — no oracle network today targets regulated industrial data exchange. The institutional fit + the slashing primitive + the EU regulatory context together are what Kern provides that no competitor does.</p>
+<h3 id="37-persona-g-a-pharma-supply-chain-anti-counterfeiting-program">3.7 Persona G — A pharma supply chain anti-counterfeiting program</h3>
+<p><strong>The actor</strong>: a global pharmaceutical company subject to the EU Falsified Medicines Directive (FMD) and US Drug Supply Chain Security Act (DSCSA). Anti-counterfeiting requires unit-level serialization, with provenance verifiable from producer through distribution to dispensing pharmacy.</p>
+<p><strong>Current state</strong>: each handoff in the supply chain is recorded in a central database operated by a country-level repository (the FMD model). The integrity of the database depends on the trusted operator; cross-border verification is slow.</p>
+<p><strong>With Kern</strong>: handoff attestations (<code>schema_id = "provenance.physical-handoff"</code>, subject = serial number) co-signed by sending and receiving parties. Equivocation (claiming the same serial was delivered to two distinct distributors) is automatically detectable. The schema marketplace publishes the canonical schemas; national repositories continue to exist as schema operators rather than as single points of trust.</p>
+<p><strong>Why this is unique to Kern</strong>: no current pharma supply chain blockchain (MediLedger, TruTrace, etc.) uses cryptoeconomic slashing as the primary trust mechanism; they use permissioned-consortium governance which has lower trust-loss-cost than equivocation slashing.</p>
+<h3 id="38-persona-h-a-parametric-insurance-product-weather-based-farm-insurance">3.8 Persona H — A parametric insurance product (weather-based farm insurance)</h3>
+<p><strong>The actor</strong>: a European insurer underwriting parametric crop insurance — payouts triggered automatically when measured rainfall in a region falls below a threshold over a period.</p>
+<p><strong>Current state</strong>: oracle data is procured from satellite providers (e.g., ECMWF re-analysis) and national meteorological services (Météo France, DWD) under bilateral contracts. Disputes resolve through arbitration if the insurer and the policyholder disagree on the measurement.</p>
+<p><strong>With Kern</strong>: multiple meteorological services attest rainfall measurements (<code>schema_id = "weather.rainfall-mm-monthly"</code>). The insurance contract reads the median across attestations. If one service equivocates (different rainfall numbers for the same region/month), they are slashed. The contract auto-disburses without arbitration.</p>
+<p><strong>Why this is unique to Kern</strong>: parametric insurance is a known use case for oracles, but the typical implementation (Chainlink + a smart contract) has trust assumptions that pushed insurers away. Kern&rsquo;s slashable attestation model gives insurers a stronger guarantee at lower cost.</p>
+<h3 id="39-persona-i-a-carbon-credit-registry-tracking-offset-issuance-and-retirement">3.9 Persona I — A carbon-credit registry tracking offset issuance and retirement</h3>
+<p><strong>The actor</strong>: a carbon-credit certification body (Verra-VCS, Gold Standard) issuing offset certificates and tracking their retirement. The industry has been plagued by double-counting (the same offset claimed by multiple buyers) and questionable issuance (offsets for projects whose additionality is disputed).</p>
+<p><strong>Current state</strong>: each registry is a centralized database. Cross-registry linkage requires bilateral integration. Double-counting still happens.</p>
+<p><strong>With Kern</strong>: each issuance is a high-bond attestation (<code>schema_id = "esg.carbon-offset-tonnes-co2eq"</code>, subject = project + vintage, bond = €50,000+). The bond size makes issuance equivocation prohibitively expensive. Each retirement is also an attestation; double-retirement (claiming the same credit twice) is structurally impossible because the registry is content-addressed.</p>
+<p><strong>Why this is unique to Kern</strong>: this is the canonical &ldquo;high-stakes verifiable claims&rdquo; use case. No existing protocol combines the bond size + slashing immediacy + cross-registry interoperability needed for the carbon market specifically.</p>
+<h3 id="310-what-this-catalog-establishes">3.10 What this catalog establishes</h3>
+<p>These nine personae are not aspirational — each maps to a real institutional process happening today, in Europe, with operational pain points that Kern&rsquo;s primitives directly address. The total addressable market across these nine is <strong>in the tens of billions of euros annually</strong> in administrative cost, settlement cost, and forgone economic activity due to current frictions.</p>
+<p>Kern doesn&rsquo;t have to capture all nine to be economically meaningful. Capturing the operational pain in <strong>two or three</strong> would justify the protocol&rsquo;s existence. The point of presenting nine is to demonstrate that the design isn&rsquo;t tuned to a single use case — the primitives are general enough to serve many institutional patterns.</p>
+<hr />
+<h2 id="4-the-core-thesis-institutional-legibility"><span class="hash">§&nbsp;04</span><span class="htext">The core thesis: institutional legibility</span></h2>
+<p class="lede"><span class="dropcap">W</span>e claim that institutional legibility is <strong>structurally different</strong> from the design goals of existing Layer-1 protocols, and that it carves out a defensible position.</p>
+<h3 id="41-what-kern-provides-that-other-l1s-dont-five-rows">4.1 What Kern provides that other L1s don&rsquo;t — five rows</h3>
+<p>The comparison table below lists five dimensions critical to institutional legibility. For each dimension we describe <strong>(a) what other L1s offer</strong>, <strong>(b) what Kern offers differently</strong>, and <strong>(c) what consequence that has for an institutional user</strong>. The point is not to win every row — Kern wins few rows on raw throughput or developer-count metrics. The point is to win the <strong>combination</strong> when an institutional user needs all five simultaneously.</p>
+<h4 id="row-1-contract-invariants-enforced-at-runtime">Row 1 — Contract invariants enforced at runtime</h4>
+<table>
+<thead>
+<tr>
+<th>L1</th>
+<th>What they offer</th>
+<th>Gap for institutions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ethereum</td>
+<td>Solidity has <code>require</code>/<code>assert</code> — per-call checks but no &ldquo;this property must always hold&rdquo;</td>
+<td>Auditor + regulator must reconstruct invariants by reading code; no machine-checked guarantee</td>
+</tr>
+<tr>
+<td>Tezos</td>
+<td>Michelson (low-level) and LIGO (high-level) admit some formal verification; not invariant-declarative</td>
+<td>Verification is a separate workflow, not part of the contract; expertise-gated</td>
+</tr>
+<tr>
+<td>Solana</td>
+<td>Rust — full Turing-complete; verification tools exist but are not standard</td>
+<td>Audit-as-the-only-mechanism, same as Solidity</td>
+</tr>
+<tr>
+<td>Cosmos</td>
+<td>Cosmwasm in Rust — same posture as Solana</td>
+<td>Same</td>
+</tr>
+<tr>
+<td><strong>Kern</strong></td>
+<td><strong>Skald: invariants are first-class. <code>invariant name { expr }</code> is checked AFTER every entry call by the runtime. A violating transaction reverts.</strong></td>
+<td><strong>Regulator reads invariants directly; machine guarantees the property holds in every reachable state. Audit time shrinks because the auditor&rsquo;s job becomes &ldquo;verify invariants match intent,&rdquo; not &ldquo;find ways the contract could violate intent.&rdquo;</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Significance</strong>: The cost of regulatory approval for a tokenized financial product drops from 6-12 months (custom contract + audit + regulator interpretation) to 2-3 months (deploy canonical template + thin audit + regulator reads invariants).</p>
+<h4 id="row-2-on-chain-governance-rules-and-treasury">Row 2 — On-chain governance (rules AND treasury)</h4>
+<table>
+<thead>
+<tr>
+<th>L1</th>
+<th>What they offer</th>
+<th>Gap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ethereum</td>
+<td>None — protocol changes via off-chain social coordination → hard forks</td>
+<td>Slow, contestable, splits the community</td>
+</tr>
+<tr>
+<td>Tezos</td>
+<td>Single-track on-chain governance for protocol amendments</td>
+<td>Treasury allocations require separate off-chain governance (Tezos Foundation)</td>
+</tr>
+<tr>
+<td>Solana</td>
+<td>None on-chain</td>
+<td>Same as Ethereum, even more centralized in practice</td>
+</tr>
+<tr>
+<td>Cosmos</td>
+<td>Cosmos Hub has governance for hub parameters; sovereign chains each have their own</td>
+<td>Fragmented; treasury vs protocol mixed in one track</td>
+</tr>
+<tr>
+<td><strong>Kern</strong></td>
+<td><strong>Dual-track governance: protocol amendments (long cycle, validator-supermajority) and treasury allocations (short cycle, quadratic + stake) running in parallel. Equivocation between YES and NO votes is slashable at the protocol level.</strong></td>
+<td><strong>Foundations and consortia get a treasury they govern transparently; the protocol can evolve without forking; bad-faith voting is automatically punished.</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Significance</strong>: A foundation operating Kern treasury can allocate €millions/year through transparent on-chain proposals without ever requiring an off-chain committee. The protocol can adopt new features through governance without forking, which is the property that lets the protocol evolve over decade-plus time horizons.</p>
+<h4 id="row-3-liquid-proof-of-stake-without-liquid-staking-tokens">Row 3 — Liquid Proof-of-Stake without Liquid Staking Tokens</h4>
+<table>
+<thead>
+<tr>
+<th>L1</th>
+<th>What they offer</th>
+<th>Gap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ethereum</td>
+<td>Validator stake is locked; delegators use LSTs (Lido, RocketPool) which introduce LST risk</td>
+<td>Lido controls ~30% of all staked ETH; systemic risk</td>
+</tr>
+<tr>
+<td>Tezos</td>
+<td>Native LPoS with delegation; delegator keeps custody</td>
+<td>Operationally smooth; no LST risk</td>
+</tr>
+<tr>
+<td>Solana</td>
+<td>Validator stake locked; delegation requires lockup with cooldown</td>
+<td>Capital inefficiency; same UX issues as ETH</td>
+</tr>
+<tr>
+<td>Cosmos</td>
+<td>Similar to Solana — delegated stake with cooldown</td>
+<td>Capital inefficiency</td>
+</tr>
+<tr>
+<td><strong>Kern</strong></td>
+<td><strong>Liquid PoS LPoS: delegators keep custody of KRN, the delegation is a pointer. No LSTs, no rehypothecation, no Lido equivalent. EVM compatibility via rollups, so this protocol-level property is preserved even when EVM applications run on top.</strong></td>
+<td><strong>Institutional staking participants (insurance funds, pensions) can stake KRN without introducing a third-party LST counterparty. Custodians can offer staking-as-a-service without rehypothecation risk.</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Significance</strong>: Insurance regulators in many EU jurisdictions cannot approve staking products that rely on LSTs (counterparty risk too opaque). Kern&rsquo;s LPoS model is the only design where regulated insurance balance sheets can stake at scale.</p>
+<h4 id="row-4-slashable-attestations-as-l1-primitive">Row 4 — Slashable attestations as L1 primitive</h4>
+<table>
+<thead>
+<tr>
+<th>L1</th>
+<th>What they offer</th>
+<th>Gap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ethereum</td>
+<td>EAS (Ethereum Attestation Service) — attestations are stored on-chain, no slashing on equivocation</td>
+<td>Reputational punishment only; slow and contestable</td>
+</tr>
+<tr>
+<td>Tezos</td>
+<td>None as a native primitive</td>
+<td>Application-layer only</td>
+</tr>
+<tr>
+<td>Solana</td>
+<td>None</td>
+<td>Application-layer only</td>
+</tr>
+<tr>
+<td>Cosmos</td>
+<td>None</td>
+<td>Application-layer only</td>
+</tr>
+<tr>
+<td><strong>Kern</strong></td>
+<td><strong>Native protocol-level OpKinds: ATTEST, REVOKE_ATTESTATION, SLASH_ATTESTATION_EQUIVOCATION. Any signed claim with a bond can be slashed on equivocation by anyone, with 10% whistleblower reward and the rest burned.</strong></td>
+<td><strong>Off-chain authorities (KYC providers, custodians, notaries, oracle feeders) have cryptoeconomic skin in the game. The &ldquo;should I trust this attestation&rdquo; question reduces to &ldquo;is the bond sufficient and was it not slashed?&rdquo; — a mechanical check.</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Significance</strong>: Replaces the reputation/social-trust layer underpinning oracles, KYC providers, and compliance attestors with mathematical enforcement. Oracle networks built on Kern operate at roughly an order of magnitude lower cost than Chainlink while offering stronger guarantees. Compliance attestation networks become viable where they currently aren&rsquo;t (e.g., for industries that can&rsquo;t tolerate reputational lag).</p>
+<h4 id="row-5-zk-claim-infrastructure-bn254-reference-circuits">Row 5 — ZK-claim infrastructure (BN254 + reference circuits)</h4>
+<table>
+<thead>
+<tr>
+<th>L1</th>
+<th>What they offer</th>
+<th>Gap</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ethereum</td>
+<td>BN254 precompile available; circuits and verifier keys are per-application work</td>
+<td>High barrier for application teams; no reference circuits commonly available</td>
+</tr>
+<tr>
+<td>Tezos</td>
+<td>No BN254 precompile</td>
+<td>Cannot verify Groth16 proofs on-chain at reasonable cost</td>
+</tr>
+<tr>
+<td>Solana</td>
+<td>Limited; runtime BN254 ops via syscalls but not standard</td>
+<td>High friction</td>
+</tr>
+<tr>
+<td>Cosmos</td>
+<td>None</td>
+<td>None</td>
+</tr>
+<tr>
+<td><strong>Kern</strong></td>
+<td><strong>BN254 precompile (py_ecc-backed, since v1.0-rc), <code>kern.zk_claims</code> Python module with canonical claim payload format, four reference circuits described (age threshold, value threshold, account ownership, set membership), and the schema marketplace pattern for registering verifier keys.</strong></td>
+<td><strong>A KYC provider can build a &ldquo;user is over 18&rdquo; attestation in days, not months. The trusted setup ceremony is run once (by the Foundation) and reused across applications.</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Significance</strong>: Privacy-preserving compliance becomes deployable in weeks not years. GDPR-compatible KYC attestations become a default, not an exotic feature.</p>
+<h3 id="42-what-no-competitor-has">4.2 What no competitor has</h3>
+<p>Each row above is individually attainable on some other protocol by writing application-layer code. <strong>No competitor has all five rows simultaneously as protocol primitives.</strong></p>
+<p>This is the moat. An institution evaluating Kern vs Ethereum-L2 isn&rsquo;t choosing between equivalent options. On Ethereum-L2 they would need to combine: (1) third-party invariant verification tooling (and re-verify on every upgrade), (2) a foundation governance off-chain, (3) Lido or equivalent LST exposure, (4) EAS without slashing or a custom slashable attestation contract they audit themselves, (5) custom ZK circuit + trusted setup work.</p>
+<p>On Kern, all five come as protocol primitives with one cohesive design. The total engineering cost difference is measured in <strong>person-years</strong>, not person-months.</p>
+<h3 id="42-the-four-application-verticals">4.2 The four application verticals</h3>
+<p>The five rows directly enable four application verticals, each of which we ship as Skald templates and specification documents in v1.1-rc:</p>
+<p><strong>Vertical 1 — Compliance-by-construction tokenized securities.</strong> Three templates (<code>sto-startup-equity.skald</code>, <code>sto-institutional-fund.skald</code>, <code>sto-real-estate.skald</code>) encode the EU securities regime as Skald invariants: the Prospectus Regulation (whitepaper/prospectus), MiFID II Art. 16 &amp; 24 and AIFMD Art. 18, 21, 22 (asset segregation, depositary independence, diversification), and MAR (market-abuse blackout). Note that security tokens are <em>financial instruments</em> and are therefore <strong>excluded from MiCA</strong> under Art. 2(4); the applicable framework is securities law, not MiCA. A regulator reads the invariants and confirms compliance directly, supplementing rather than replacing the audit cycle.</p>
+<p><strong>Vertical 2 — Public goods funding.</strong> Two templates (<code>quadratic-funding.skald</code>, <code>retroactive-pgf.skald</code>) implement the Buterin/Hitzig/Weyl Quadratic Funding mechanism and the Optimism Collective&rsquo;s Retroactive Public Goods Funding. These collapse the typical 15% administrative overhead of foundation grant-making to roughly 2%, while making the selection mechanism mathematically explicit and auditable.</p>
+<p><strong>Vertical 3 — Decentralized data oracles.</strong> Three templates (<code>generic-data-oracle.skald</code>, <code>defi-price-oracle.skald</code>, <code>schema-marketplace.skald</code>) implement an oracle network with k-of-n consensus among feeders, tolerance bands, circuit breakers, heartbeats, and a schema marketplace for issuer recognition. The slashable attestation primitive is the security mechanism; equivocation by any feeder is immediately slashable. Cost is roughly an order of magnitude below Chainlink for equivalent guarantees; extends to non-DeFi data (energy, telco, supply chain, weather, ESG) where existing oracle infrastructure is weak.</p>
+<p><strong>Vertical 4 — Privacy-preserving identity and compliance.</strong> The <code>kern.zk_claims</code> Python module and four reference circuits (age threshold, value threshold, account ownership, set membership) enable attestations whose underlying data is hidden but whose properties are publicly verifiable. A KYC provider attests &ldquo;this user is over 18&rdquo; without revealing the date of birth. A custodian attests &ldquo;the fund&rsquo;s holdings exceed €X&rdquo; without revealing the exact balance.</p>
+<h3 id="43-how-the-verticals-compose">4.3 How the verticals compose</h3>
+<p>The verticals reinforce each other:</p>
+<ul>
+<li>A regulated STO uses the oracle vertical for live price discovery and KYC attestation reading</li>
+<li>A public goods round uses the attestation primitive for personhood verification, with ZK-claims for privacy</li>
+<li>An oracle network uses the schema marketplace to publish accepted feeder schemas with minimum bond requirements</li>
+<li>The compliance vertical can read price oracles for tokens denominated in fiat-pegged values</li>
+</ul>
+<p>This composition is not coincidental — it falls out naturally from having the right primitives. The unified design is what creates the network effect.</p>
+<hr />
+<h2 id="5-consensus"><span class="hash">§&nbsp;05</span><span class="htext">Consensus</span></h2>
+<p class="lede"><span class="dropcap">K</span>ern&rsquo;s consensus engine is a Python implementation of a variant of Tenderbake, the consensus algorithm Tezos has used since the Ithaca upgrade in 2022.</p>
+<h3 id="31-design-goals">3.1 Design goals</h3>
+<p>The consensus engine optimizes for:</p>
+<ul>
+<li><strong>Deterministic finality</strong>: a block is final within 2 blocks (~2 seconds at 1-second block cadence) and cannot be rolled back without a long-range attack.</li>
+<li><strong>Liveness under partial synchrony</strong>: the protocol makes progress as long as a supermajority (greater than two-thirds) of validator-weighted stake is honest and reachable.</li>
+<li><strong>Equivocation accountability</strong>: every double-baking and double-endorsing is provable on-chain and slashable.</li>
+<li><strong>Validator accessibility</strong>: validators delegate operationally (run nodes, sign blocks) but operationally the burden is comparable to a Tezos baker.</li>
+</ul>
+<h3 id="32-validator-economics">3.2 Validator economics</h3>
+<p>Validators (&ldquo;bakers&rdquo; in the Tezos lexicon) stake KRN to participate. Delegators can lend their stake without giving up custody — the KRN remains in the delegator&rsquo;s account; the delegation is a pointer to a validator that the validator&rsquo;s effective stake includes. This is <strong>Liquid Proof-of-Stake without Liquid Staking Tokens</strong>: no Lido equivalent, no rehypothecation, no LST risk.</p>
+<p>Block rewards come from two sources: newly issued KRN per the adaptive issuance schedule, and transaction fees. The split between validator and delegators is determined by a per-validator commission rate (default 10%).</p>
+<p>Slashing applies to:
+- Double-baking (signing two distinct blocks at the same level): -100% of bond
+- Double-endorsing (signing two distinct endorsements for the same block at the same round): -50% of bond
+- Governance equivocation (voting both sides of the same proposal in the same phase): -30% of bond</p>
+<p>The slashing math is consistent across all surfaces: 30% slash, 10% whistleblower reward, 60% burn (see attestation primitive in §8 for the same numbers applied to off-chain claims).</p>
+<h3 id="53-the-block-lifecycle-step-by-step">5.3 The block lifecycle, step by step</h3>
+<p>A block is produced in a four-move round. Most blocks settle in round 0; rounds 1, 2, … are fallbacks if a proposer fails.</p>
+<pre><code>  PROPOSE            PRE-ENDORSE          ENDORSE              FINAL
+  (proposer)         (all validators)     (all validators)     (the chain)
+     │                    │                    │                   │
+  assemble block     sign block hash      once &gt;2/3 stake     next endorsed
+  from mempool,  ──►  to signal       ──► pre-endorsed,   ──►  block builds
+  broadcast          commitment           broadcast            on top → level
+  candidate                               endorsement          is irreversible
+     │                    │                    │                   │
+   t = 0s            gather &gt;2/3          &gt;2/3 quorum         ~2s after creation
+                     of stake             = endorsed
+</code></pre>
+<p>The <strong>&gt;2/3 stake</strong> quorum is what makes finality deterministic: as long as fewer than one-third of validators are malicious or offline, an endorsed block cannot be reverted. A failed round (proposer offline, or block fails to reach quorum within <code>1 + n</code> seconds) hands off to the next proposer, selected via a round-incremented seed.</p>
+<h3 id="54-the-block-reward-and-where-it-goes">5.4 The block reward, and where it goes</h3>
+<p>Each finalized block mints a fresh reward (the issuance — see §11) and splits it deterministically:</p>
+<pre><code>  Newly minted reward (100%)
+  ├── 5%   → Treasury (on-chain protocol treasury)
+  └── 95%  → Baker pool
+             ├── 10% of pool → Proposer (fixed bonus, higher overhead)
+             └── 90% of pool → Endorsers, pro-rata by stake
+</code></pre>
+<p>At the 50% target staking ratio, the reward is ~0.079 KRN/block (79 220 mukrn). The proposer additionally keeps the <em>fees</em> of every successful transaction it includes; failed-transaction fees are burned. Delegators share their baker&rsquo;s rewards via the per-validator commission (Liquid PoS — custody stays with the delegator).</p>
+<p>The L1 transaction fee is a flat sender-chosen <code>tx.fee</code> paid in mukrn (Skald executes loop-free and non-recursive, so termination is structural and per-tx compute metering is not required at the L1 layer; the Yellow Paper-compliant gas metering applies inside the rollup Mini-EVM, §7). An <strong>optional, governance-gated fee floor and per-block size cap</strong> can be activated to add a compute-proportional fee component and a spam bound; it is off by default and detailed in <a href="fee-floor.md"><code>fee-floor.md</code></a>.</p>
+<blockquote>
+<p>An interactive, animated walk-through of the block lifecycle, the gas/fee flow, the reward split, the adaptive-issuance curve, and the attestation lifecycle is published at <strong>kern_site/how-it-works.html</strong>.</p>
+</blockquote>
+<hr />
+<h2 id="6-skald-and-the-kvm"><span class="hash">§&nbsp;06</span><span class="htext">Skald and the KVM</span></h2>
+<h3 id="41-the-language">4.1 The language</h3>
+<p class="lede"><span class="dropcap">S</span>kald is the contract language native to Kern. A Skald contract is a self-contained module declaring storage, invariants, and entry points.</p>
+<pre><code class="language-skald">contract Vault {
+    storage {
+        owner: address,
+        deposited: int,
+        withdrawn: int,
+    }
+
+    invariant accounting {
+        deposited &gt;= withdrawn
+    }
+
+    invariant nonneg {
+        deposited &gt;= 0
+    }
+
+    entry deposit() {
+        require amount &gt; 0 with &quot;must attach a positive amount&quot;;
+        deposited = deposited + amount;
+    }
+
+    entry withdraw(n: int) {
+        require sender == owner with &quot;only owner can withdraw&quot;;
+        require n &gt; 0 with &quot;amount must be positive&quot;;
+        require deposited - withdrawn &gt;= n with &quot;insufficient escrow&quot;;
+        withdrawn = withdrawn + n;
+    }
+}
+</code></pre>
+<p>The language has four types in v1.1-rc: <code>int</code> (arbitrary precision), <code>bool</code>, <code>string</code>, <code>address</code>. Mappings and lists arrive in v1.2 (see §14).</p>
+<h3 id="42-why-invariants-are-first-class">4.2 Why invariants are first-class</h3>
+<p>Most contract languages relegate invariants to documentation. Solidity has <code>assert</code> and <code>require</code>, but these are checks at specific points — there is no general &ldquo;this contract must maintain X across all state transitions.&rdquo; Skald inverts this: an <code>invariant name { expr }</code> declaration is checked AFTER every entry call. A call that would leave storage in a state violating any invariant is rejected and the storage is rolled back.</p>
+<p>The runtime guarantee is what makes invariants useful for compliance encoding. A securities invariant like <code>total_supply_issued == 0 || whitepaper_registered</code> is not a documentation comment; it is a constraint that cannot be violated by any execution path. The regulator reads the invariant and knows it holds for every possible state of the contract.</p>
+<p>Compared to the languages a team would realistically evaluate, this is Skald&rsquo;s distinguishing property:</p>
+<table>
+<thead>
+<tr>
+<th>Language</th>
+<th>Invariants</th>
+<th>Reentrancy</th>
+<th>Turing-complete</th>
+<th>Legibility for non-engineers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Solidity (Ethereum)</td>
+<td>Manual / external tools</td>
+<td>Footgun</td>
+<td>Yes</td>
+<td>Low</td>
+</tr>
+<tr>
+<td>Vyper (Ethereum)</td>
+<td>Manual asserts</td>
+<td>Reduced</td>
+<td>Yes</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>Rust + Anchor (Solana)</td>
+<td>Manual checks</td>
+<td>Possible</td>
+<td>Yes</td>
+<td>Low</td>
+</tr>
+<tr>
+<td>Move (Aptos / Sui)</td>
+<td>Move Prover (compile-time, opt-in)</td>
+<td>Hard by design</td>
+<td>Yes</td>
+<td>Medium</td>
+</tr>
+<tr>
+<td>Clarity (Stacks)</td>
+<td>Asserts + decidability</td>
+<td>Impossible</td>
+<td>No (decidable)</td>
+<td>Medium-high</td>
+</tr>
+<tr>
+<td><strong>Skald (Kern)</strong></td>
+<td><strong>First-class, runtime-enforced</strong></td>
+<td><strong>Impossible</strong></td>
+<td><strong>No (bounded)</strong></td>
+<td><strong>High</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Skald borrows decidability and no-reentrancy from Clarity, the make-bugs-unrepresentable philosophy from Move, and the small-surface discipline from Vyper. Its one original contribution is making the invariant a first-class language construct that the runtime enforces unconditionally — so the compliance statement and the protocol enforcement are the same artifact. The full comparison, including Skald&rsquo;s honest limitations (runtime enforcement is not formal proof; bounded expressiveness is a real cost; no ecosystem yet), is in <a href="skald-language.md"><code>skald-language.md</code></a>.</p>
+<h3 id="43-static-typing">4.3 Static typing</h3>
+<p>The Skald type checker validates contracts before deployment. Type-incorrect contracts cannot be originated. This catches most low-hanging Solidity-style bugs (integer overflow misuse, type confusion, accidental shadowing) at deployment, not at runtime.</p>
+<h3 id="44-the-kvm">4.4 The KVM</h3>
+<p>The Kern Virtual Machine is the deterministic execution environment. It maintains a stack-based evaluator over the Skald AST. Gas accounting tracks every operation; gas-exhausted execution reverts.</p>
+<p>The KVM is intentionally narrow: no dynamic dispatch in the EVM sense, no implicit cross-contract reads in v1.1-rc (added in v1.2), no implicit state mutation. Every state change goes through an entry point of the owning contract.</p>
+<hr />
+<h2 id="7-evm-compatibility-via-optimistic-smart-rollups"><span class="hash">§&nbsp;07</span><span class="htext">EVM compatibility via Optimistic Smart Rollups</span></h2>
+<p class="lede"><span class="dropcap">K</span>ern does not natively run Solidity contracts on L1. The L1 runs Skald, optimized for the institutional-legibility properties described above. Solidity contracts run on <strong>Optimistic Smart Rollups</strong> whose state commitments are posted to Kern as data.</p>
+<p>The rollup framework supports:</p>
+<ul>
+<li>A multi-frame EVM execution layer (CALL, STATICCALL, DELEGATECALL, CREATE, CREATE2 frames)</li>
+<li>Bisection-based fraud proofs (the classical Arbitrum-style mechanism, simplified)</li>
+<li>Forced inclusion (anti-censorship), so users can submit transactions directly to L1 if the rollup operator censors them</li>
+<li>6 EVM precompiles (ECRECOVER, SHA256, RIPEMD160, IDENTITY, MODEXP, BLAKE2F) plus BN254 pairing</li>
+</ul>
+<p>Developers use Hardhat, Foundry, MetaMask, and existing Ethereum toolchains. The rollup&rsquo;s bridge handles asset and message passing in both directions. Settlement to L1 (with fraud-proof challenge windows) brings Kern&rsquo;s finality and BFT properties to EVM applications without compromising the L1&rsquo;s design.</p>
+<p>This is architecturally the same pattern Tezos uses with Etherlink. The pattern works.</p>
+<hr />
+<h2 id="8-the-slashable-attestation-primitive"><span class="hash">§&nbsp;08</span><span class="htext">The slashable attestation primitive</span></h2>
+<p class="lede"><span class="dropcap">T</span>his is the single most distinctive primitive introduced in v1.1-rc.</p>
+<h3 id="61-the-problem">6.1 The problem</h3>
+<p>Most &ldquo;oracle&rdquo; systems and identity attestations today rely on <strong>reputational</strong> punishment: a node or attestation issuer that lies loses business over time as customers route around them. This works at the limit but is slow (months), expensive (operators must be paid handsomely to maintain reputation), and coordinative-failure-prone (a coalition can attack short-term).</p>
+<p>The principal alternative — full on-chain consensus for every oracle update — is computationally expensive and gas-prohibitive at scale.</p>
+<h3 id="62-the-kern-primitive">6.2 The Kern primitive</h3>
+<p>Kern provides three new operation kinds at the protocol level:</p>
+<ul>
+<li><strong>ATTEST</strong>: a signed claim by an issuer about a subject under a schema, with an optional KRN bond. The bond is debited from the issuer at the time of attestation.</li>
+<li><strong>REVOKE_ATTESTATION</strong>: marks a previously issued attestation as revoked and returns the bond to the issuer. Revocation does NOT remove the historical record.</li>
+<li><strong>SLASH_ATTESTATION_EQUIVOCATION</strong>: anyone can submit two contradicting attestations by the same issuer for the same (schema, subject) tuple with overlapping validity windows. The runtime verifies the contradiction; the issuer&rsquo;s bond is slashed (30% of bond by default, of which 10% is paid to the prover and the rest burned); the remaining 70% is refunded to the issuer.</li>
+</ul>
+<p>The protocol does not validate the content of claims — anyone can attest under any schema identifier. Schema marketplaces (an application-layer contract) provide curation: which schemas are recognized, what minimum bonds apply, which issuers are recognized.</p>
+<h3 id="63-why-this-matters">6.3 Why this matters</h3>
+<p>The economic incentive to report equivocation is symmetric: every observer has reason to monitor and submit slashing evidence. Combined with the on-chain bond at the time of attestation, this makes equivocation <strong>automatically expensive</strong> in a way that doesn&rsquo;t depend on reputation timing or social consensus.</p>
+<p>The lifecycle of an attestation, and the two paths it can take:</p>
+<pre><code>  ATTEST                  ┌──► REVOKE_ATTESTATION  (honest path)
+  issuer signs            │     claim no longer holds; issuer revokes;
+  (schema, subject,  ─────┤     bond returned in full ↩
+   claim) + locks bond    │
+  🔒 e.g. 1 KRN           └──► SLASH_ATTESTATION_EQUIVOCATION  (dishonest path)
+                                issuer signed two contradictory claims;
+                                anyone submits both as evidence ⚔
+                                       │
+                                       ▼
+                           bond slashed 30%  →  0.30 KRN
+                              ├── 10% of slash → whistleblower   (0.03 KRN)
+                              └── rest         → burned          (0.27 KRN)
+                           both attestations marked consumed (no double-slash)
+</code></pre>
+<p>The math is the protocol&rsquo;s standard slashing split (consistent with §5.2). On a 1 KRN bond: 0.30 KRN slashed, of which 0.03 KRN rewards the prover and 0.27 KRN is burned; the remaining 0.70 KRN of the bond is unaffected.</p>
+<p>For oracle networks specifically, this allows Kern oracles to operate at roughly an order of magnitude lower cost than reputation-based systems (Chainlink, Pyth) while providing cryptoeconomically stronger guarantees.</p>
+<h3 id="64-composition-with-other-verticals">6.4 Composition with other verticals</h3>
+<p>The attestation primitive is the foundation for:
+- KYC and AML screening attestations posted by regulated providers (Vertical 1)
+- Notary attestations of property title transfer (Vertical 1, real estate)
+- NAV and best-execution attestations from depositaries (Vertical 1, institutional fund)
+- Personhood attestations for Sybil resistance in QF rounds (Vertical 2)
+- Evidence attestations for RPGF rounds (Vertical 2)
+- Feeder readings and aggregator medians in oracle networks (Vertical 3)
+- ZK-claim payloads for privacy-preserving identity proofs (Vertical 4)</p>
+<hr />
+<h2 id="9-zk-claims-privacy-preserving-attestations"><span class="hash">§&nbsp;09</span><span class="htext">ZK-claims: privacy-preserving attestations</span></h2>
+<p class="lede"><span class="dropcap">T</span>he plain attestation format reveals the full claim to anyone reading the chain. For high-stakes regulated use (KYC, accreditation, source of funds), the consumer needs PROOF that a property holds without learning the underlying data.</p>
+<h3 id="71-the-format">7.1 The format</h3>
+<p>A ZK-claim attestation carries a Groth16 (BN254-pairing-based) proof in the claim field:</p>
+<pre><code class="language-json">{
+    &quot;proof_system&quot;: &quot;groth16-bn254&quot;,
+    &quot;verifier_key_hash&quot;: &quot;&lt;32-byte hex&gt;&quot;,
+    &quot;public_inputs&quot;: [...],
+    &quot;proof&quot;: {&quot;a&quot;: [...], &quot;b&quot;: [[...], [...]], &quot;c&quot;: [...]},
+    &quot;predicate_summary&quot;: &quot;user is over 18 years old&quot;
+}
+</code></pre>
+<h3 id="72-verification-on-chain">7.2 Verification on-chain</h3>
+<p>Kern&rsquo;s BN254 precompile (since v0.7, real py_ecc-backed pairing since v1.0-rc) performs the Groth16 pairing check that constitutes the core of proof verification. The verifier key for each circuit is registered in the schema marketplace; consumers look up the key by hash and run the verifier.</p>
+<h3 id="73-reference-circuits">7.3 Reference circuits</h3>
+<p>Four reference circuits are described (with implementations to be shipped in v1.2 with proper trusted setup ceremonies):</p>
+<ul>
+<li><strong>age_threshold_v1</strong>: &ldquo;DOB + min_age_seconds ≤ now&rdquo;</li>
+<li><strong>value_threshold_v1</strong>: &ldquo;value ≥ public_threshold&rdquo;</li>
+<li><strong>account_ownership_v1</strong>: &ldquo;prover knows sk such that pubkey(sk) = public_addr&rdquo;</li>
+<li><strong>set_membership_v1</strong>: &ldquo;prover knows Merkle path proving leaf is in tree&rdquo;</li>
+</ul>
+<p>These four cover roughly 80% of real-world ZK-claim use cases in the EU regulatory context.</p>
+<h3 id="74-production-deployment-workflow">7.4 Production deployment workflow</h3>
+<ol>
+<li>Circuit author writes the predicate in Circom (or equivalent)</li>
+<li>Trusted setup ceremony (MPC, multi-party) generates proving and verifying keys</li>
+<li>Foundation registers the verifying key hash in the schema marketplace</li>
+<li>Provers (KYC providers, custodians) use the proving key to generate proofs</li>
+<li>Issuers post attestations referencing the registered verifying key</li>
+<li>Consumers run the verifier on-chain via the BN254 precompile</li>
+</ol>
+<hr />
+<h2 id="10-on-chain-governance"><span class="hash">§&nbsp;10</span><span class="htext">On-chain governance</span></h2>
+<p class="lede"><span class="dropcap">T</span>wo governance tracks run in parallel on-chain, each with its own cycle and parameters.</p>
+<h3 id="81-protocol-amendment-track">8.1 Protocol amendment track</h3>
+<p>For changes to consensus rules, gas pricing, the KVM, Skald itself, or any other protocol parameter. Follows a four-phase Liquid PoS cycle (Proposal → Exploration → Cooldown → Adoption) over approximately 25 days. Activation requires 80% supermajority of validator-weighted stake and 25% quorum.</p>
+<p>The protocol amendment can swap function implementations (the on-chain code is upgradable via a coordinated vote), change gas pricing constants, and modify any documented governance-amendable parameter.</p>
+<h3 id="82-treasury-track">8.2 Treasury track</h3>
+<p>For disbursements from the protocol treasury (funded by a small fraction of block rewards plus optional founder contributions) to ecosystem projects. Follows a simpler cycle (Submission → Voting → Execution) over approximately 7 days. Voting uses <strong>quadratic voting with stake weighting</strong>: a voter&rsquo;s effective vote is proportional to the square root of their stake. This favors broad participation over plutocracy.</p>
+<h3 id="83-equivocation-slashing">8.3 Equivocation slashing</h3>
+<p>Validators who vote both YES and NO on the same proposal in the same phase are slashable. The proof is the two on-chain votes; the slashing is processed via a SLASH_EQUIVOCATION transaction (this is structurally analogous to the slashable attestation primitive in §8).</p>
+<h3 id="84-why-dual-track">8.4 Why dual track</h3>
+<p>A single governance track would force the chain to choose between &ldquo;fund this development team&rdquo; and &ldquo;amend the consensus rules&rdquo; as competing priorities. The two operate at different speeds (protocol amendments are once-in-quarters; treasury disbursements are weekly) and require different voter pools (protocol amendments need expert-level voter understanding; treasury allocations need community sentiment). Separating them lets each operate under its own constraints.</p>
+<hr />
+<h2 id="11-token-economy"><span class="hash">§&nbsp;11</span><span class="htext">Token economy</span></h2>
+<p class="lede"><span class="dropcap">T</span>he native token is <strong>KRN</strong>. The smallest unit is the <strong>mukrn</strong> (Tezos homage): 1 KRN = 10^6 mukrn.</p>
+<h3 id="91-genesis-distribution">9.1 Genesis distribution</h3>
+<p>100,000,000 KRN at genesis, distributed per the Ethereum 2014 template:</p>
+<table>
+<thead>
+<tr>
+<th>Allocation</th>
+<th style="text-align: right;">Share</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Public sale</td>
+<td style="text-align: right;">70%</td>
+<td>Sold to the public at genesis (staged distribution; see §12)</td>
+</tr>
+<tr>
+<td>Founder</td>
+<td style="text-align: right;">10%</td>
+<td>Vested 4 years, 1-year cliff</td>
+</tr>
+<tr>
+<td>Foundation</td>
+<td style="text-align: right;">15%</td>
+<td>Treasury for ecosystem grants, audits, infrastructure</td>
+</tr>
+<tr>
+<td>Contributors</td>
+<td style="text-align: right;">3%</td>
+<td>Retroactive grants for v0.1-v1.0 contributors</td>
+</tr>
+<tr>
+<td>Validator bootstrap</td>
+<td style="text-align: right;">2%</td>
+<td>Initial subsidy pool for testnet and mainnet validators</td>
+</tr>
+</tbody>
+</table>
+<h3 id="92-issuance">9.2 Issuance</h3>
+<p>Block rewards come from KRN issuance per the adaptive issuance schedule (see <a href="adaptive-issuance.md"><code>adaptive-issuance.md</code></a>). Target initial annual issuance: ~5-7% of supply, decreasing as stake participation rises. Issuance is governance-amendable.</p>
+<h3 id="93-slashing-economy">9.3 Slashing economy</h3>
+<p>The slashing of equivocators (consensus, governance, or attestation) reduces total supply via the burn portion (60-90% of slashed amounts). The reward portion (10%) provides whistleblower incentives. Together these create a deflationary pressure on misbehavior.</p>
+<h3 id="94-on-speculation-memecoins-and-fair-launch-mythology">9.4 On speculation, memecoins, and &ldquo;fair launch&rdquo; mythology</h3>
+<p>KRN is the native utility token of an institutional L1, not a speculative asset. We do not market it as a memecoin, do not run aggressive growth campaigns, do not airdrop retroactively, and do not court the audience that drives short-cycle token price action. The two markets — institutional adoption and memecoin speculation — are mutually exclusive, and Kern picks institutions.</p>
+<p>For the full reasoning (why no memecoin positioning, why no &ldquo;fair launch&rdquo; theatre, why no aggressive marketing, what the founder&rsquo;s relationship to token price actually is), see <a href="tokenomics.md"><code>tokenomics.md</code></a> §11, and the founder&rsquo;s <a href="manifesto.md"><code>manifesto.md</code></a> §V.</p>
+<hr />
+<h2 id="12-security-review-and-audit-path"><span class="hash">§&nbsp;12</span><span class="htext">Security review and audit path</span></h2>
+<h3 id="101-internal-review-completed">10.1 Internal review (completed)</h3>
+<p class="lede"><span class="dropcap">T</span>he v1.1-rc release ships with an internal security review (see <a href="security-review-v11rc.md"><code>security-review-v11rc.md</code></a>) that surfaced and fixed seven vulnerabilities:</p>
+<table>
+<thead>
+<tr>
+<th>Severity</th>
+<th style="text-align: right;">Count</th>
+<th>Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Critical</td>
+<td style="text-align: right;">2</td>
+<td>Negative-fee baker drain; negative-amount theft from named recipient</td>
+</tr>
+<tr>
+<td>Major</td>
+<td style="text-align: right;">2</td>
+<td>No cross-network replay protection; slash handler locked unslashed bond</td>
+</tr>
+<tr>
+<td>Medium</td>
+<td style="text-align: right;">2</td>
+<td>Index key collision via separator characters; lax ZK-claim type checks</td>
+</tr>
+<tr>
+<td>Minor</td>
+<td style="text-align: right;">1</td>
+<td>No range checks on gas_limit and nonce</td>
+</tr>
+</tbody>
+</table>
+<p>All findings have regression tests (<code>tests/test_security_v11rc.py</code>). This review is INPUT to the professional audit, not a substitute.</p>
+<h3 id="102-mandatory-professional-audit">10.2 Mandatory professional audit</h3>
+<p>A professional smart-contract audit by a specialized firm — recommended: Trail of Bits, OtterSec, Hashlock, Runtime Verification, or ChainSec — is mandatory before Midgard mainnet launch.</p>
+<p>Indicative scope: 6-12 weeks per cycle, €100-200k per audit, two cycles recommended.</p>
+<p>The Foundation contracts directly with the audit firm. See <a href="setup-auditor.md"><code>setup-auditor.md</code></a> for the engagement workflow.</p>
+<h3 id="103-the-full-operational-path">10.3 The full operational path</h3>
+<p>See <a href="post-code-roadmap.md"><code>post-code-roadmap.md</code></a> for the detailed phase-by-phase plan. Summary:</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>What</th>
+<th>Indicative time</th>
+<th style="text-align: right;">Indicative cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Foundation incorporation (legal entity, board, multisigs)</td>
+<td>~3 months</td>
+<td style="text-align: right;">€40-60k</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Audit cycle 1</td>
+<td>2-3 months</td>
+<td style="text-align: right;">€100-200k</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Yggdrasil testnet launch (parallel)</td>
+<td>~2 months</td>
+<td style="text-align: right;">€15-30k</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Audit remediation + cycle 2</td>
+<td>~2 months</td>
+<td style="text-align: right;">€50-80k</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Public sale</td>
+<td>~1 month</td>
+<td style="text-align: right;">€30-50k</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Midgard mainnet genesis</td>
+<td>~2 weeks</td>
+<td style="text-align: right;">€10-30k</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td></td>
+<td><strong>9-15 months</strong></td>
+<td style="text-align: right;"><strong>~€275-510k</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="13-from-whitepaper-to-running-node-technical-entry-points"><span class="hash">§&nbsp;13</span><span class="htext">From whitepaper to running node — technical entry points</span></h2>
+<p class="lede"><span class="dropcap">T</span>his whitepaper is intentionally vulgarized: it explains Kern&rsquo;s thesis and verticals in language a non-engineer institutional reader can follow. But Kern is a working reference implementation, not a position paper. If you want to <strong>actually run, build on, integrate, audit, or operate Kern</strong>, this section is your map.</p>
+<p>Nine <strong>setup guides</strong> live in <code>docs/setup-*.md</code>. Each is role-targeted and assumes only the prerequisites needed for that role. They are linked from a single index — <a href="setup-guides.md"><code>setup-guides.md</code></a> — and each is operationally exhaustive (copy-paste commands, exact version numbers, file paths). They are the technical vertical complementing the conceptual vertical of this whitepaper.</p>
+<h3 id="131-which-guide-is-for-me">13.1 Which guide is for me?</h3>
+<table>
+<thead>
+<tr>
+<th>If you are&hellip;</th>
+<th>Read</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A protocol contributor or someone reading the code</td>
+<td><a href="setup-developer.md"><code>setup-developer.md</code></a></td>
+<td>Clone, install dependencies, run tests, navigate the codebase, run a local devnet, modify Skald, build the docs site</td>
+</tr>
+<tr>
+<td>A KRN holder wanting to earn baking yield without running a node</td>
+<td><a href="setup-delegator.md"><code>setup-delegator.md</code></a></td>
+<td>Wallet setup, choosing a validator, delegating with no lockup, monitoring rewards, undelegating</td>
+</tr>
+<tr>
+<td>Someone planning to operate a validator on Yggdrasil testnet or Midgard mainnet</td>
+<td><a href="setup-validator.md"><code>setup-validator.md</code></a></td>
+<td>Hardware requirements, key management (hot vs cold), node setup, monitoring, slashing avoidance, commission rate setup</td>
+</tr>
+<tr>
+<td>A dApp developer building on Kern (native Skald or EVM via rollup)</td>
+<td><a href="setup-dapp-developer.md"><code>setup-dapp-developer.md</code></a></td>
+<td>Toolchain (Hardhat/Foundry for EVM rollup; Skald CLI for native), local testing, deploying to devnet/testnet, frontend integration</td>
+</tr>
+<tr>
+<td>A team running an Optimistic Smart Rollup on Kern</td>
+<td><a href="setup-rollup-operator.md"><code>setup-rollup-operator.md</code></a></td>
+<td>Rollup framework, sequencer setup, state commitment posting, fraud proof bisection, forced inclusion handling</td>
+</tr>
+<tr>
+<td>Someone running a block explorer, indexer, or chain data service</td>
+<td><a href="setup-explorer-ops.md"><code>setup-explorer-ops.md</code></a></td>
+<td>RPC endpoints, archival node setup, indexing patterns, public-facing APIs</td>
+</tr>
+<tr>
+<td>Someone running <strong>Heimdall</strong> (the official Kern explorer + monitoring stack)</td>
+<td><a href="setup-heimdall-operator.md"><code>setup-heimdall-operator.md</code></a></td>
+<td>Heimdall installation, env vars, Prometheus scraping, vertical-specific dashboards</td>
+</tr>
+<tr>
+<td>A founding board member of the (to-be-incorporated) Kern Foundation</td>
+<td><a href="setup-foundation.md"><code>setup-foundation.md</code></a></td>
+<td>Foundation legal setup, multisig key generation (3-of-5 / 2-of-3), genesis ceremony, treasury operations, regulatory dialogue</td>
+</tr>
+<tr>
+<td>A security auditor engaged by the Foundation for audit cycle 1</td>
+<td><a href="setup-auditor.md"><code>setup-auditor.md</code></a></td>
+<td>Codebase walkthrough, threat model, where to focus (BFT, attestation, EVM, governance), reporting format, originality attestation</td>
+</tr>
+<tr>
+<td>Looking for the navigation index across all the above</td>
+<td><a href="setup-guides.md"><code>setup-guides.md</code></a></td>
+<td>One-page overview of each guide with a &ldquo;start here&rdquo; recommendation by role</td>
+</tr>
+</tbody>
+</table>
+<h3 id="132-spec-documents-the-protocol-details">13.2 Spec documents (the protocol details)</h3>
+<p>Beyond the setup guides, the protocol&rsquo;s full specification is split across topic-specific documents. These are the source of truth that the setup guides reference :</p>
+<p><strong>Architecture &amp; consensus</strong>
+- <a href="architecture.md"><code>architecture.md</code></a> — component layout, module boundaries, data flow
+- <a href="consensus.md"><code>consensus.md</code></a> — BFT protocol detail, finality conditions, view changes
+- <a href="bft.md"><code>bft.md</code></a> — multi-validator BFT implementation specifics
+- <a href="staking.md"><code>staking.md</code></a> — Liquid PoS LPoS delegation mechanics</p>
+<p><strong>Smart contracts</strong>
+- <a href="skald-language.md"><code>skald-language.md</code></a> — Skald language reference (grammar, types, semantics)
+- <a href="typecheck.md"><code>typecheck.md</code></a> — static type system rules</p>
+<p><strong>v1.1-rc verticals</strong> (the institutional applications)
+- <a href="attestations.md"><code>attestations.md</code></a> — slashable attestation primitive
+- <a href="sto-mica.md"><code>sto-mica.md</code></a> — STO compliance vertical
+- <a href="public-goods-funding.md"><code>public-goods-funding.md</code></a> — QF + RPGF vertical
+- <a href="oracle-network.md"><code>oracle-network.md</code></a> — oracle network + schema marketplace + ZK-claims vertical
+- <a href="v11rc-changes.md"><code>v11rc-changes.md</code></a> — consolidated v1.1-rc release notes</p>
+<p><strong>Tooling shipping with v1.1-rc</strong>
+- <a href="setup-heimdall-operator.md"><code>setup-heimdall-operator.md</code></a> — Heimdall, the official block explorer + monitoring stack (FastAPI + SQLite indexer + Prometheus metrics, dedicated per-vertical pages)</p>
+<p><strong>Governance &amp; economy</strong>
+- <a href="governance.md"><code>governance.md</code></a> — dual-track on-chain governance spec
+- <a href="tokenomics.md"><code>tokenomics.md</code></a> — KRN supply, distribution, sinks
+- <a href="contributors-program.md"><code>contributors-program.md</code></a> — contributor allocation policy
+- <a href="adaptive-issuance.md"><code>adaptive-issuance.md</code></a> — issuance schedule that responds to participation</p>
+<p><strong>API &amp; integration</strong>
+- <a href="api-stability.md"><code>api-stability.md</code></a> — frozen / stable / beta surface declarations per version
+- <a href="api.md"><code>api.md</code></a> — JSON-RPC endpoint reference
+- <a href="merkle-trie.md"><code>merkle-trie.md</code></a> — state trie format for light clients</p>
+<p><strong>Operations</strong>
+- <a href="post-code-roadmap.md"><code>post-code-roadmap.md</code></a> — Foundation → Audit → Sale → Mainnet operational plan
+- <a href="pre-mainnet-checklist.md"><code>pre-mainnet-checklist.md</code></a> — gating items before Midgard launch
+- <a href="release-tagging.md"><code>release-tagging.md</code></a> — versioning policy and tag conventions
+- <a href="security-review-v11rc.md"><code>security-review-v11rc.md</code></a> — internal security review (input to professional audit)</p>
+<p><strong>Originality &amp; legal</strong>
+- <a href="originality-and-attribution.md"><code>originality-and-attribution.md</code></a> — founder attribution policy + Belgian moral rights anchor</p>
+<h3 id="133-start-here-for-each-common-scenario">13.3 Start here, for each common scenario</h3>
+<p>If you are a regulator (FSMA, AMF, BaFin, CSSF, CONSOB, equivalent) asked to assess Kern:</p>
+<ol>
+<li>Read this whitepaper §3 (use cases) and §4 (thesis)</li>
+<li>Read <a href="sto-mica.md"><code>sto-mica.md</code></a> section &ldquo;The compliance gap that Skald closes&rdquo;</li>
+<li>Read one of the STO templates (<a href="../kern/skald/examples/sto-startup-equity.skald"><code>kern/skald/examples/sto-startup-equity.skald</code></a> is the smallest; ~225 lines) noting the <code>invariant</code> blocks</li>
+<li>Read <a href="security-review-v11rc.md"><code>security-review-v11rc.md</code></a> to see the security posture honestly stated</li>
+</ol>
+<p>This should give you, in roughly 4 hours of reading, a defensible position on whether Kern&rsquo;s compliance model is sound for your jurisdiction.</p>
+<p>If you are a foundation or institution evaluating Kern for a public-goods funding program:</p>
+<ol>
+<li>This whitepaper §1 (ambition) and §3 (use case D — UNESCO heritage preservation)</li>
+<li><a href="public-goods-funding.md"><code>public-goods-funding.md</code></a> end-to-end</li>
+<li>The two PGF templates (<a href="../kern/skald/examples/quadratic-funding.skald"><code>quadratic-funding.skald</code></a>, <a href="../kern/skald/examples/retroactive-pgf.skald"><code>retroactive-pgf.skald</code></a>)</li>
+<li><a href="setup-foundation.md"><code>setup-foundation.md</code></a> for the operational pattern of running a Foundation that operates Kern-based rounds</li>
+</ol>
+<p>If you are an institutional investor or compliance officer at a financial institution evaluating Kern for asset tokenization:</p>
+<ol>
+<li>This whitepaper §1 (ambition), §3.1-3.3 (your persona is likely one of A/B/C), §4 (what Kern provides)</li>
+<li><a href="sto-mica.md"><code>sto-mica.md</code></a> end-to-end</li>
+<li>The relevant STO template</li>
+<li><a href="security-review-v11rc.md"><code>security-review-v11rc.md</code></a> + the post-code-roadmap §10-§12</li>
+</ol>
+<p>If you are a software engineer about to write code on Kern:</p>
+<ol>
+<li><a href="setup-developer.md"><code>setup-developer.md</code></a> → get the chain running locally</li>
+<li><a href="setup-dapp-developer.md"><code>setup-dapp-developer.md</code></a> → deploy your first contract</li>
+<li><a href="skald-language.md"><code>skald-language.md</code></a> → language reference (or <a href="setup-rollup-operator.md"><code>setup-rollup-operator.md</code></a> if you&rsquo;re staying in EVM)</li>
+<li>The example contracts in <a href="../kern/skald/examples/"><code>kern/skald/examples/</code></a> as templates</li>
+</ol>
+<h3 id="134-the-reference-implementation">13.4 The reference implementation</h3>
+<p>Quick start to run Kern locally:</p>
+<pre><code class="language-bash">git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
+cd kern
+pip install -e &quot;.[dev,explorer,docs]&quot;
+pytest tests/                # 692 tests should pass in ~20 seconds
+python networks/devnet_bootstrap.py    # local 3-validator devnet
+python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
+</code></pre>
+<p>In a second terminal, start <strong>Heimdall</strong> — the official explorer + monitoring stack — pointing at your local devnet :</p>
+<pre><code class="language-bash">heimdall    # web UI on http://127.0.0.1:8800, /metrics, /health
+</code></pre>
+<p>Open <code>http://127.0.0.1:8800</code> to inspect the live chain: blocks, transactions, validators, originated contracts (auto-classified by detected Skald template), the slashable attestation registry, and the governance state. The <code>/metrics</code> endpoint is Prometheus text-format for scraping into your monitoring stack.</p>
+<p>From there, every setup guide walks you through your role-specific next steps.</p>
+<p>The reference implementation runs in Python for clarity and auditability. A production-performance implementation in Rust or Go is anticipated post-Midgard as a v2.x effort — but the Python reference will remain the canonical specification (the implementation is the spec).</p>
+<hr />
+<h2 id="14-v12-roadmap"><span class="hash">§&nbsp;14</span><span class="htext">v1.2 roadmap</span></h2>
+<p class="lede"><span class="dropcap">T</span>he v1.1-rc release is feature-complete for its scope but exposes several v1.2 enhancements:</p>
+<p><strong>Skald language</strong>:
+- Mapping types (<code>map&lt;address, int&gt;</code>) — enables per-investor balances, per-feeder bonds, multi-project rounds
+- Math primitives (<code>isqrt</code>, <code>min</code>, <code>max</code>) — enables on-chain QF matching computation
+- Cross-contract reads (<code>call_view(contract, entry, params)</code>) — enables composition between STO contracts, oracles, governance
+- Direct attestation reads from Skald (<code>attestation_latest(...)</code> builtin)</p>
+<p><strong>Application-level</strong>:
+- Production ZK circuits for <code>age_threshold_v1</code> and <code>value_threshold_v1</code> with multi-party trusted setup ceremonies
+- Multi-currency denomination registry (EUR, USD, GBP as first-class)
+- Native vesting enforcement
+- MiFID II execution venue integration via standardized best-execution attestation schema</p>
+<p>The v1.2 features are not blocking for an initial Midgard launch. The v1.1-rc primitives are operationally usable today.</p>
+<hr />
+<h2 id="15-the-position-kern-occupies"><span class="hash">§&nbsp;15</span><span class="htext">The position Kern occupies</span></h2>
+<p class="lede"><span class="dropcap">W</span>e do not claim Kern dominates any single dimension on which existing protocols compete. Ethereum has more developers. Solana has higher throughput. Tezos has longer governance track record. Cosmos has more sovereign chains.</p>
+<p>We claim Kern dominates a specific combination of dimensions that, when combined, are uniquely suited to <strong>institutional users for whom legibility and accountability are more valuable than throughput or speculation</strong>. Specifically:</p>
+<ul>
+<li><strong>EU regulators</strong> evaluating which protocols they can recognize for MiCA/AIFMD/MiFID II purposes</li>
+<li><strong>Foundations and supranational bodies</strong> (UNESCO, EU public sector, World Bank, Wikimedia) running grant-making programs</li>
+<li><strong>Regulated financial institutions</strong> tokenizing financial instruments under MiFID II / the Prospectus Regulation</li>
+<li><strong>Industrial data networks</strong> (energy, telco, supply chain) replacing post-hoc reconciliation with continuous attestation</li>
+<li><strong>Researchers and developers</strong> of identity infrastructure with privacy guarantees</li>
+</ul>
+<p>This is not a venture-scale market in the sense of &ldquo;10 billion users&rdquo; — it is a market of perhaps <strong>thousands of institutional actors</strong> controlling collectively hundreds of billions of euros in deployed capital and regulatory authority. The product-market fit is precise rather than broad.</p>
+<p>That precision is what gives Kern a defensible position despite the competitive density of the L1 space.</p>
+<hr />
+<h2 id="16-reference-implementation"><span class="hash">§&nbsp;16</span><span class="htext">Reference implementation</span></h2>
+<p class="lede"><span class="dropcap">T</span>he Kern reference implementation is open-source under Apache-2.0. As of v1.1-rc:</p>
+<ul>
+<li>~32,000 lines of code, documentation, and configuration</li>
+<li>63 Python modules</li>
+<li>49 markdown specifications</li>
+<li>10 Skald example contracts (vault, counter, 3 STOs, QF, RPGF, 3 oracle/marketplace)</li>
+<li><strong>483 passing tests</strong>, 2 chaos tests intentionally skipped</li>
+<li>4 internal originality checks pass (no copied code, all files SPDX-licensed, founder attribution on all modules)</li>
+</ul>
+<p>The repository is at https://github.com/vaneeckhoutnicolas/kern (or wherever the Foundation chooses to host it post-incorporation).</p>
+<p>Run the test suite:</p>
+<pre><code class="language-bash">git clone https://github.com/vaneeckhoutnicolas/kern
+cd kern
+pip install -e &quot;.[dev]&quot;
+pytest tests/
+</code></pre>
+<p>Bootstrap a local devnet:</p>
+<pre><code class="language-bash">python networks/devnet_bootstrap.py
+</code></pre>
+<hr />
+<h2 id="17-acknowledgments"><span class="hash">§&nbsp;17</span><span class="htext">Acknowledgments</span></h2>
+<p class="lede"><span class="dropcap">T</span>his work draws on, and explicitly acknowledges, intellectual debt to:</p>
+<ul>
+<li><strong>Tezos</strong> for the LPoS delegation model, on-chain self-amendment, and Tenderbake consensus design</li>
+<li><strong>Ethereum</strong> for the BN254 precompiles, the rollup architecture pattern, the foundational ideas of &ldquo;decentralized applications,&rdquo; and the Yellow Paper that we use for EVM compatibility</li>
+<li><strong>Optimism</strong> for the Retroactive Public Goods Funding mechanism and the trusted-setup approach to ZK infrastructure</li>
+<li><strong>Vitalik Buterin, Zoë Hitzig, and Glen Weyl</strong> for Quadratic Funding (Liberal Radicalism, 2018)</li>
+<li><strong>The Gitcoin team</strong> for demonstrating QF works in practice</li>
+<li><strong>The EU Commission, EBA, and ESMA</strong> for the EU regulatory frameworks whose precision makes encoding them as Skald invariants tractable</li>
+<li><strong>The pre-Belgian and Belgian moral rights tradition</strong> (Code de droit économique, Livre XI) for the legal recognition of founder authorship</li>
+</ul>
+<p>Kern&rsquo;s block-production and finality mechanism is adapted from the Tenderbake family of BFT consensus algorithms. The author (Nicolas Van Eeckhout) is founder of <a href="https://www.cogarius.com">Cogarius</a>, <a href="https://github.com/tezos-checker/checker-ui">contributor to the Tezos ecosystem</a>, and co-founder of the <a href="https://www.meetup.com/meetup-blockchain-ethereum-bruxelles/">Meetup Blockchain-Ethereum group in Brussels</a>.</p>
+<hr />
+<h2 id="18-license"><span class="hash">§&nbsp;18</span><span class="htext">License</span></h2>
+<p class="lede"><span class="dropcap">T</span>his document is published under <strong>CC-BY-SA-4.0</strong> (Creative Commons Attribution-ShareAlike 4.0 International). Derivative documents must credit Nicolas Van Eeckhout and Kern contributors as authors.</p>
+<p>The reference implementation is published under <strong>Apache-2.0</strong> (the Apache License, Version 2.0). See <a href="../LICENSE"><code>LICENSE</code></a> for the full terms.</p>
+<p>The Kern name, the &ldquo;kn1&rdquo; address prefix, and the Skald language name are reserved as marks of authenticity by the project; they are not transferable to forks. Forks must use distinct names. See <a href="originality-and-attribution.md"><code>originality-and-attribution.md</code></a> for the full attribution and forking policy.</p>
+<h2 id="19-disclaimer"><span class="hash">§&nbsp;19</span><span class="htext">Disclaimer</span></h2>
+<p class="lede"><span class="dropcap">T</span>he reference implementation, the Skald language, the Heimdall explorer, the documentation, this whitepaper, and all related artifacts are provided <strong>&ldquo;AS IS,&rdquo; without warranty of any kind</strong>. The author and contributors accept <strong>no liability</strong> for any direct, indirect, or consequential damages arising from use, misuse, or inability to use the Software, including any financial loss, regulatory consequence, or third-party claim. Discussion of EU regulation (MiCA, AIFMD, MiFID II, DORA) is <strong>informational, not a compliance assurance</strong>; no regulator has approved, endorsed, or certified the Software. The reference implementation is <strong>pre-audit</strong> as of this writing and unsuitable for production with material value at stake.</p>
+<p>Read the full disclaimer at <a href="disclaimer.md"><code>disclaimer.md</code></a> — by using the Software in any way, you accept it.</p>
+<hr />
+<p><em>This whitepaper accompanies the v1.1-rc reference implementation release. It will be revised for v1.0 (after audit cycle 1) and again at Midgard mainnet launch. The canonical version is at <code>docs/whitepaper.md</code> in the Kern repository.</em></p>
+<p><em>The full technical specification — including the nine role-specific setup guides, the four vertical specifications, the API stability declaration, the tokenomics document, and the operational roadmap — is indexed in §13 above. Start at <a href="setup-guides.md"><code>setup-guides.md</code></a> for role-based navigation.</em></p>
+  </article>
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <span class="rune" aria-hidden="true">ᚴ</span> Kern
+        </div>
+        <p class="footer-tagline">
+          The kernel. The grain of state that endures. Read the whitepaper, then read the source.
+        </p>
+      </div>
+      <div>
+        <h5>Read</h5>
+        <ul>
+          <li><a href="index.html">Landing page</a></li>
+          <li><a href="#abstract">Abstract</a></li>
+          <li><a href="#16-reference-implementation">Reference impl</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Source</h5>
+        <ul>
+          <li><a href="https://github.com/vaneeckhoutnicolas/kern" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="github.html#docs">Setup guides</a></li>
+          <li><a href="index.html#heimdall">Heimdall explorer</a></li>
+          <li><a href="https://www.linkedin.com/in/vaneeckhout/" target="_blank" rel="noopener">Follow on LinkedIn</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors</span>
+      <span>Whitepaper: CC-BY-SA-4.0 · Reference impl: Apache-2.0 · <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/disclaimer.md" target="_blank" rel="noopener" style="color:inherit;border-bottom:1px solid rgba(255,255,255,0.2);">Disclaimer</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Scroll progress bar
+(function () {
+  const bar = document.getElementById('progress-bar');
+  if (!bar) return;
+  const update = () => {
+    const h = document.documentElement;
+    const max = h.scrollHeight - h.clientHeight;
+    const pct = max > 0 ? (h.scrollTop / max) * 100 : 0;
+    bar.style.width = pct + '%';
+  };
+  window.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('resize', update);
+  update();
+})();
+
+// Sidebar TOC: highlight the current section based on scroll position
+(function () {
+  const headings = Array.from(document.querySelectorAll('.article h2[id], .article h3[id]'));
+  if (!headings.length) return;
+  const tocLinks = Array.from(document.querySelectorAll('.toc a[data-anchor]'));
+  const linkByAnchor = new Map(tocLinks.map(a => [a.dataset.anchor, a]));
+  let currentAnchor = null;
+
+  const setCurrent = (anchor) => {
+    if (anchor === currentAnchor) return;
+    if (currentAnchor) {
+      const prev = linkByAnchor.get(currentAnchor);
+      if (prev) {
+        prev.classList.remove('is-current');
+        const parentLi = prev.closest('li.toc-h2');
+        if (parentLi) parentLi.classList.remove('is-current');
+      }
+    }
+    currentAnchor = anchor;
+    const cur = linkByAnchor.get(anchor);
+    if (cur) {
+      cur.classList.add('is-current');
+      const parentLi = cur.closest('li.toc-h2');
+      if (parentLi) parentLi.classList.add('is-current');
+    }
+  };
+
+  // Use IntersectionObserver to track which heading is currently near the top
+  const io = new IntersectionObserver((entries) => {
+    // Find the topmost visible heading
+    const visible = entries.filter(e => e.isIntersecting)
+      .map(e => e.target)
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+    if (visible.length) {
+      setCurrent(visible[0].id);
+    } else {
+      // Fall back: pick the last heading that is above the viewport top
+      const above = headings.filter(h => h.getBoundingClientRect().top < 120);
+      if (above.length) setCurrent(above[above.length - 1].id);
+    }
+  }, {
+    rootMargin: '-100px 0px -65% 0px',
+    threshold: [0, 1.0],
+  });
+  headings.forEach(h => io.observe(h));
+})();
+</script>
+
+</body>
+</html>

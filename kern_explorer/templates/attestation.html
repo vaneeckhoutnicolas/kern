@@ -1,0 +1,81 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Attestation {{ attestation.attestation_id[:12] }} — Heimdall{% endblock %}
+{% block content %}
+
+<section class="mb-6">
+  <a href="/attestations" class="text-xs text-kern-accent hover:underline">← Attestation registry</a>
+  <h1 class="text-2xl font-bold mt-1">Attestation</h1>
+  <p class="hash text-sm text-gray-600 dark:text-gray-400">{{ attestation.attestation_id }}</p>
+  <div class="flex gap-2 mt-2">
+    {% if attestation.consumed_for_slashing %}
+      <span class="text-xs px-2 py-1 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">SLASHED for equivocation</span>
+    {% elif attestation.revoked_at_level %}
+      <span class="text-xs px-2 py-1 rounded bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-300">REVOKED at level {{ attestation.revoked_at_level }}</span>
+    {% else %}
+      <span class="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">ACTIVE</span>
+    {% endif %}
+    {% if attestation.is_zk %}
+      <span class="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300" title="ZK-claim: payload contains a Groth16 proof; the underlying data is hidden">🔐 ZK-claim</span>
+    {% endif %}
+  </div>
+</section>
+
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden mb-6">
+  <table class="w-full text-sm">
+    <tbody>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 w-1/4 text-xs uppercase text-gray-500">Issuer</td>
+          <td class="p-2 hash"><a href="/account/{{ attestation.issuer }}" class="text-kern-accent hover:underline">{{ attestation.issuer }}</a></td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Schema</td>
+          <td class="p-2"><a href="/schema/{{ attestation.schema_id }}" class="text-kern-accent hover:underline">{{ attestation.schema_id }}</a></td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Subject</td>
+          <td class="p-2 hash">{{ attestation.subject }}</td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Bond</td>
+          <td class="p-2 font-mono">{{ attestation.bond_krn }} KRN <span class="text-xs text-gray-500">({{ attestation.bond }} mukrn)</span></td></tr>
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Issued at level</td>
+          <td class="p-2"><a href="/block/{{ attestation.issued_at_level }}" class="text-kern-accent hover:underline">#{{ attestation.issued_at_level }}</a></td></tr>
+      {% if attestation.revoked_at_level %}
+      <tr><td class="p-2 bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">Revoked at level</td>
+          <td class="p-2"><a href="/block/{{ attestation.revoked_at_level }}" class="text-kern-accent hover:underline">#{{ attestation.revoked_at_level }}</a></td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<section class="mb-6">
+  <h2 class="text-sm font-semibold uppercase text-gray-500 mb-2">Claim payload</h2>
+  <pre class="bg-white dark:bg-kern-800 rounded border border-gray-200 dark:border-kern-700 p-3 text-xs overflow-x-auto">{{ attestation.claim | tojson(indent=2) }}</pre>
+  {% if attestation.is_zk %}
+    <p class="text-xs text-gray-500 mt-2">
+      This payload is a Groth16 ZK proof. The verifier consumes it via the BN254 precompile.
+      The underlying private data (e.g. date of birth, account balance) is not in the payload —
+      only the proof that the public predicate holds.
+    </p>
+  {% endif %}
+</section>
+
+{% if slashings %}
+<section>
+  <h2 class="text-sm font-semibold uppercase text-gray-500 mb-2">Slashing evidence involving this attestation</h2>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+        <tr><th class="text-left p-2">Tx</th><th class="text-left p-2">Whistleblower</th><th class="text-right p-2">Slashed</th><th class="text-right p-2">Block</th></tr>
+      </thead>
+      <tbody>
+      {% for s in slashings %}
+        <tr class="border-t border-gray-100 dark:border-kern-700">
+          <td class="p-2"><a href="/tx/{{ s.tx_hash }}" class="hash truncate-hash" title="{{ s.tx_hash }}">{{ s.tx_hash }}</a></td>
+          <td class="p-2"><a href="/account/{{ s.whistleblower }}" class="hash truncate-hash" title="{{ s.whistleblower }}">{{ s.whistleblower }}</a></td>
+          <td class="p-2 text-right font-mono text-amber-600">{{ s.slashed_amount_krn }} KRN</td>
+          <td class="p-2 text-right"><a href="/block/{{ s.block_level }}" class="text-kern-accent hover:underline">{{ s.block_level }}</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% endblock %}

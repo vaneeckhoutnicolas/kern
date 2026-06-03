@@ -1,0 +1,99 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}STO compliance dashboard — Heimdall{% endblock %}
+{% block content %}
+
+<section class="mb-6">
+  <h1 class="text-2xl font-bold">STO compliance dashboard</h1>
+  <p class="text-sm text-gray-600 dark:text-gray-400 mt-1 max-w-3xl">
+    Tokenized-securities offerings deployed on Kern.
+    Each row shows the live compliance state derived from the contract's storage —
+    regulators read this dashboard, not the auditor's report.
+    See <a href="/sto-mica.md" class="text-kern-accent hover:underline">the spec</a>.
+  </p>
+</section>
+
+<section class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">STO contracts deployed</div>
+    <div class="text-2xl font-bold mt-1">{{ summary.total }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">Currently compliant</div>
+    <div class="text-2xl font-bold mt-1 text-emerald-600">{{ summary.compliant }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">Issues flagged</div>
+    <div class="text-2xl font-bold mt-1 {% if summary.flagged > 0 %}text-red-600{% else %}text-emerald-600{% endif %}">{{ summary.flagged }}</div>
+  </div>
+  <div class="bg-white dark:bg-kern-800 rounded-lg border p-3">
+    <div class="text-xs text-gray-500 uppercase">Total supply across STOs</div>
+    <div class="text-2xl font-bold mt-1 font-mono">{{ summary.total_issued_krn }}</div>
+  </div>
+</section>
+
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+      <tr>
+        <th class="text-left p-2">Contract</th>
+        <th class="text-left p-2">Template</th>
+        <th class="text-left p-2">Compliance</th>
+        <th class="text-right p-2">Issued / Cap</th>
+        <th class="text-left p-2">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for c in contracts %}
+      <tr class="border-t border-gray-100 dark:border-kern-700">
+        <td class="p-2"><a href="/contract/{{ c.address }}" class="hash truncate-hash" title="{{ c.address }}">{{ c.address }}</a></td>
+        <td class="p-2"><span class="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300">{{ c.skald_template }}</span></td>
+        <td class="p-2">
+          {% set v = c.vertical_summary %}
+          {% if v and v.get('compliant') %}
+            <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300">✓ Compliant</span>
+          {% else %}
+            <span class="text-xs px-2 py-0.5 rounded bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300">✗ Check storage</span>
+          {% endif %}
+          {% if v and v.get('depositary_independent') is defined %}
+            {% if v.get('depositary_independent') %}
+              <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 ml-1">✓ AIFMD Art.21</span>
+            {% else %}
+              <span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 ml-1">⚠ Depositary check</span>
+            {% endif %}
+          {% endif %}
+          {% if v and v.get('anti_ponzi_invariant_ok') is defined %}
+            {% if v.get('anti_ponzi_invariant_ok') %}
+              <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 ml-1">✓ No over-distribution</span>
+            {% else %}
+              <span class="text-xs px-2 py-0.5 rounded bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300 ml-1">✗ Over-distributed</span>
+            {% endif %}
+          {% endif %}
+        </td>
+        <td class="p-2 text-right font-mono text-xs">
+          {% if c.vertical_summary %}
+            {{ c.vertical_summary.get('total_supply_issued', '—') }} / {{ c.vertical_summary.get('total_supply_cap', '—') }}
+            {% if c.vertical_summary.get('supply_utilization_pct') %}
+              <div class="text-xs text-gray-500">{{ c.vertical_summary.supply_utilization_pct }}%</div>
+            {% endif %}
+          {% else %}—{% endif %}
+        </td>
+        <td class="p-2">
+          {% if c.vertical_summary and c.vertical_summary.get('trading_paused') %}
+            <span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">PAUSED</span>
+          {% elif c.vertical_summary and c.vertical_summary.get('secondary_market_paused') %}
+            <span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">2nd PAUSED</span>
+          {% else %}
+            <span class="text-xs text-gray-500">live</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="p-4 text-center text-gray-500">No STO contracts originated yet. Deploy one of the v1.1-rc templates to populate this dashboard.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

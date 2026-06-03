@@ -1,0 +1,166 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 Kern contributors
+#
+# mkdocs configuration for the Kern documentation site.
+#
+# Usage:
+#   pip install mkdocs mkdocs-material
+#   mkdocs serve              # local preview at http://127.0.0.1:8000
+#   mkdocs build              # static site → site/
+#   mkdocs gh-deploy          # publish to gh-pages branch
+#
+# The intention is for docs.kern.protocol (or similar) to render this
+# site. All source content stays in this repo under docs/ — mkdocs only
+# adds rendering, navigation, search.
+
+site_name: Kern Protocol Documentation
+site_description: >
+  Reference documentation for Kern — a Layer-1 blockchain combining
+  Ethereum's developer ecosystem with Tezos-style governance,
+  formal verifiability, and Liquid Proof-of-Stake.
+site_url: https://docs.kern.protocol/
+repo_url: https://github.com/vaneeckhoutnicolas/kern
+repo_name: kern-protocol/kern
+edit_uri: edit/main/docs/
+
+# Use docs/ as the source. mkdocs-material is the recommended theme.
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  # Enable when ready:
+  # - git-revision-date-localized
+  # - awesome-pages
+
+# Site navigation — mirrors the README "📋 Start here" structure.
+nav:
+  - Overview:
+      - Home: index.md
+      - Executive summary: executive-summary.md
+      - Whitepaper: whitepaper.md
+      - Manifesto: manifesto.md
+      - Naming and symbolism: naming-and-symbolism.md
+      - Disclaimer: disclaimer.md
+      - Legal audit: legal-audit.md
+      - Use cases: use-cases.md
+      - Roadmap: roadmap.md
+  - Token economy:
+      - Tokenomics: tokenomics.md
+      - Staking & delegation: staking.md
+      - Contributors program: contributors-program.md
+      - Public goods funding: public-goods-funding.md
+      - Adaptive issuance: adaptive-issuance.md
+  - Protocol:
+      - Architecture: architecture.md
+      - Consensus: consensus.md
+      - Multi-validator BFT: bft.md
+      - Governance: governance.md
+      - Merkle trie: merkle-trie.md
+      - Slashable attestations: attestations.md
+      - Fee floor: fee-floor.md
+  - Smart contracts (Skald):
+      - Skald language: skald-language.md
+      - Static typing: typecheck.md
+      - STO securities compliance: sto-mica.md
+      - Oracle network: oracle-network.md
+  - Rollups & EVM:
+      - EVM rollups: rollups.md
+      - Multi-frame EVM: multi-frame-evm.md
+      - EVM fraud proofs: evm-fraud-proofs.md
+      - Forced inclusion: forced-inclusion.md
+  - Build & run:
+      - Running a node: running-a-node.md
+      - API reference: api.md
+      - API stability: api-stability.md
+      - Setup guides (index): setup-guides.md
+      - Building the docs site: building-the-site.md
+      - Setup — Developer: setup-developer.md
+      - Setup — Delegator: setup-delegator.md
+      - Setup — Validator: setup-validator.md
+      - Setup — DApp developer: setup-dapp-developer.md
+      - Setup — Rollup operator: setup-rollup-operator.md
+      - Setup — Explorer ops: setup-explorer-ops.md
+      - Setup — Heimdall operator: setup-heimdall-operator.md
+      - Heimdall — Ops runbook: heimdall-ops-runbook.md
+      - Heimdall — Postgres migration: heimdall-postgres-migration.md
+      - Heimdall — Next-gen RFP: heimdall-rfp-next-gen.md
+      - Setup — Foundation: setup-foundation.md
+      - Setup — Auditor: setup-auditor.md
+  - Authorship & attribution:
+      - Originality & attribution: originality-and-attribution.md
+  - Change history:
+      - v1.1-rc: v11rc-changes.md
+      - v1.0-rc: v10rc-changes.md
+      - v0.7 – v0.9: v07-v08-v09-changes.md
+      - v0.6: v06-changes.md
+      - v0.5: v05-changes.md
+      - v0.4: v04-changes.md
+  - Launch readiness:
+      - Post-code roadmap: post-code-roadmap.md
+      - Pre-mainnet checklist: pre-mainnet-checklist.md
+      - Release tagging guide: release-tagging.md
+      - Internal security review (v1.1-rc): security-review-v11rc.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/vaneeckhoutnicolas/kern
+  generator: false   # remove the "Made with Material for MkDocs" line if desired
+
+# Don't strict-fail on missing pages, since the docs/ tree may evolve
+# faster than this nav definition.
+strict: false

@@ -1,0 +1,240 @@
+// retroactive-pgf.skald
+//
+// Retroactive Public Goods Funding (RPGF), as pioneered by the Optimism
+// Collective. The thesis: "it's easier to identify impact retrospectively
+// than to predict it prospectively." Instead of funding projects on
+// promises, fund them on shipped impact 6-24 months after delivery.
+//
+// The mechanism:
+//   - A *round* runs periodically (typically quarterly or semi-annually).
+//   - The round operator publishes a *call for nominations*: any public
+//     good shipped in the eligibility window can be nominated.
+//   - Each nomination has:
+//       * The recipient (a project/team/individual)
+//       * A description of impact delivered
+//       * Required evidence: links to released artifacts, usage metrics,
+//         attestations from beneficiaries.
+//   - A *badge-holder panel* (typically Foundation board + recognized
+//     community members) reviews nominations and votes a SCORE per project
+//     on a fixed scale (e.g., 0-5 stars or 0-100 points).
+//   - At round close, the matching pool is distributed proportional to
+//     the median or trimmed-mean score of each project.
+//
+// Why median/trimmed-mean instead of sum-of-votes:
+//   Robust to outlier votes (one bad-faith voter cannot inflate or
+//   deflate a project's score significantly).
+//
+// Skald v1.1 constraint:
+//   No mapping<address, int>. So this contract tracks ONE project per
+//   nomination. The round operator originates one nomination contract
+//   per submission. A separate "round coordinator" off-chain process
+//   computes aggregate distribution and triggers payouts.
+
+contract RetroactivePgfNomination {
+
+    storage {
+        // --- Round identity ---
+        round_id:               string,
+        round_operator:         address,    // the Foundation or appointed party
+        matching_pool_address:  address,    // where the pool KRN is held
+        nominations_close_at:   int,        // block level when nominations close
+        voting_closes_at:       int,        // block level when voting closes
+
+        // --- Nomination identity ---
+        nomination_id:          string,
+        recipient:              address,
+        impact_summary_hash:    string,     // hash of the impact-claim document
+        evidence_count:         int,        // # of evidence attestations on chain
+
+        // --- Eligibility window (work must have shipped in this window) ---
+        eligible_after_level:   int,
+        eligible_before_level:  int,
+        shipped_at_level:       int,        // claimed by nomination, attestable
+
+        // --- Voting ---
+        // Badge-holders submit scores on a 0..max_score scale.
+        // Each badge-holder may vote at most once per nomination.
+        // The contract accumulates the sum and count; the off-chain
+        // coordinator computes median/trimmed-mean across all nominations
+        // for the round's final distribution.
+        max_score:              int,        // e.g., 100
+        score_sum:              int,        // sum of all submitted scores
+        vote_count:             int,        // number of distinct voters
+        // Skald v1.1 can't track per-voter state; the round_operator
+        // enforces "one vote per badge-holder" off-chain by checking
+        // signatures before forwarding to record_vote.
+
+        // --- Final payout ---
+        round_closed:           bool,
+        median_score:           int,        // computed off-chain, recorded here
+        matching_share_mukrn:   int,        // share allocated from pool
+        funds_paid:             int,
+
+        // --- Disqualification ---
+        disqualified:           bool,
+        disqualification_reason: string,
+    }
+
+    // ========================================================================
+    // INVARIANTS
+    // ========================================================================
+
+    // Score sum cannot exceed (max_score × vote_count).
+    invariant score_sum_bounded {
+        score_sum <= max_score * vote_count
+    }
+
+    // Vote count is non-negative.
+    invariant vote_count_nonneg {
+        vote_count >= 0
+    }
+
+    // Median score is in valid range (only meaningful after round close).
+    invariant median_score_bounded {
+        median_score >= 0 && median_score <= max_score
+    }
+
+    // Payouts cannot exceed allocated share.
+    invariant payout_bounded {
+        funds_paid <= matching_share_mukrn
+    }
+
+    // The recipient address cannot be the round operator (separation).
+    invariant role_separation {
+        recipient != round_operator
+    }
+
+    // Eligibility window must be sensible.
+    invariant eligibility_window_ordered {
+        eligible_after_level <= eligible_before_level
+    }
+
+    // The claimed ship date must fall within the eligibility window.
+    invariant ship_date_in_window {
+        shipped_at_level >= eligible_after_level && shipped_at_level <= eligible_before_level
+    }
+
+    // ========================================================================
+    // VOTING
+    // ========================================================================
+
+    // The round operator forwards a verified badge-holder vote. The
+    // operator first verifies off-chain:
+    //   1) The voter holds a valid "rpgf.badge-holder" attestation
+    //      issued by the Foundation for this round
+    //   2) The voter has not already voted on this nomination
+    //   3) The score is within range
+    //
+    // For full transparency, the operator's claim that "badge-holder X
+    // voted score Y on nomination Z" is itself a slashable attestation
+    // (separate ATTEST transaction). Equivocation by the operator is
+    // provable.
+    entry record_vote(score: int, current_level: int) {
+        require sender == round_operator with "only round operator records votes";
+        require !round_closed with "round closed";
+        require !disqualified with "nomination disqualified";
+        require current_level < voting_closes_at with "voting closed";
+        require score >= 0 with "score must be non-negative";
+        require score <= max_score with "score exceeds max";
+        score_sum = score_sum + score;
+        vote_count = vote_count + 1;
+    }
+
+    // ========================================================================
+    // EVIDENCE
+    // ========================================================================
+
+    // Each nomination accumulates evidence attestations: usage metrics,
+    // beneficiary testimonials, downloads, citations, etc. These are
+    // posted via the attestation registry (schema "rpgf.evidence",
+    // subject = nomination_id). The operator increments the counter
+    // here so the badge-holders can see at-a-glance how well-supported
+    // a nomination is.
+    entry record_evidence(at_level: int) {
+        require sender == round_operator with "only operator";
+        require !round_closed with "round closed";
+        evidence_count = evidence_count + 1;
+    }
+
+    // ========================================================================
+    // DISQUALIFICATION
+    // ========================================================================
+
+    // Round operator can disqualify a nomination if:
+    //   - Evidence is fabricated (slashable attestation equivocation
+    //     detected for the evidence-issuer)
+    //   - The work was outside the eligibility window
+    //   - Conflicts of interest of the recipient
+    //   - Violation of round rules
+    entry disqualify(reason: string) {
+        require sender == round_operator with "only operator";
+        require !round_closed with "round closed";
+        disqualified = true;
+        disqualification_reason = reason;
+    }
+
+    // ========================================================================
+    // CLOSE & PAYOUT
+    // ========================================================================
+
+    // The round operator publishes the median score for this nomination
+    // (computed off-chain from the recorded votes — the votes themselves
+    // are publicly inspectable via attestation registry events). The
+    // matching share is then allocated proportionally.
+    entry record_median_and_share(
+        median: int,
+        share_mukrn: int,
+        current_level: int
+    ) {
+        require sender == round_operator with "only operator";
+        require !round_closed with "already closed";
+        require current_level >= voting_closes_at with "voting still open";
+        require median >= 0 && median <= max_score with "median out of range";
+        require share_mukrn >= 0 with "share must be non-negative";
+        median_score = median;
+        matching_share_mukrn = share_mukrn;
+        round_closed = true;
+    }
+
+    // After close, the matching pool transfers the allocated share into
+    // this contract. (Separate tx; the pool's controller calls this entry
+    // with `amount` set to the share.)
+    entry receive_matching() {
+        require round_closed with "round not closed";
+        require sender == matching_pool_address with "only matching pool";
+        require amount > 0 with "amount must be positive";
+        require amount + funds_paid <= matching_share_mukrn with "amount exceeds allocated share";
+        // The matching KRN is now in this contract; recipient withdraws below.
+    }
+
+    // Recipient withdraws funds.
+    entry withdraw_to_recipient() {
+        require round_closed with "round not closed";
+        require !disqualified with "disqualified — no payout";
+        require sender == recipient with "only recipient";
+        let available: int = matching_share_mukrn - funds_paid;
+        require available > 0 with "nothing to withdraw";
+        funds_paid = funds_paid + available;
+        // Runtime side effect: KRN transferred to recipient.
+    }
+
+    // ========================================================================
+    // VIEWS
+    // ========================================================================
+
+    view voting_is_open(current_level: int) -> bool {
+        !round_closed && !disqualified && current_level < voting_closes_at
+    }
+
+    view average_score() -> int {
+        score_sum / vote_count
+    }
+
+    view amount_pending_payout() -> int {
+        matching_share_mukrn - funds_paid
+    }
+
+    view is_eligible(shipping_level: int) -> bool {
+        shipping_level >= eligible_after_level && shipping_level <= eligible_before_level
+    }
+}

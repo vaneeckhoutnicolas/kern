@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+#
+# Grafana dashboard auto-provisioning.
+# Mount this file at /etc/grafana/provisioning/dashboards/dashboards.yml
+# inside the Grafana container, and mount the JSON dashboards directory at
+# /var/lib/grafana/dashboards.
+
+apiVersion: 1
+
+providers:
+  - name: kern
+    folder: Kern
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

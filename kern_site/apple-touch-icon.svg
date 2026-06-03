@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Kern — apple-touch-icon.svg
+  SPDX-License-Identifier: Apache-2.0
+  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+
+  Apple touch icon (used by iOS / iPadOS Safari when adding to Home Screen,
+  and as the high-res tab icon on macOS). Drawn at 180×180 with the same
+  rune and palette as favicon.svg but with stronger weighting.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="Kern">
+  <title>Kern</title>
+  <!-- Full-bleed paper background (iOS applies its own rounded mask) -->
+  <rect x="0" y="0" width="180" height="180" fill="#FAFAF7"/>
+
+  <!-- The Kaun rune ᚴ, centred, with stronger stroke for icon size -->
+  <g fill="none" stroke="#C2885E" stroke-width="14"
+     stroke-linecap="round" stroke-linejoin="round">
+    <line x1="62" y1="30" x2="62" y2="150"/>
+    <line x1="62" y1="90" x2="132" y2="36"/>
+    <line x1="62" y1="90" x2="132" y2="144"/>
+  </g>
+</svg>

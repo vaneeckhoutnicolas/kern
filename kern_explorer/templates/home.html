@@ -1,0 +1,112 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% block title %}Heimdall — Kern Explorer{% endblock %}
+{% block content %}
+
+<section class="mb-6">
+  <h1 class="text-2xl font-bold mb-1">Kern network at a glance</h1>
+  <p class="text-sm text-gray-600 dark:text-gray-400">
+    Surfacing the institutional-legibility features Kern was built to support.
+  </p>
+</section>
+
+<section class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
+  {% for label, value, link in stat_cards %}
+    {% if link %}<a href="{{ link }}" class="block">{% endif %}
+      <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 p-3 hover:shadow transition">
+        <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ label }}</div>
+        <div class="text-xl font-bold mt-1">{{ value }}</div>
+      </div>
+    {% if link %}</a>{% endif %}
+  {% endfor %}
+</section>
+
+<section class="mb-8">
+  <h2 class="text-sm font-semibold uppercase text-gray-500 mb-2">v1.1-rc verticals</h2>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+    {% for label, value, link, desc in vertical_cards %}
+      <a href="{{ link }}" class="block bg-gradient-to-br from-white to-gray-50 dark:from-kern-800 dark:to-kern-700 rounded-lg border border-gray-200 dark:border-kern-600 p-4 hover:shadow-md transition">
+        <div class="flex items-baseline justify-between">
+          <div class="text-base font-semibold">{{ label }}</div>
+          <div class="text-2xl font-bold text-kern-accent">{{ value }}</div>
+        </div>
+        <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ desc }}</div>
+      </a>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div>
+    <div class="flex justify-between items-baseline mb-3">
+      <h2 class="text-lg font-semibold">Recent blocks</h2>
+      <a href="/blocks" class="text-xs text-kern-accent hover:underline">View all →</a>
+    </div>
+    <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500 dark:text-gray-400">
+          <tr>
+            <th class="text-left p-2">Level</th>
+            <th class="text-left p-2">Hash</th>
+            <th class="text-left p-2">Baker</th>
+            <th class="text-right p-2">Txs</th>
+            <th class="text-right p-2">Age</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in recent_blocks %}
+            <tr class="border-t border-gray-100 dark:border-kern-700 hover:bg-gray-50 dark:hover:bg-kern-700/50">
+              <td class="p-2"><a href="/block/{{ b.level }}" class="text-kern-accent hover:underline">{{ b.level }}</a></td>
+              <td class="p-2"><span class="hash truncate-hash" title="{{ b.hash }}">{{ b.hash }}</span></td>
+              <td class="p-2">
+                {% if b.baker %}
+                  <a href="/account/{{ b.baker }}" class="hash truncate-hash" title="{{ b.baker }}">{{ b.baker }}</a>
+                {% else %}—{% endif %}
+              </td>
+              <td class="p-2 text-right">{{ b.tx_count }}</td>
+              <td class="p-2 text-right text-xs text-gray-500">{{ b.age }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="p-4 text-center text-gray-500">No blocks indexed yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div>
+    <div class="flex justify-between items-baseline mb-3">
+      <h2 class="text-lg font-semibold">Recent transactions</h2>
+      <a href="/txs" class="text-xs text-kern-accent hover:underline">View all →</a>
+    </div>
+    <div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500 dark:text-gray-400">
+          <tr>
+            <th class="text-left p-2">Kind</th>
+            <th class="text-left p-2">Hash</th>
+            <th class="text-left p-2">Sender</th>
+            <th class="text-right p-2">Amount</th>
+            <th class="text-right p-2">Block</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tx in recent_txs %}
+            <tr class="border-t border-gray-100 dark:border-kern-700 hover:bg-gray-50 dark:hover:bg-kern-700/50">
+              <td class="p-2"><span class="text-xs px-1.5 py-0.5 rounded {{ 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' if tx.success else 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300' }}">{{ tx.kind }}</span></td>
+              <td class="p-2"><a href="/tx/{{ tx.hash }}" class="hash truncate-hash" title="{{ tx.hash }}">{{ tx.hash }}</a></td>
+              <td class="p-2"><a href="/account/{{ tx.sender }}" class="hash truncate-hash" title="{{ tx.sender }}">{{ tx.sender }}</a></td>
+              <td class="p-2 text-right font-mono text-xs">{{ tx.amount_krn }} KRN</td>
+              <td class="p-2 text-right"><a href="/block/{{ tx.block_level }}" class="text-kern-accent hover:underline">{{ tx.block_level }}</a></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="p-4 text-center text-gray-500">No transactions indexed yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

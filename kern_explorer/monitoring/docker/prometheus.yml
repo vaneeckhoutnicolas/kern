@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+#
+# Sample Prometheus configuration for scraping Heimdall and the Kern node.
+# Use as a starting point — production deployments typically add:
+#   - remote_write for long-term storage (Thanos, Mimir, Victoria Metrics)
+#   - service discovery for dynamic validator sets
+#   - additional scrape jobs for node OS metrics (node_exporter)
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+  external_labels:
+    network: kern-devnet         # change to kern-yggdrasil or kern-midgard
+
+rule_files:
+  - /etc/prometheus/rules/kern-alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  # Heimdall — the canonical metrics surface for Kern
+  - job_name: heimdall
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - heimdall:8800
+        labels:
+          service: heimdall
+          role: explorer
+
+  # The Kern node's own /metrics (basic chain stats, less verbose than Heimdall)
+  - job_name: kern_node
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - kern-node:8732
+        labels:
+          service: kern-node
+          role: node
+
+  # Prometheus itself (for completeness)
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

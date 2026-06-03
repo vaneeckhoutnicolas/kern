@@ -1,0 +1,39 @@
+// vault.skald — a single-owner escrow contract.
+//
+// Anyone can `deposit` (with attached value); only the owner can
+// `withdraw`. The contract's tracked balance is checked against an
+// invariant on every entry call to guarantee accounting consistency.
+
+contract Vault {
+    storage {
+        owner: address,
+        deposited: int,
+        withdrawn: int,
+    }
+
+    invariant accounting {
+        deposited >= withdrawn
+    }
+
+    invariant nonneg {
+        deposited >= 0
+    }
+
+    entry deposit() {
+        require amount > 0 with "must attach a positive amount";
+        deposited = deposited + amount;
+    }
+
+    entry withdraw(n: int) {
+        require sender == owner with "only owner can withdraw";
+        require n > 0 with "amount must be positive";
+        require deposited - withdrawn >= n with "insufficient escrow";
+        withdrawn = withdrawn + n;
+        // The actual outbound transfer is emitted as a side effect by
+        // the runtime (not modeled in this minimal example).
+    }
+
+    view available() -> int {
+        deposited - withdrawn
+    }
+}

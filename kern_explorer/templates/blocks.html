@@ -1,0 +1,60 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% from "_macros.html" import pagination_controls %}
+{% block title %}Blocks — Heimdall{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Blocks</h1>
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden" x-data="sortableTable('level', 'desc')">
+  <table class="w-full text-sm" role="table" aria-label="Blocks list, sortable">
+    <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+      <tr>
+        <th class="text-left p-2 cursor-pointer select-none" role="button" tabindex="0"
+            @click="sortBy('level')" @keydown.enter="sortBy('level')" @keydown.space.prevent="sortBy('level')"
+            :aria-sort="sortAttr('level')">
+          <span class="inline-flex items-center gap-1">Level
+            <span class="text-xs opacity-60" x-text="sortCol === 'level' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+          </span>
+        </th>
+        <th class="text-left p-2">Hash</th>
+        <th class="text-left p-2 cursor-pointer select-none" role="button" tabindex="0"
+            @click="sortBy('baker')" @keydown.enter="sortBy('baker')" @keydown.space.prevent="sortBy('baker')"
+            :aria-sort="sortAttr('baker')">
+          <span class="inline-flex items-center gap-1">Baker
+            <span class="text-xs opacity-60" x-text="sortCol === 'baker' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+          </span>
+        </th>
+        <th class="text-right p-2 cursor-pointer select-none" role="button" tabindex="0"
+            @click="sortBy('tx_count')" @keydown.enter="sortBy('tx_count')" @keydown.space.prevent="sortBy('tx_count')"
+            :aria-sort="sortAttr('tx_count')">
+          <span class="inline-flex items-center gap-1">Txs
+            <span class="text-xs opacity-60" x-text="sortCol === 'tx_count' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+          </span>
+        </th>
+        <th class="text-right p-2 cursor-pointer select-none" role="button" tabindex="0"
+            @click="sortBy('timestamp')" @keydown.enter="sortBy('timestamp')" @keydown.space.prevent="sortBy('timestamp')"
+            :aria-sort="sortAttr('timestamp')">
+          <span class="inline-flex items-center gap-1">Age
+            <span class="text-xs opacity-60" x-text="sortCol === 'timestamp' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+          </span>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for b in blocks %}
+      <tr x-sort:level="{{ b.level }}" x-sort:baker="{{ b.baker or '' }}" x-sort:tx_count="{{ b.tx_count }}" x-sort:timestamp="{{ b.timestamp }}"
+          class="border-t border-gray-100 dark:border-kern-700 hover:bg-gray-50 dark:hover:bg-kern-700/50">
+        <td class="p-2"><a href="/block/{{ b.level }}" class="text-kern-accent hover:underline">{{ b.level }}</a></td>
+        <td class="p-2 hash truncate-hash" title="{{ b.hash }}">{{ b.hash }}</td>
+        <td class="p-2">{% if b.baker %}<a href="/account/{{ b.baker }}" class="hash truncate-hash" title="{{ b.baker }}">{{ b.baker }}</a>{% else %}—{% endif %}</td>
+        <td class="p-2 text-right">{{ b.tx_count }}</td>
+        <td class="p-2 text-right text-xs text-gray-500">{{ b.age }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="p-4 text-center text-gray-500">No blocks indexed yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{{ pagination_controls(pagination, "/blocks") }}
+{% endblock %}

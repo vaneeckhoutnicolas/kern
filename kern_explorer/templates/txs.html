@@ -1,0 +1,65 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+{# Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors #}
+{% extends "base.html" %}
+{% from "_macros.html" import pagination_controls %}
+{% block title %}Transactions — Heimdall{% endblock %}
+{% block content %}
+<div class="flex justify-between items-center mb-4 flex-wrap gap-3">
+  <h1 class="text-2xl font-bold">Transactions</h1>
+  <div class="flex gap-2 text-xs flex-wrap" role="group" aria-label="Filter by transaction kind">
+    {% for k in known_kinds %}
+      <a href="/txs?kind={{ k }}" class="px-2 py-1 rounded {{ 'bg-kern-accent text-white' if k == kind_filter else 'bg-gray-200 dark:bg-kern-700 hover:bg-gray-300' }}"
+         {% if k == kind_filter %}aria-current="true"{% endif %}>{{ k }}</a>
+    {% endfor %}
+    {% if kind_filter %}<a href="/txs" class="px-2 py-1 rounded text-gray-500 hover:text-kern-accent">clear</a>{% endif %}
+  </div>
+</div>
+<div class="bg-white dark:bg-kern-800 rounded-lg border border-gray-200 dark:border-kern-700 overflow-hidden" x-data="sortableTable('block_level', 'desc')">
+  <table class="w-full text-sm" role="table" aria-label="Transactions list, sortable">
+    <thead class="bg-gray-50 dark:bg-kern-700 text-xs uppercase text-gray-500">
+      <tr>
+        <th class="text-left p-2 cursor-pointer select-none" role="button" tabindex="0"
+            @click="sortBy('kind')" @keydown.enter="sortBy('kind')" @keydown.space.prevent="sortBy('kind')"
+            :aria-sort="sortAttr('kind')">
+          <span class="inline-flex items-center gap-1">Kind
+            <span class="text-xs opacity-60" x-text="sortCol === 'kind' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+          </span>
+        </th>
+        <th class="text-left p-2">Hash</th>
+        <th class="text-left p-2">Sender</th>
+        <th class="text-left p-2">Recipient</th>
+        <th class="text-right p-2 cursor-pointer select-none" role="button" tabindex="0"
+            @click="sortBy('amount')" @keydown.enter="sortBy('amount')" @keydown.space.prevent="sortBy('amount')"
+            :aria-sort="sortAttr('amount')">
+          <span class="inline-flex items-center gap-1">Amount
+            <span class="text-xs opacity-60" x-text="sortCol === 'amount' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+          </span>
+        </th>
+        <th class="text-right p-2 cursor-pointer select-none" role="button" tabindex="0"
+            @click="sortBy('block_level')" @keydown.enter="sortBy('block_level')" @keydown.space.prevent="sortBy('block_level')"
+            :aria-sort="sortAttr('block_level')">
+          <span class="inline-flex items-center gap-1">Block
+            <span class="text-xs opacity-60" x-text="sortCol === 'block_level' ? (sortDir === 'asc' ? '▲' : '▼') : '↕'"></span>
+          </span>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for tx in txs %}
+      <tr x-sort:kind="{{ tx.kind }}" x-sort:amount="{{ tx.amount }}" x-sort:block_level="{{ tx.block_level }}"
+          class="border-t border-gray-100 dark:border-kern-700 hover:bg-gray-50 dark:hover:bg-kern-700/50">
+        <td class="p-2"><span class="text-xs px-1.5 py-0.5 rounded {{ 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' if tx.success else 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300' }}">{{ tx.kind }}</span></td>
+        <td class="p-2"><a href="/tx/{{ tx.hash }}" class="hash truncate-hash" title="{{ tx.hash }}">{{ tx.hash }}</a></td>
+        <td class="p-2"><a href="/account/{{ tx.sender }}" class="hash truncate-hash" title="{{ tx.sender }}">{{ tx.sender }}</a></td>
+        <td class="p-2">{% if tx.recipient %}<a href="/account/{{ tx.recipient }}" class="hash truncate-hash" title="{{ tx.recipient }}">{{ tx.recipient }}</a>{% else %}—{% endif %}</td>
+        <td class="p-2 text-right font-mono text-xs">{{ tx.amount_krn }} KRN</td>
+        <td class="p-2 text-right"><a href="/block/{{ tx.block_level }}" class="text-kern-accent hover:underline">{{ tx.block_level }}</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="p-4 text-center text-gray-500">No transactions matching this filter.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{{ pagination_controls(pagination, "/txs") }}
+{% endblock %}

@@ -1,0 +1,245 @@
+// generic-data-oracle.skald
+//
+// A generic data oracle for any off-chain data source: energy market
+// data, telco subscriber counts, weather measurements, sports results,
+// IoT readings, identity status, supply-chain provenance.
+//
+// Architecture:
+//   - One contract per (oracle network, subject) pair
+//   - N "feeder" addresses are authorized to submit data; each posts
+//     a slashable attestation under schema_id "<oracle>.feed"
+//   - The contract aggregates feeder claims via median computation
+//     (off-chain by an aggregator service, on-chain via committed value)
+//   - A minimum number of independent feeders must agree (k-of-n
+//     threshold) before the value is considered "finalized"
+//   - Consumers read the latest finalized value via a view
+//
+// Slashing:
+//   Feeder equivocation (same value, different reading) is slashable
+//   via the standard attestation registry SLASH_ATTESTATION_EQUIVOCATION
+//   transaction — see kern/attestation.py.
+//
+// Tolerance:
+//   The aggregator allows feeder readings within `tolerance_band_bps`
+//   (basis points) of the median to be counted as "in agreement".
+//   Readings outside this band flag the feeder as anomalous.
+
+contract GenericDataOracle {
+
+    storage {
+        // --- Network identity ---
+        oracle_id:                  string,     // e.g., "energy.cwe-grid"
+        subject:                    string,     // e.g., "EU-grid-region-CWE"
+        aggregator:                 address,    // computes median, submits finalized value
+        network_admin:              address,    // can add/remove feeders, set thresholds
+
+        // --- Feeder set (Skald v1.1 has no mappings; we track count + meta) ---
+        feeder_count_authorized:    int,        // number of currently-authorized feeders
+        required_quorum:            int,        // k in k-of-n threshold (e.g., 7 of 10)
+        feeder_count_seen_this_round: int,      // feeders who submitted this round
+
+        // --- Tolerance ---
+        tolerance_band_bps:         int,        // e.g., 50 = 0.5% band
+
+        // --- Round state ---
+        round_number:               int,
+        round_started_at_level:     int,
+        round_finalized:            bool,
+        finalized_value:            int,        // the committed median for this round
+        finalized_at_level:         int,
+
+        // --- Latest finalized value (read by consumers) ---
+        latest_value:               int,
+        latest_round_number:        int,
+        latest_at_level:            int,
+
+        // --- Staleness ---
+        max_staleness_levels:       int,        // consumer-facing staleness gate
+        max_round_duration_levels:  int,        // forces round close if no finalization
+
+        // --- Anomaly tracking ---
+        anomalous_readings_count:   int,        // readings outside tolerance band
+        consecutive_failed_rounds:  int,        // rounds that timed out without quorum
+
+        // --- Pause ---
+        paused:                     bool,
+    }
+
+    // ========================================================================
+    // INVARIANTS
+    // ========================================================================
+
+    // Round number monotonic.
+    invariant round_monotonic {
+        latest_round_number <= round_number
+    }
+
+    // Quorum cannot exceed authorized feeder count.
+    invariant quorum_bounded {
+        required_quorum <= feeder_count_authorized
+    }
+
+    // Quorum must be positive (otherwise the oracle is meaningless).
+    invariant quorum_positive {
+        required_quorum > 0
+    }
+
+    // Tolerance must be sensible (>= 0 basis points, <= 10000 = 100%).
+    invariant tolerance_range {
+        tolerance_band_bps >= 0 && tolerance_band_bps <= 10000
+    }
+
+    // Aggregator and network admin must be distinct (separation of duties).
+    invariant role_separation {
+        aggregator != network_admin
+    }
+
+    // The "feeders seen this round" cannot exceed authorized count.
+    invariant seen_bounded {
+        feeder_count_seen_this_round <= feeder_count_authorized
+    }
+
+    // ========================================================================
+    // ADMIN — feeder set management
+    // ========================================================================
+
+    // Network admin authorizes a new feeder address. The feeder must
+    // have an active proof-of-identity attestation (off-chain check).
+    entry add_feeder() {
+        require sender == network_admin with "only admin";
+        require !paused with "oracle paused";
+        feeder_count_authorized = feeder_count_authorized + 1;
+    }
+
+    // Network admin removes a feeder (e.g., one that has been slashed
+    // for repeated anomalous readings).
+    entry remove_feeder() {
+        require sender == network_admin with "only admin";
+        require feeder_count_authorized > required_quorum with "would break quorum capacity";
+        feeder_count_authorized = feeder_count_authorized - 1;
+    }
+
+    entry update_quorum(new_quorum: int) {
+        require sender == network_admin with "only admin";
+        require new_quorum > 0 with "quorum must be positive";
+        require new_quorum <= feeder_count_authorized with "quorum exceeds authorized feeders";
+        required_quorum = new_quorum;
+    }
+
+    entry update_tolerance(new_band_bps: int) {
+        require sender == network_admin with "only admin";
+        require new_band_bps >= 0 with "tolerance non-negative";
+        require new_band_bps <= 10000 with "tolerance <= 100%";
+        tolerance_band_bps = new_band_bps;
+    }
+
+    // ========================================================================
+    // ROUND lifecycle
+    // ========================================================================
+
+    // Aggregator opens a new round (typically on a schedule).
+    entry open_round(current_level: int) {
+        require sender == aggregator with "only aggregator";
+        require !paused with "paused";
+        require round_finalized || round_number == 0 with "previous round not finalized";
+        round_number = round_number + 1;
+        round_started_at_level = current_level;
+        round_finalized = false;
+        feeder_count_seen_this_round = 0;
+    }
+
+    // Aggregator records that a feeder submitted a reading via the
+    // attestation registry (schema_id = "<oracle_id>.feed",
+    // subject = subject, claim = {value, round_number}). The aggregator
+    // off-chain reads the attestation, checks the value is within the
+    // tolerance band of the current median, and increments the counter.
+    //
+    // If outside tolerance, the aggregator records it as anomalous
+    // (no quorum credit). The feeder remains in the network but their
+    // anomalous-reading counter is observable.
+    entry record_in_tolerance_reading() {
+        require sender == aggregator with "only aggregator";
+        require !round_finalized with "round already finalized";
+        feeder_count_seen_this_round = feeder_count_seen_this_round + 1;
+    }
+
+    entry record_anomalous_reading() {
+        require sender == aggregator with "only aggregator";
+        require !round_finalized with "round finalized";
+        anomalous_readings_count = anomalous_readings_count + 1;
+    }
+
+    // Aggregator finalizes the round once quorum is reached. The
+    // finalized_value is the median computed off-chain across the
+    // in-tolerance readings. The aggregator's claim of "median = X
+    // for round N" is itself a slashable attestation (schema_id
+    // = "<oracle_id>.median", subject = "<subject>:<round_number>").
+    // If the aggregator equivocates, anyone can slash via the
+    // standard SLASH_ATTESTATION_EQUIVOCATION transaction.
+    entry finalize_round(median_value: int, current_level: int) {
+        require sender == aggregator with "only aggregator";
+        require !round_finalized with "round already finalized";
+        require feeder_count_seen_this_round >= required_quorum with "quorum not reached";
+        finalized_value = median_value;
+        finalized_at_level = current_level;
+        round_finalized = true;
+        latest_value = median_value;
+        latest_round_number = round_number;
+        latest_at_level = current_level;
+        consecutive_failed_rounds = 0;
+    }
+
+    // If quorum cannot be reached within max_round_duration_levels,
+    // anyone (not just the aggregator) can call this to close the round
+    // without a finalized value. The latest_value is preserved (stale)
+    // and consumers see the staleness.
+    entry abort_round_no_quorum(current_level: int) {
+        require !round_finalized with "round already finalized";
+        require current_level - round_started_at_level > max_round_duration_levels
+            with "round duration not exceeded";
+        round_finalized = true;
+        consecutive_failed_rounds = consecutive_failed_rounds + 1;
+        // latest_value NOT updated — consumers see the stale value with
+        // an outdated latest_at_level.
+    }
+
+    // ========================================================================
+    // PAUSE
+    // ========================================================================
+
+    entry pause() {
+        require sender == network_admin with "only admin";
+        paused = true;
+    }
+
+    entry unpause() {
+        require sender == network_admin with "only admin";
+        paused = false;
+    }
+
+    // ========================================================================
+    // VIEWS — what consumers read
+    // ========================================================================
+
+    view get_latest_value() -> int {
+        latest_value
+    }
+
+    view is_fresh(current_level: int) -> bool {
+        !paused
+        && latest_at_level > 0
+        && (current_level - latest_at_level <= max_staleness_levels)
+    }
+
+    view current_round_active() -> bool {
+        !round_finalized && !paused
+    }
+
+    view feeder_count() -> int {
+        feeder_count_authorized
+    }
+
+    view network_health_score() -> int {
+        feeder_count_authorized * 100 - anomalous_readings_count - consecutive_failed_rounds * 10
+    }
+}

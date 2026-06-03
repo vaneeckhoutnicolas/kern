@@ -1,0 +1,520 @@
+<!--
+  SPDX-License-Identifier: Apache-2.0
+  Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
+  Kern — How it works: block production, gas, rewards, issuance, attestations.
+  Values from docs/consensus.md, docs/tokenomics.md, docs/adaptive-issuance.md, docs/attestations.md.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How it works — Kern</title>
+<meta name="description" content="How Kern produces blocks (BFT consensus), how gas is consumed, how block rewards split, whether KRN is minted forever, and how slashable attestations work.">
+<meta property="og:title" content="Kern — How it works">
+<meta property="og:description" content="Block production, gas, rewards, issuance, and the slashable attestation primitive — visualised.">
+<meta property="og:type" content="article">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..900,0..100,0..1&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-paper:#FAFAF7; --bg-elevated:#FFFFFF; --bg-deep:#0E1A2B; --bg-deep-soft:#16243A;
+    --ink:#0E1A2B; --ink-2:#3D4A5E; --ink-muted:#7A8595; --ink-faint:#B5BDC9; --ink-inv:#FAFAF7;
+    --rule:#E5E1D8; --rule-strong:#C9C3B5;
+    --amber:#C2885E; --amber-deep:#8E5E3A; --bifrost:#1E3A8A; --moss:#5C7553; --rust:#A24E3C;
+    --d:"Fraunces","Iowan Old Style",Georgia,serif;
+    --b:"Instrument Sans",system-ui,sans-serif;
+    --m:"JetBrains Mono",ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{margin:0;background:var(--bg-paper);color:var(--ink);font-family:var(--b);line-height:1.6;
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+    background-image:radial-gradient(at 90% 0%,rgba(194,136,94,.04)0%,transparent 55%),radial-gradient(at 0% 100%,rgba(30,58,138,.02)0%,transparent 50%);
+    background-attachment:fixed;}
+  a{color:inherit;text-decoration:none;}
+  ::selection{background:var(--ink);color:var(--bg-paper);}
+  .skip-link{position:absolute;left:-9999px;background:var(--ink);color:var(--ink-inv);padding:.5rem 1rem;z-index:100;}
+  .skip-link:focus{left:1rem;top:1rem;}
+
+  /* header */
+  .site-header{position:sticky;top:0;z-index:50;background:rgba(250,250,247,.92);backdrop-filter:saturate(180%) blur(12px);-webkit-backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--rule);}
+  .header-inner{max-width:1280px;margin:0 auto;padding:.85rem 1.5rem;display:flex;align-items:center;justify-content:space-between;gap:1.5rem;}
+  .brand{display:flex;align-items:baseline;gap:.55rem;font-family:var(--d);font-size:1.35rem;letter-spacing:-.02em;font-variation-settings:"opsz"144;}
+  .brand .rune{font-family:"Noto Sans Runic","Segoe UI Historic",var(--d);font-size:1.4em;color:var(--amber);transform:translateY(2px);}
+  .brand .where{font-family:var(--m);font-size:.6875rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-muted);margin-left:.6rem;}
+  .header-nav{display:flex;gap:1.1rem;align-items:center;font-size:.85rem;color:var(--ink-2);flex-wrap:wrap;}
+  .header-nav a:hover{color:var(--ink);}
+  .header-nav a.active{color:var(--ink);border-bottom:1px solid var(--amber);}
+
+  .wrap{max-width:1080px;margin:0 auto;padding:3rem 1.25rem 4rem;}
+  .doc-eyebrow{font-family:var(--m);font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-muted);margin:0 0 .9rem;}
+  .doc-eyebrow::before{content:"";display:inline-block;width:1.4rem;height:1px;background:currentColor;vertical-align:middle;margin-right:.5rem;transform:translateY(-2px);}
+  h1{font-family:var(--d);font-weight:350;font-size:clamp(2.2rem,5.5vw,3.75rem);line-height:1.04;letter-spacing:-.03em;margin:0 0 .6rem;font-variation-settings:"opsz"144,"SOFT"60,"WONK"1;}
+  h1 em{font-style:italic;color:var(--amber-deep);font-variation-settings:"opsz"144,"SOFT"100,"WONK"1;}
+  .sub{font-family:var(--d);font-size:1.15rem;color:var(--ink-2);max-width:62ch;margin:0 0 1rem;font-variation-settings:"opsz"30;}
+  .jump{display:flex;gap:.5rem;flex-wrap:wrap;margin:1.5rem 0 0;}
+  .jump a{font-family:var(--m);font-size:.72rem;letter-spacing:.04em;padding:.4rem .8rem;border:1px solid var(--rule-strong);border-radius:999px;color:var(--ink-2);transition:all .15s;}
+  .jump a:hover{border-color:var(--ink);color:var(--ink);}
+
+  .card{background:var(--bg-elevated);border:1px solid var(--rule);border-radius:10px;padding:1.85rem 1.6rem;margin:1.75rem 0;box-shadow:0 1px 2px rgba(14,26,43,.03);scroll-margin-top:5rem;}
+  .card.dark{background:var(--bg-deep);border-color:rgba(255,255,255,.08);color:var(--ink-inv);}
+  .num{font-family:var(--m);font-size:.7rem;letter-spacing:.16em;color:var(--amber);margin:0 0 .35rem;}
+  .card.dark .num{color:var(--amber);}
+  h2{font-family:var(--d);font-weight:400;font-size:1.75rem;letter-spacing:-.02em;margin:0 0 .4rem;font-variation-settings:"opsz"144,"SOFT"40,"WONK"1;}
+  .card.dark h2{color:var(--ink-inv);}
+  .lede{font-size:.95rem;color:var(--ink-2);margin:0 0 1.5rem;max-width:66ch;}
+  .card.dark .lede{color:rgba(250,250,247,.72);}
+  code{font-family:var(--m);font-size:.82em;background:rgba(194,136,94,.1);padding:.1em .35em;border-radius:3px;color:var(--amber-deep);}
+  .card.dark code{background:rgba(194,136,94,.16);color:var(--amber);}
+  em.it{font-style:italic;}
+
+  /* ---- animated BFT timeline ---- */
+  .bft-controls{display:flex;gap:.6rem;align-items:center;margin-bottom:1.25rem;}
+  .btn-replay{font-family:var(--m);font-size:.72rem;letter-spacing:.04em;padding:.45rem .9rem;border:1px solid var(--rule-strong);border-radius:999px;background:transparent;color:var(--ink-2);cursor:pointer;transition:all .15s;}
+  .btn-replay:hover{border-color:var(--ink);color:var(--ink);}
+  .bft-hint{font-family:var(--m);font-size:.65rem;color:var(--ink-muted);}
+
+  .bft{display:grid;grid-template-columns:1fr;gap:.5rem;}
+  @media(min-width:740px){.bft{grid-template-columns:repeat(4,1fr);gap:0;position:relative;}
+    .bft::before{content:"";position:absolute;top:34px;left:9%;right:9%;height:2px;background:var(--rule-strong);}
+    .bft::after{content:"";position:absolute;top:33px;left:9%;width:0;height:4px;background:linear-gradient(to right,var(--amber),var(--moss));border-radius:2px;
+      animation:travel 8s ease-in-out infinite;}}
+  @keyframes travel{0%{width:0;}12%{width:0;}35%{width:27%;}60%{width:55%;}85%{width:82%;}100%{width:82%;}}
+
+  .step{padding:0 .75rem;position:relative;text-align:center;}
+  .step .dot{width:18px;height:18px;border-radius:50%;background:var(--bg-elevated);border:2px solid var(--rule-strong);margin:1.6rem auto .9rem;position:relative;z-index:1;transition:all .3s;}
+  .step .t{font-family:var(--d);font-size:1.15rem;font-weight:400;margin:0 0 .3rem;font-variation-settings:"opsz"144,"SOFT"30;}
+  .step .role{font-family:var(--m);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;color:var(--amber-deep);margin:0 0 .4rem;}
+  .step .d{font-size:.82rem;color:var(--ink-2);line-height:1.45;}
+  .step .tm{font-family:var(--m);font-size:.65rem;color:var(--ink-muted);margin-top:.4rem;}
+  /* sequential illumination */
+  .bft.animate .step .dot{animation:lightdot 8s ease-in-out infinite;}
+  .bft.animate .step.s1 .dot{animation-delay:0s;}
+  .bft.animate .step.s2 .dot{animation-delay:2s;}
+  .bft.animate .step.s3 .dot{animation-delay:4s;}
+  .bft.animate .step.s4 .dot{animation-delay:6s;}
+  @keyframes lightdot{
+    0%,100%{background:var(--bg-elevated);border-color:var(--rule-strong);transform:scale(1);box-shadow:none;}
+    8%{background:var(--amber);border-color:var(--amber);transform:scale(1.35);box-shadow:0 0 0 5px rgba(194,136,94,.18);}
+    22%{background:var(--amber);border-color:var(--amber);transform:scale(1);}
+  }
+  .bft.animate .step.s4 .dot{animation:lightdotfinal 8s ease-in-out infinite;animation-delay:6s;}
+  @keyframes lightdotfinal{
+    0%,100%{background:var(--bg-elevated);border-color:var(--rule-strong);transform:scale(1);box-shadow:none;}
+    8%{background:var(--moss);border-color:var(--moss);transform:scale(1.4);box-shadow:0 0 0 6px rgba(92,117,83,.22);}
+    40%,90%{background:var(--moss);border-color:var(--moss);transform:scale(1);box-shadow:0 0 0 4px rgba(92,117,83,.15);}
+  }
+  /* static fallback (no-anim or reduced motion): all dots colored */
+  .bft:not(.animate) .step.s1 .dot{border-color:var(--ink-muted);}
+  .bft:not(.animate) .step.s2 .dot{border-color:var(--amber);}
+  .bft:not(.animate) .step.s3 .dot{background:var(--amber);border-color:var(--amber);}
+  .bft:not(.animate) .step.s4 .dot{background:var(--moss);border-color:var(--moss);box-shadow:0 0 0 4px rgba(92,117,83,.18);}
+  @media(prefers-reduced-motion:reduce){
+    .bft.animate .step .dot{animation:none;}
+    .bft.animate::after{animation:none;width:82%;}
+    .bft.animate .step.s1 .dot{border-color:var(--ink-muted);}
+    .bft.animate .step.s2 .dot{border-color:var(--amber);}
+    .bft.animate .step.s3 .dot{background:var(--amber);border-color:var(--amber);}
+    .bft.animate .step.s4 .dot{background:var(--moss);border-color:var(--moss);box-shadow:0 0 0 4px rgba(92,117,83,.18);}
+  }
+
+  /* ---- flow rows ---- */
+  .flow{display:flex;align-items:stretch;gap:.6rem;flex-wrap:wrap;margin:1rem 0;}
+  .node{flex:1;min-width:130px;background:var(--bg-paper);border:1px solid var(--rule);border-radius:8px;padding:.85rem .9rem;}
+  .card.dark .node{background:var(--bg-deep-soft);border-color:rgba(255,255,255,.1);}
+  .node .lbl{font-family:var(--m);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-muted);margin-bottom:.35rem;}
+  .node .big{font-family:var(--d);font-size:1.05rem;color:var(--ink);font-variation-settings:"opsz"144;line-height:1.2;}
+  .card.dark .node .big{color:var(--ink-inv);}
+  .node .small{font-size:.78rem;color:var(--ink-2);margin-top:.2rem;}
+  .card.dark .node .small{color:rgba(250,250,247,.6);}
+  .arrow{display:flex;align-items:center;color:var(--amber);font-size:1.3rem;font-family:var(--m);}
+  .split-out{display:flex;flex-direction:column;gap:.5rem;flex:1;min-width:160px;}
+  .pill{padding:.6rem .8rem;border-radius:8px;border:1px solid var(--rule);background:var(--bg-paper);}
+  .card.dark .pill{background:var(--bg-deep-soft);}
+  .pill.ok{border-color:rgba(92,117,83,.4);background:rgba(92,117,83,.08);}
+  .pill.burn{border-color:rgba(162,78,60,.4);background:rgba(162,78,60,.08);}
+  .pill .pl{font-family:var(--m);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted);}
+  .pill .pv{font-size:.85rem;color:var(--ink);margin-top:.15rem;}
+  .card.dark .pill .pv{color:var(--ink-inv);}
+  .pill.ok .pv b{color:var(--moss);}
+  .pill.burn .pv b{color:var(--rust);}
+
+  /* ---- waterfall reward split ---- */
+  .wf{display:flex;flex-direction:column;gap:.55rem;margin:1.1rem 0 .5rem;}
+  .bar{display:grid;grid-template-columns:120px 1fr auto;align-items:center;gap:.75rem;font-size:.85rem;}
+  @media(max-width:560px){.bar{grid-template-columns:90px 1fr;}.bar .v{grid-column:2;text-align:right;}}
+  .bar .k{font-family:var(--m);font-size:.72rem;color:var(--ink-2);text-align:right;}
+  .card.dark .bar .k{color:rgba(250,250,247,.7);}
+  .bar .track{height:26px;border-radius:5px;background:var(--bg-paper);overflow:hidden;display:flex;}
+  .card.dark .bar .track{background:var(--bg-deep-soft);}
+  .seg{height:100%;display:flex;align-items:center;padding-left:.5rem;font-family:var(--m);font-size:.62rem;color:#fff;white-space:nowrap;}
+  .seg.total{background:linear-gradient(90deg,var(--amber),var(--amber-deep));width:100%;}
+  .seg.treas{background:var(--bifrost);}
+  .seg.pool{background:var(--amber-deep);}
+  .seg.prop{background:var(--rust);}
+  .seg.endo{background:var(--moss);}
+  .bar .v{font-family:var(--m);font-size:.7rem;color:var(--ink-muted);white-space:nowrap;}
+  .card.dark .bar .v{color:rgba(250,250,247,.55);}
+
+  /* ---- issuance curve ---- */
+  .curve-wrap{display:grid;grid-template-columns:1fr;gap:1.5rem;align-items:center;}
+  @media(min-width:760px){.curve-wrap{grid-template-columns:1.1fr .9fr;}}
+  svg{width:100%;height:auto;display:block;}
+  .legend ul{padding:0;margin:0;}
+  .legend li{margin:.45rem 0;list-style:none;display:flex;gap:.6rem;align-items:baseline;font-size:.85rem;color:var(--ink-2);}
+  .legend .sw{width:14px;height:14px;border-radius:3px;flex-shrink:0;position:relative;top:2px;}
+
+  /* ---- attestation lifecycle ---- */
+  .att-track{display:grid;grid-template-columns:1fr;gap:.6rem;margin:1.25rem 0;}
+  @media(min-width:780px){.att-track{grid-template-columns:repeat(3,1fr);}}
+  .att-step{background:var(--bg-paper);border:1px solid var(--rule);border-radius:8px;padding:1.1rem 1.1rem;position:relative;}
+  .att-step .tx{font-family:var(--m);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--amber-deep);background:rgba(194,136,94,.1);display:inline-block;padding:.18rem .5rem;border-radius:4px;margin-bottom:.6rem;}
+  .att-step h4{font-family:var(--d);font-size:1.2rem;font-weight:400;margin:0 0 .45rem;font-variation-settings:"opsz"144,"SOFT"30;}
+  .att-step p{font-size:.83rem;color:var(--ink-2);line-height:1.5;margin:0;}
+  .att-step .chip{font-family:var(--m);font-size:.68rem;margin-top:.7rem;padding:.3rem .55rem;border-radius:5px;display:inline-block;}
+  .chip.lock{background:rgba(30,58,138,.1);color:var(--bifrost);}
+  .chip.back{background:rgba(92,117,83,.12);color:var(--moss);}
+  .chip.slash{background:rgba(162,78,60,.12);color:var(--rust);}
+
+  .slash-math{display:grid;grid-template-columns:1fr;gap:.5rem;margin-top:1.25rem;}
+  @media(min-width:620px){.slash-math{grid-template-columns:repeat(4,1fr);}}
+  .sm{background:var(--bg-paper);border:1px solid var(--rule);border-radius:8px;padding:.85rem;text-align:center;}
+  .sm .smk{font-family:var(--m);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted);}
+  .sm .smv{font-family:var(--d);font-size:1.5rem;color:var(--ink);font-variation-settings:"opsz"144;margin-top:.25rem;line-height:1;}
+  .sm .sms{font-size:.72rem;color:var(--ink-2);margin-top:.3rem;}
+  .sm.slash .smv{color:var(--rust);}
+  .sm.reward .smv{color:var(--moss);}
+  .sm.burn .smv{color:var(--amber-deep);}
+
+  table{width:100%;border-collapse:collapse;font-size:.85rem;margin:.5rem 0;}
+  th{text-align:left;font-family:var(--m);font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-muted);padding:.5rem .6rem;border-bottom:2px solid var(--ink);}
+  td{padding:.55rem .6rem;border-bottom:1px solid var(--rule);color:var(--ink-2);}
+  td.hl{color:var(--ink);font-weight:600;}
+  tr:last-child td{border-bottom:0;}
+  .tnum{font-variation-settings:"tnum";font-feature-settings:"tnum";text-align:right;font-family:var(--m);font-size:.78rem;}
+
+  .keytake{background:linear-gradient(180deg,var(--bg-paper),#F2EFE8);border:1px solid var(--rule);border-left:3px solid var(--amber);border-radius:8px;padding:1.2rem 1.4rem;margin:1.25rem 0 0;}
+  .card.dark .keytake{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.1);border-left-color:var(--amber);}
+  .keytake .kt{font-family:var(--m);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--amber-deep);margin-bottom:.5rem;}
+  .card.dark .keytake .kt{color:var(--amber);}
+  .keytake p{margin:.4rem 0;font-size:.92rem;color:var(--ink-2);}
+  .card.dark .keytake p{color:rgba(250,250,247,.75);}
+  .keytake strong{color:var(--ink);}
+  .card.dark .keytake strong{color:var(--ink-inv);}
+
+  /* footer */
+  .site-footer{background:var(--bg-deep);color:var(--ink-inv);padding:3rem 0 1.5rem;margin-top:4rem;}
+  .footer-inner{max-width:1080px;margin:0 auto;padding:0 1.5rem;}
+  .footer-grid{display:grid;grid-template-columns:1fr;gap:2.5rem;margin-bottom:2.5rem;}
+  @media(min-width:760px){.footer-grid{grid-template-columns:2fr 1fr 1fr;}}
+  .footer-brand{font-family:var(--d);font-size:1.5rem;margin-bottom:.75rem;font-variation-settings:"opsz"144;}
+  .footer-brand .rune{color:var(--amber);font-family:"Noto Sans Runic","Segoe UI Historic",var(--d);}
+  .footer-tagline{font-family:var(--d);font-style:italic;color:rgba(250,250,247,.55);font-size:.9375rem;line-height:1.5;max-width:36ch;font-variation-settings:"opsz"30,"SOFT"80,"WONK"1;margin:0;}
+  .footer-grid h5{font-family:var(--m);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:rgba(250,250,247,.5);margin:0 0 1rem;font-weight:500;}
+  .footer-grid ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:.5rem;font-size:.875rem;}
+  .footer-grid a{color:rgba(250,250,247,.75);}
+  .footer-grid a:hover{color:var(--ink-inv);}
+  .footer-bottom{border-top:1px solid rgba(255,255,255,.1);padding-top:1.25rem;display:flex;justify-content:space-between;flex-wrap:wrap;gap:1rem;font-family:var(--m);font-size:.7rem;color:rgba(250,250,247,.4);letter-spacing:.04em;}
+</style>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="favicon-dark.svg" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="apple-touch-icon" href="apple-touch-icon.svg">
+  <meta name="theme-color" content="#FAFAF7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E1A2B" media="(prefers-color-scheme: dark)">
+</head>
+<body>
+
+<a href="#main" class="skip-link">Skip to main content</a>
+
+<header class="site-header">
+  <div class="header-inner">
+    <a href="index.html" class="brand"><span class="rune" aria-hidden="true">ᚴ</span><span>Kern</span><span class="where">how it works</span></a>
+    <nav class="header-nav" aria-label="Sections">
+      <a href="index.html">Home</a>
+      <a href="how-it-works.html" class="active">How it works</a>
+      <a href="use-cases.html">Use cases</a>
+      <a href="whitepaper.html">Whitepaper</a>
+      <a href="manifesto.html">Manifesto</a>
+      <a href="glossary.html">Glossary</a>
+      <a href="github.html">Source</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap">
+
+  <p class="doc-eyebrow">Kern protocol · mechanics, visualised</p>
+  <h1>How a block is born, <em>and where the KRN comes from.</em></h1>
+  <p class="sub">Five questions, answered with Kern's actual parameters: how blocks are produced, how gas is consumed, who gets the reward, whether KRN is minted forever, and how slashable attestations keep issuers honest.</p>
+  <div class="jump">
+    <a href="#block">① Block production</a>
+    <a href="#gas">② Gas &amp; fees</a>
+    <a href="#reward">③ Block reward</a>
+    <a href="#issuance">④ Issuance</a>
+    <a href="#attest">⑤ Attestations</a>
+  </div>
+
+  <!-- ============================================================= 1 -->
+  <div class="card" id="block">
+    <p class="num">01 · BLOCK PRODUCTION</p>
+    <h2>How a block is produced — BFT in four moves</h2>
+    <p class="lede">Kern uses a Tenderbake-style BFT consensus. One block per second. A block is irreversible once another endorsed block is built on top of it — about <strong>2 seconds to finality</strong>. No probabilistic reorgs. Watch the round play out:</p>
+
+    <div class="bft-controls">
+      <button class="btn-replay" id="replayBtn" type="button" aria-label="Replay the consensus animation">▶ Replay round</button>
+      <span class="bft-hint">loops automatically · respects reduced-motion</span>
+    </div>
+
+    <div class="bft animate" id="bftTimeline">
+      <div class="step s1">
+        <div class="dot"></div>
+        <p class="role">Proposer</p>
+        <p class="t">Propose</p>
+        <p class="d">One validator — selected deterministically, weighted by stake — assembles transactions from the mempool and broadcasts a candidate block.</p>
+        <p class="tm">round 0 · t=0s</p>
+      </div>
+      <div class="step s2">
+        <div class="dot"></div>
+        <p class="role">All validators</p>
+        <p class="t">Pre-endorse</p>
+        <p class="d">Each validator signs the block hash, signalling its commitment to vote for it.</p>
+        <p class="tm">gather &gt; 2/3 stake</p>
+      </div>
+      <div class="step s3">
+        <div class="dot"></div>
+        <p class="role">All validators</p>
+        <p class="t">Endorse</p>
+        <p class="d">Having seen pre-endorsements from &gt; 2/3 of stake, each validator broadcasts its endorsement. At &gt; 2/3 endorsements the block is <em class="it">endorsed</em>.</p>
+        <p class="tm">&gt; 2/3 quorum</p>
+      </div>
+      <div class="step s4">
+        <div class="dot"></div>
+        <p class="role">The chain</p>
+        <p class="t">Final</p>
+        <p class="d">Once the next endorsed block builds on top, the level is final — it can never be reverted.</p>
+        <p class="tm">~2s after creation</p>
+      </div>
+    </div>
+
+    <div class="keytake">
+      <div class="kt">The 2/3 rule</div>
+      <p>A block needs endorsements from more than <strong>two-thirds of the active stake</strong> to be valid. This is what gives deterministic finality: as long as fewer than 1/3 of validators are malicious or offline, an endorsed block <strong>cannot</strong> be reverted. If a proposer fails, round 1 (then 2, …) starts with a new proposer after <code>1 + n</code> seconds.</p>
+    </div>
+  </div>
+
+  <!-- ============================================================= 2 -->
+  <div class="card" id="gas">
+    <p class="num">02 · GAS &amp; FEES</p>
+    <h2>How gas is consumed per transaction</h2>
+    <p class="lede">Every transaction declares two things: a <code>fee</code> (in mukrn — 1 KRN = 1 000 000 mukrn) and a <code>gas_limit</code> (an upper bound on computation). The protocol charges the fee <strong>whether the operation succeeds or fails</strong> — but the fee lands in very different places depending on the outcome.</p>
+
+    <div class="flow">
+      <div class="node">
+        <div class="lbl">Transaction</div>
+        <div class="big">fee + gas_limit</div>
+        <div class="small">declared by sender · paid in mukrn</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="lbl">KVM execution</div>
+        <div class="big">consumes gas</div>
+        <div class="small">0.1 mukrn / gas unit · reverts if gas exhausted</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="split-out">
+        <div class="pill ok">
+          <div class="pl">If success</div>
+          <div class="pv">fee → <b>baker</b> who included the tx</div>
+        </div>
+        <div class="pill burn">
+          <div class="pl">If failure (revert / invariant violation)</div>
+          <div class="pv">fee → <b>burned</b> (removed from supply)</div>
+        </div>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr><th>Operation</th><th>Suggested minimum fee</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td class="hl">Transfer</td><td><code>1 000 mukrn</code></td><td>simple value move</td></tr>
+        <tr><td class="hl">Call</td><td><code>5 000 mukrn + per-gas</code></td><td>Skald contract entry</td></tr>
+        <tr><td class="hl">Origination</td><td><code>10 000 mukrn + storage rent</code></td><td>deploy a contract</td></tr>
+        <tr><td class="hl">Per gas unit</td><td><code>0.1 mukrn</code></td><td>computation cost</td></tr>
+      </tbody>
+    </table>
+    <p class="lede" style="margin-top:1rem;margin-bottom:0;"><strong>Storage rent</strong> (paid when deploying or growing a contract) splits <strong>50% to the baker, 50% burned</strong> — tying KRN supply to real on-chain state usage. Fees come from <em class="it">users</em>; they are not newly minted.</p>
+  </div>
+
+  <!-- ============================================================= 3 -->
+  <div class="card dark" id="reward">
+    <p class="num">03 · BLOCK REWARD</p>
+    <h2>Who gets paid when a block is finalized</h2>
+    <p class="lede">Separate from user fees, each block <em class="it">mints</em> a fresh reward (this is the issuance). That reward is split deterministically. Example below uses the steady-state value at the 50% target staking ratio: <code>0.079 KRN/block</code> (79 220 mukrn).</p>
+
+    <div class="wf">
+      <div class="bar"><div class="k">Minted / block</div><div class="track"><div class="seg total">100% — newly issued KRN</div></div><div class="v">79 220 mukrn</div></div>
+      <div class="bar"><div class="k">→ Treasury</div><div class="track"><div class="seg treas" style="width:5%;">5%</div></div><div class="v">~3 961 mukrn</div></div>
+      <div class="bar"><div class="k">→ Baker pool</div><div class="track"><div class="seg pool" style="width:95%;">95% — to validators</div></div><div class="v">~75 259 mukrn</div></div>
+      <div class="bar"><div class="k">··· Proposer</div><div class="track"><div class="seg prop" style="width:9.5%;">10% of pool</div></div><div class="v">~7 526 mukrn</div></div>
+      <div class="bar"><div class="k">··· Endorsers</div><div class="track"><div class="seg endo" style="width:85.5%;">90% of pool — split by stake</div></div><div class="v">~67 733 mukrn</div></div>
+    </div>
+
+    <p class="lede" style="margin-bottom:0;">The <strong>proposer</strong> (who built the block) gets a fixed 10% bonus of the baker pool — it has higher operational overhead. The remaining 90% goes to <strong>endorsers</strong> proportional to their stake, because endorsement is what gives the block its finality. Delegators share their baker's rewards (Liquid PoS — custody stays with the delegator). Plus the baker keeps the <em class="it">fees</em> of every successful transaction it included.</p>
+  </div>
+
+  <!-- ============================================================= 4 -->
+  <div class="card" id="issuance">
+    <p class="num">04 · ISSUANCE</p>
+    <h2>Is KRN minted forever? Yes — but bounded and self-stabilizing</h2>
+    <p class="lede">KRN is <strong>not</strong> a fixed-cap coin like Bitcoin. A fresh reward is minted every block, so issuance is perpetual. But the rate is mathematically bounded between <strong>0.25%/yr</strong> and <strong>6%/yr</strong>, and it <em class="it">adapts</em> to how much KRN is staked. There is no scenario where the protocol runaway-inflates.</p>
+
+    <div class="curve-wrap">
+      <svg viewBox="0 0 420 280" role="img" aria-label="Adaptive issuance curve: inflation as a function of staking ratio">
+        <line x1="55" y1="30" x2="55" y2="235" stroke="#C9C3B5" stroke-width="1.5"/>
+        <line x1="55" y1="235" x2="400" y2="235" stroke="#C9C3B5" stroke-width="1.5"/>
+        <text x="48" y="44" text-anchor="end" font-family="JetBrains Mono" font-size="9" fill="#7A8595">6%</text>
+        <line x1="52" y1="40" x2="55" y2="40" stroke="#C9C3B5"/>
+        <text x="48" y="222" text-anchor="end" font-family="JetBrains Mono" font-size="9" fill="#7A8595">0.25%</text>
+        <line x1="52" y1="218" x2="55" y2="218" stroke="#C9C3B5"/>
+        <text x="55" y="250" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#7A8595">0%</text>
+        <text x="227" y="250" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#8E5E3A">50%</text>
+        <text x="400" y="250" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#7A8595">100%</text>
+        <text x="227" y="266" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#B5BDC9">staking ratio (target)</text>
+        <line x1="227" y1="40" x2="227" y2="235" stroke="#C2885E" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>
+        <line x1="55" y1="218" x2="400" y2="218" stroke="#5C7553" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
+        <path d="M 55,40 C 100,42 140,70 180,150 C 200,195 215,217 227,218 L 400,218" fill="none" stroke="#C2885E" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="55" cy="40" r="5" fill="#A24E3C"/>
+        <circle cx="227" cy="218" r="5" fill="#5C7553"/>
+        <circle cx="400" cy="218" r="4" fill="#5C7553"/>
+        <text x="65" y="36" font-family="JetBrains Mono" font-size="8" fill="#A24E3C">max 6%</text>
+        <text x="300" y="212" font-family="JetBrains Mono" font-size="8" fill="#5C7553">floor 0.25%</text>
+      </svg>
+      <div class="legend">
+        <ul>
+          <li><span class="sw" style="background:#A24E3C;"></span><span><strong>Low stake</strong> → inflation rises toward 6%, pulling more KRN into staking.</span></li>
+          <li><span class="sw" style="background:#C2885E;"></span><span><strong>Between 0 and 50%</strong> → smooth decay (smoothstep curve, no gaming at the edges).</span></li>
+          <li><span class="sw" style="background:#5C7553;"></span><span><strong>At / above 50% target</strong> → inflation floors at 0.25%/yr. Extra staking doesn't lower it further.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <table style="margin-top:1.5rem;">
+      <thead><tr><th>Staking ratio</th><th>Annual inflation</th><th>Reward / block</th></tr></thead>
+      <tbody>
+        <tr><td class="hl">0%</td><td>6.00%</td><td class="tnum">1.90 KRN</td></tr>
+        <tr><td class="hl">25%</td><td>~2.16%</td><td class="tnum">0.69 KRN</td></tr>
+        <tr><td class="hl">40%</td><td>~0.39%</td><td class="tnum">0.12 KRN</td></tr>
+        <tr><td class="hl">50% (target)</td><td>0.25%</td><td class="tnum">0.079 KRN</td></tr>
+        <tr><td class="hl">75% (above)</td><td>0.25%</td><td class="tnum">0.079 KRN</td></tr>
+      </tbody>
+    </table>
+
+    <div class="keytake">
+      <div class="kt">Net supply = issued − burned</div>
+      <p>Gross issuance is only half the story. KRN is continuously <strong>burned</strong> too: 50% of storage rent, 50% of slashing penalties, and 100% of failed-transaction fees. When on-chain activity is high, <strong>burns can match or exceed issuance</strong> — making real (net) inflation near zero or even negative. The 0.25% floor is the worst-case dilution for a holder who stakes; ~6% is the absolute worst case if nobody staked at all.</p>
+    </div>
+  </div>
+
+  <!-- ============================================================= 5 -->
+  <div class="card" id="attest">
+    <p class="num">05 · ATTESTATIONS</p>
+    <h2>How a slashable attestation keeps an issuer honest</h2>
+    <p class="lede">Kern's signature primitive: an <strong>attestation</strong> is a signed claim by an issuer about a subject under a schema — a KYC check, an oracle price, a fund's NAV, an ESG figure. The issuer locks a <strong>bond</strong> in KRN. If they later sign a <em class="it">contradictory</em> claim about the same <code>(schema, subject)</code>, anyone can prove it and slash them. Honesty becomes the economically rational choice.</p>
+
+    <div class="att-track">
+      <div class="att-step">
+        <span class="tx">ATTEST</span>
+        <h4>1 · Issue</h4>
+        <p>The issuer signs <code>(schema_id, subject, claim)</code> and locks a bond. The attestation ID is deterministic — derived from its contents.</p>
+        <span class="chip lock">🔒 bond locked · e.g. 1 KRN</span>
+      </div>
+      <div class="att-step">
+        <span class="tx">REVOKE_ATTESTATION</span>
+        <h4>2a · Revoke (honest path)</h4>
+        <p>The issuer can revoke the attestation when the claim no longer holds. The bond is returned. Revocation does <em class="it">not</em> erase past equivocation, though.</p>
+        <span class="chip back">↩ bond returned in full</span>
+      </div>
+      <div class="att-step">
+        <span class="tx">SLASH_ATTESTATION_EQUIVOCATION</span>
+        <h4>2b · Slash (dishonest path)</h4>
+        <p>If the issuer signed two contradictory claims about the same <code>(schema, subject)</code> with overlapping validity, anyone submits both as evidence. The protocol verifies and slashes.</p>
+        <span class="chip slash">⚔ bond slashed 30%</span>
+      </div>
+    </div>
+
+    <p class="lede" style="margin-top:.5rem;">When equivocation is proven, the slash is split three ways — the same math as the rest of the protocol's slashing. Example on a <strong>1 KRN bond</strong>:</p>
+
+    <div class="slash-math">
+      <div class="sm"><div class="smk">Bond</div><div class="smv">1.00</div><div class="sms">KRN locked at ATTEST</div></div>
+      <div class="sm slash"><div class="smk">Slashed (30%)</div><div class="smv">0.30</div><div class="sms">taken from the bond</div></div>
+      <div class="sm reward"><div class="smk">Whistleblower (10% of slash)</div><div class="smv">0.03</div><div class="sms">reward to the prover</div></div>
+      <div class="sm burn"><div class="smk">Burned (rest)</div><div class="smv">0.27</div><div class="sms">removed from supply</div></div>
+    </div>
+
+    <div class="keytake">
+      <div class="kt">Why this matters</div>
+      <p>This is the <strong>accountability primitive</strong> that other L1s lack. An oracle that posts a false price, a KYC provider that contradicts itself, a fund that misstates its NAV — all become slashable on-chain, with a standing 10%-of-slash bounty for whoever catches them. The reliability of the data is not a vendor's promise; it is a <strong>cryptoeconomic property</strong> enforced by the protocol. Both attestations are then marked consumed, so no one can double-slash the same offence.</p>
+    </div>
+  </div>
+
+  <p style="font-family:var(--m);font-size:.68rem;color:var(--ink-muted);margin-top:2rem;text-align:center;line-height:1.7;">
+    Sourced from docs/consensus.md · docs/tokenomics.md · docs/adaptive-issuance.md · docs/attestations.md<br>
+    Per-block figures use total_supply = 1B KRN for illustration; the percentages hold at any supply.
+  </p>
+
+</div>
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand"><span class="rune" aria-hidden="true">ᚴ</span> Kern</div>
+        <p class="footer-tagline">The kernel. The grain of state that endures.</p>
+      </div>
+      <div>
+        <h5>Read</h5>
+        <ul>
+          <li><a href="index.html">Landing page</a></li>
+          <li><a href="whitepaper.html">Whitepaper</a></li>
+          <li><a href="manifesto.html">Manifesto</a></li>
+        </ul>
+      </div>
+      <div>
+        <h5>Source</h5>
+        <ul>
+          <li><a href="https://github.com/vaneeckhoutnicolas/kern" target="_blank" rel="noopener">GitHub repository</a></li>
+          <li><a href="index.html#heimdall">Heimdall explorer</a></li>
+          <li><a href="index.html#roadmap">Roadmap</a></li>
+          <li><a href="https://www.linkedin.com/in/vaneeckhout/" target="_blank" rel="noopener">Follow on LinkedIn</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors</span>
+      <span>Reference impl: Apache-2.0 · Docs: CC-BY-SA-4.0 · <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/disclaimer.md" target="_blank" rel="noopener" style="color:inherit;border-bottom:1px solid rgba(255,255,255,0.2);">Disclaimer</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Replay button: restart the CSS animations by toggling the class
+(function(){
+  var btn = document.getElementById('replayBtn');
+  var tl  = document.getElementById('bftTimeline');
+  if(!btn || !tl) return;
+  btn.addEventListener('click', function(){
+    tl.classList.remove('animate');
+    // force reflow so the animation restarts
+    void tl.offsetWidth;
+    tl.classList.add('animate');
+  });
+})();
+</script>
+
+</body>
+</html>

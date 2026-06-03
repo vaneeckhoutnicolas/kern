@@ -1,0 +1,152 @@
+{# SPDX-License-Identifier: Apache-2.0 #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Heimdall — Kern Explorer{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+          colors: {
+            kern: {
+              900: '#0a0e27',
+              800: '#0f1535',
+              700: '#1a2151',
+              600: '#2a3475',
+              500: '#4955a8',
+              accent: '#f5a623',  // amber, the Skald "warmth"
+              ok: '#10b981',
+              warn: '#f59e0b',
+              err: '#ef4444',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .hash { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85em; }
+    .truncate-hash { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
+  </style>
+</head>
+<body class="bg-gray-50 dark:bg-kern-900 text-gray-900 dark:text-gray-100 min-h-screen"
+      x-data="{ dark: localStorage.getItem('dark') === 'true' }"
+      x-init="$watch('dark', v => { localStorage.setItem('dark', v); document.documentElement.classList.toggle('dark', v); }); document.documentElement.classList.toggle('dark', dark)">
+
+<a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:bg-kern-accent focus:text-white focus:px-3 focus:py-2 focus:rounded">Skip to main content</a>
+
+<header class="bg-white dark:bg-kern-800 border-b border-gray-200 dark:border-kern-700 shadow-sm" role="banner">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-6">
+    <a href="/" class="flex items-center gap-2 font-bold text-lg" aria-label="Heimdall home">
+      <span class="text-kern-accent" aria-hidden="true">⊕</span>
+      <span>Heimdall</span>
+      <span class="text-xs font-normal text-gray-500 dark:text-gray-400">— Kern Explorer</span>
+    </a>
+    <nav class="flex gap-4 text-sm" aria-label="Main navigation">
+      <a href="/" class="hover:text-kern-accent">Home</a>
+      <a href="/blocks" class="hover:text-kern-accent">Blocks</a>
+      <a href="/txs" class="hover:text-kern-accent">Transactions</a>
+      <a href="/validators" class="hover:text-kern-accent">Validators</a>
+      <a href="/contracts" class="hover:text-kern-accent">Contracts</a>
+      <span class="text-gray-400" aria-hidden="true">|</span>
+      <a href="/attestations" class="hover:text-kern-accent" title="v1.1-rc primitive">Attestations</a>
+      <a href="/sto-dashboard" class="hover:text-kern-accent" title="securities compliance">STO</a>
+      <a href="/public-goods" class="hover:text-kern-accent" title="QF + RPGF">Public goods</a>
+      <a href="/oracle-health" class="hover:text-kern-accent" title="Oracle networks">Oracles</a>
+      <span class="text-gray-400" aria-hidden="true">|</span>
+      <a href="/governance" class="hover:text-kern-accent">Governance</a>
+    </nav>
+    <form action="/search" method="get" class="flex-1 max-w-md ml-auto" role="search">
+      <label for="global-search" class="sr-only">Search blocks, transactions, accounts, or attestations</label>
+      <input id="global-search" type="text" name="q"
+             placeholder="Search by block level, tx hash, address, attestation id…"
+             class="w-full px-3 py-1.5 text-sm rounded border border-gray-300 dark:border-kern-600 bg-white dark:bg-kern-700 focus:outline-none focus:ring-2 focus:ring-kern-accent"
+             autocomplete="off">
+    </form>
+    <button @click="dark = !dark" class="text-sm" title="Toggle dark mode" :aria-pressed="dark"
+            aria-label="Toggle dark mode">
+      <span x-show="!dark" aria-hidden="true">🌙</span><span x-show="dark" aria-hidden="true">☀️</span>
+    </button>
+  </div>
+</header>
+
+<main id="main" class="max-w-7xl mx-auto px-4 py-6" role="main">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="max-w-7xl mx-auto px-4 py-6 mt-12 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-kern-700" role="contentinfo">
+  <div class="flex justify-between items-center flex-wrap gap-2">
+    <div>
+      Heimdall <span class="font-mono">v{{ heimdall_version }}</span> ·
+      Connected to <span class="font-mono">{{ rpc_url }}</span> ·
+      Indexed head: <span class="font-mono">{{ indexed_head if indexed_head is not none else '—' }}</span>
+    </div>
+    <div>
+      <a href="/metrics" class="hover:text-kern-accent">Prometheus metrics</a> ·
+      <a href="/health" class="hover:text-kern-accent">Health</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Alpine.js helper for client-side sortable tables.
+// Usage in a template:
+//   <table x-data="sortableTable('level', 'desc')">
+//     <thead><tr>
+//       <th @click="sortBy('level')" :aria-sort="sortAttr('level')">Level</th>
+//       ...
+//     </tr></thead>
+//     <tbody>
+//       <tr x-sort:level="42">...</tr>
+//     </tbody>
+//   </table>
+// The helper sorts <tr>s within the <tbody> based on x-sort:<col> attributes.
+document.addEventListener('alpine:init', () => {
+  Alpine.data('sortableTable', (defaultCol, defaultDir) => ({
+    sortCol: defaultCol,
+    sortDir: defaultDir || 'asc',
+    sortBy(col) {
+      if (this.sortCol === col) {
+        this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        this.sortCol = col;
+        this.sortDir = 'asc';
+      }
+      this._applySort();
+    },
+    sortAttr(col) {
+      return this.sortCol === col ? (this.sortDir === 'asc' ? 'ascending' : 'descending') : 'none';
+    },
+    _applySort() {
+      const tbody = this.$root.querySelector('tbody');
+      if (!tbody) return;
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      const attr = 'x-sort:' + this.sortCol;
+      const dir = this.sortDir === 'asc' ? 1 : -1;
+      rows.sort((a, b) => {
+        const av = a.getAttribute(attr) || '';
+        const bv = b.getAttribute(attr) || '';
+        // Numeric sort if both look like numbers
+        const an = Number(av), bn = Number(bv);
+        if (!isNaN(an) && !isNaN(bn) && av !== '' && bv !== '') {
+          return (an - bn) * dir;
+        }
+        return av.localeCompare(bv) * dir;
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    },
+  }));
+});
+</script>
+
+</body>
+</html>

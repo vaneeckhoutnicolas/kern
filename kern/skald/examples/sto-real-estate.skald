@@ -1,0 +1,331 @@
+// sto-real-estate.skald
+//
+// Tokenization of a real estate asset (single property or property fund).
+// Encodes Prospectus Regulation + MiFID II + local property law compliance.
+//
+// Persona target: French/Belgian/German real-asset tokenization fund
+// (€10M-100M deal sizes), or a SCPI/Foncière digitalization.
+//
+// Specific to real estate vs other STOs:
+//   - The underlying is a TANGIBLE asset with a physical location and
+//     legal title held by a Special Purpose Vehicle (SPV).
+//   - Income (rental yield) is distributed periodically to token holders.
+//   - The asset is illiquid; redemptions require either a buyback period
+//     OR a secondary market with disclosed price.
+//   - The SPV's title to the property must be attested by a notary.
+//   - Property valuation must be refreshed periodically (typically annually).
+//
+// Compliance:
+//   Prospectus Regulation Art. 3 — Whitepaper / prospectus
+//   MiFID II Art. 16(9) — Investor funds segregation
+//   MAR Art. 14 — No transfers during material event windows
+//   National real estate law — Notary-attested title transfer, registration
+//   AML — Source of funds documented for each subscriber
+//   Tax — Withholding on rental income distributions
+
+contract StoRealEstate {
+
+    storage {
+        // --- Roles ---
+        spv_owner:                  address,    // the SPV that legally owns the property
+        depositary:                 address,    // independent fund custodian
+        regulator:                  address,    // FSMA / AMF / BaFin
+        compliance_oracle:          address,    // off-chain attestation reader
+        notary:                     address,    // notary whose attestations validate title
+
+        // --- Property identity ---
+        property_id:                string,     // cadastral reference / land registry ID
+        property_location:          string,     // city, country
+        spv_jurisdiction:           string,     // Belgium, France, Luxembourg, Germany
+
+        // --- Legal title (NOTARY-attested) ---
+        // The SPV must hold registered title to the property. The notary
+        // attests this via the attestation registry (schema_id =
+        // "realestate.title-registered"). The compliance oracle reads the
+        // attestation and updates this state.
+        title_registered:           bool,
+        title_registered_at_level:  int,
+        title_attestation_hash:     string,
+
+        // --- Prospectus ---
+        prospectus_registered:      bool,
+        prospectus_hash:            string,
+
+        // --- Valuation ---
+        // The property must be re-valued by an independent appraiser
+        // periodically. The contract tracks the latest valuation and
+        // staleness; if exceeded, secondary-market trades are blocked
+        // until a new valuation is posted.
+        valuation_mukrn:            int,
+        valuation_at_level:         int,
+        valuation_max_staleness:    int,        // e.g., 1 year in blocks
+        appraiser:                  address,    // licensed appraiser address
+
+        // --- Token supply ---
+        total_supply_issued:        int,
+        total_supply_target:        int,        // number of tokens representing 100% of property
+
+        // --- Funds & distributions ---
+        funds_raised_mukrn:         int,        // total raised in primary issuance
+        funds_in_custody_mukrn:     int,        // cash held by depositary (not yet used)
+        funds_used_for_acquisition: int,        // mukrn paid to acquire the property
+
+        // --- Rental income distribution ---
+        rental_income_received:     int,        // mukrn from rent paid into the SPV
+        rental_income_distributed:  int,        // mukrn paid out to token holders
+        last_distribution_level:    int,
+
+        // --- Lock-up & secondary market ---
+        // Standard for real estate: 12-month minimum holding before any
+        // secondary transfer.
+        lockup_until_level:         int,
+
+        // Secondary market price (per-token mukrn) when active.
+        secondary_market_active:    bool,
+        secondary_floor_price:      int,        // minimum acceptable price
+
+        // --- Blackout & freeze ---
+        blackout_active:            bool,
+        frozen:                     bool,
+
+        // --- Sale of underlying property (terminal event) ---
+        property_sold:              bool,
+        sale_proceeds_mukrn:        int,
+    }
+
+    // ========================================================================
+    // INVARIANTS — Compliance proofs the regulator and notary can read
+    // ========================================================================
+
+    // Cannot issue tokens until prospectus is registered (Prospectus Regulation Art. 3)
+    // AND notary has attested title (national real estate law).
+    invariant prospectus_before_issuance {
+        total_supply_issued == 0 || prospectus_registered
+    }
+
+    invariant title_registered_before_issuance {
+        total_supply_issued == 0 || title_registered
+    }
+
+    // Custody segregation (MiFID II Art. 16(9))
+    invariant mifid_art16_no_negative_custody {
+        funds_in_custody_mukrn >= 0
+    }
+
+    invariant funds_acquisition_bounded {
+        funds_used_for_acquisition <= funds_raised_mukrn
+    }
+
+    // No oversubscription
+    invariant supply_bounded {
+        total_supply_issued <= total_supply_target
+    }
+
+    invariant nonneg_supply {
+        total_supply_issued >= 0
+    }
+
+    // Distributions can never exceed received rental income.
+    // This prevents Ponzi-style distribution-from-new-investors.
+    invariant rental_distribution_bounded {
+        rental_income_distributed <= rental_income_received
+    }
+
+    // Once the property is sold, the contract enters terminal distribution
+    // mode — no new issuances or transfers.
+    invariant property_sold_terminal {
+        !property_sold || (total_supply_issued <= total_supply_target)
+    }
+
+    // ========================================================================
+    // SETUP entries
+    // ========================================================================
+
+    entry register_prospectus(hash: string, level: int) {
+        require sender == compliance_oracle with "only oracle";
+        require !prospectus_registered with "already registered";
+        prospectus_registered = true;
+        prospectus_hash = hash;
+    }
+
+    // Notary attests title transfer to SPV. The compliance oracle reads
+    // the notary's on-chain attestation (schema_id "realestate.title-registered",
+    // subject = property_id) and calls this entry once verified.
+    entry register_title(attestation_hash: string, level: int) {
+        require sender == compliance_oracle with "only oracle";
+        require !title_registered with "title already registered";
+        title_registered = true;
+        title_registered_at_level = level;
+        title_attestation_hash = attestation_hash;
+    }
+
+    // ========================================================================
+    // VALUATION
+    // ========================================================================
+
+    // The licensed appraiser publishes a new valuation. The compliance oracle
+    // verifies the appraiser's attestation and calls this entry.
+    entry publish_valuation(new_value_mukrn: int, level: int) {
+        require sender == compliance_oracle with "only oracle (with appraiser attestation)";
+        require new_value_mukrn > 0 with "valuation must be positive";
+        require level >= valuation_at_level with "must move forward in time";
+        valuation_mukrn = new_value_mukrn;
+        valuation_at_level = level;
+    }
+
+    // ========================================================================
+    // SUBSCRIPTION (primary issuance)
+    // ========================================================================
+
+    entry subscribe(token_amount: int) {
+        require !frozen with "frozen";
+        require !blackout_active with "blackout";
+        require prospectus_registered with "prospectus not registered (Prospectus Regulation Art. 3)";
+        require title_registered with "SPV title not registered";
+        require !property_sold with "property already sold; cannot subscribe";
+        require token_amount > 0 with "amount must be positive";
+        require total_supply_issued + token_amount <= total_supply_target with "exceeds supply";
+        require amount > 0 with "must send KRN payment";
+
+        funds_raised_mukrn = funds_raised_mukrn + amount;
+        funds_in_custody_mukrn = funds_in_custody_mukrn + amount;
+        total_supply_issued = total_supply_issued + token_amount;
+    }
+
+    // ========================================================================
+    // ACQUISITION — using raised funds to pay for the property
+    // ========================================================================
+
+    // The depositary releases funds to acquire the property (typically once,
+    // when the issuance is complete). The notary later attests the title
+    // transfer; the compliance oracle records that attestation.
+    entry release_acquisition_funds(amount_to_release: int) {
+        require sender == depositary with "only depositary";
+        require amount_to_release > 0 with "amount must be positive";
+        require funds_in_custody_mukrn >= amount_to_release with "insufficient custody";
+        funds_in_custody_mukrn = funds_in_custody_mukrn - amount_to_release;
+        funds_used_for_acquisition = funds_used_for_acquisition + amount_to_release;
+    }
+
+    // ========================================================================
+    // RENTAL INCOME DISTRIBUTION
+    // ========================================================================
+
+    // SPV deposits rental income (sender == spv_owner).
+    entry deposit_rental_income() {
+        require sender == spv_owner with "only SPV can deposit rent";
+        require amount > 0 with "amount must be positive";
+        rental_income_received = rental_income_received + amount;
+        funds_in_custody_mukrn = funds_in_custody_mukrn + amount;
+    }
+
+    // Compliance oracle triggers a periodic distribution. The off-chain
+    // process applies withholding tax per jurisdiction before sending
+    // to each token holder.
+    entry distribute_rental_income(amount_to_distribute: int, current_level: int) {
+        require sender == compliance_oracle with "only oracle triggers distribution";
+        require amount_to_distribute > 0 with "amount must be positive";
+        require rental_income_received - rental_income_distributed >= amount_to_distribute
+            with "insufficient rent collected";
+        require funds_in_custody_mukrn >= amount_to_distribute with "insufficient custody";
+        rental_income_distributed = rental_income_distributed + amount_to_distribute;
+        funds_in_custody_mukrn = funds_in_custody_mukrn - amount_to_distribute;
+        last_distribution_level = current_level;
+    }
+
+    // ========================================================================
+    // SECONDARY MARKET
+    // ========================================================================
+
+    // The compliance oracle activates secondary trading once:
+    // - Lockup period has passed
+    // - Valuation is fresh
+    // - No blackout
+    entry activate_secondary_market(floor_price: int, current_level: int) {
+        require sender == compliance_oracle with "only oracle";
+        require current_level >= lockup_until_level with "lockup still active";
+        require current_level - valuation_at_level <= valuation_max_staleness with "valuation stale";
+        require !blackout_active with "blackout";
+        require floor_price > 0 with "floor price must be positive";
+        secondary_market_active = true;
+        secondary_floor_price = floor_price;
+    }
+
+    entry deactivate_secondary_market() {
+        require sender == compliance_oracle with "only oracle";
+        secondary_market_active = false;
+    }
+
+    entry attempt_secondary_trade(token_amount: int, price_per_token: int, current_level: int) {
+        require secondary_market_active with "secondary market not active";
+        require !frozen with "frozen";
+        require !blackout_active with "blackout (MAR Art. 14)";
+        require current_level - valuation_at_level <= valuation_max_staleness with "valuation stale";
+        require token_amount > 0 with "amount must be positive";
+        require price_per_token >= secondary_floor_price with "below floor price";
+        // Runtime side effect: cross-account token ledger update.
+    }
+
+    // ========================================================================
+    // TERMINAL: property sale (exit event)
+    // ========================================================================
+
+    // Once the underlying property is sold, the contract enters wind-down.
+    // Token holders are entitled to their pro-rata share of sale proceeds.
+    entry record_property_sale(sale_proceeds: int, current_level: int) {
+        require sender == spv_owner with "only SPV records sale";
+        require !property_sold with "already sold";
+        require sale_proceeds > 0 with "proceeds must be positive";
+        property_sold = true;
+        sale_proceeds_mukrn = sale_proceeds;
+        funds_in_custody_mukrn = funds_in_custody_mukrn + sale_proceeds;
+    }
+
+    // ========================================================================
+    // REGULATOR
+    // ========================================================================
+
+    entry regulator_freeze() {
+        require sender == regulator with "only regulator";
+        frozen = true;
+    }
+
+    entry regulator_unfreeze() {
+        require sender == regulator with "only regulator";
+        frozen = false;
+    }
+
+    entry start_blackout() {
+        require sender == compliance_oracle with "only oracle";
+        blackout_active = true;
+    }
+
+    entry end_blackout() {
+        require sender == compliance_oracle with "only oracle";
+        blackout_active = false;
+    }
+
+    // ========================================================================
+    // VIEWS
+    // ========================================================================
+
+    view is_compliant() -> bool {
+        prospectus_registered && title_registered && !frozen
+    }
+
+    view valuation_is_fresh(current_level: int) -> bool {
+        valuation_at_level > 0 && (current_level - valuation_at_level <= valuation_max_staleness)
+    }
+
+    view rental_yield_pending() -> int {
+        rental_income_received - rental_income_distributed
+    }
+
+    view custody_total() -> int {
+        funds_in_custody_mukrn
+    }
+
+    view supply_remaining() -> int {
+        total_supply_target - total_supply_issued
+    }
+}
