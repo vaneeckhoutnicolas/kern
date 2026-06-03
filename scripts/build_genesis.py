@@ -39,7 +39,7 @@ def main() -> int:
     genesis_proposer = None
     for spec in args.validator:
         path, stake_s = spec.rsplit(":", 1)
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             keyfile = json.load(f)
         v = {
             "address": keyfile["address"],
@@ -67,7 +67,7 @@ def main() -> int:
         "validators": validators,
         "balances": balances,
     }
-    with open(args.out, "w") as f:
+    with open(args.out, "w", encoding="utf-8") as f:
         json.dump(genesis, f, indent=2)
     print(f"Wrote {args.out}")
     print(f"  Validators: {len(validators)}")

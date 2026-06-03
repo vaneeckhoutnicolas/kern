@@ -47,7 +47,7 @@ LOG = logging.getLogger("kern.node")
 # ---------------------------------------------------------------------------
 
 def load_genesis(path: str) -> dict:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -301,7 +301,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     baker: Optional[BakerConfig] = None
     if args.baker_key:
-        with open(args.baker_key) as f:
+        with open(args.baker_key, encoding="utf-8") as f:
             keyfile = json.load(f)
         seed = bytes.fromhex(keyfile["seed_hex"])
         kp = KernKeypair.from_seed(seed)

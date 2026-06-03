@@ -52,7 +52,7 @@ def main() -> int:
     }
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    with open(args.out, "w") as f:
+    with open(args.out, "w", encoding="utf-8") as f:
         json.dump(keyfile, f, indent=2)
     os.chmod(args.out, 0o600)
 

@@ -109,7 +109,7 @@ def rpc_base() -> str:
 def load_keypair(path: str) -> KernKeypair:
     """Load a keypair from a JSON file with seed_hex."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
         die(f"Key file not found: {path}")

@@ -39,14 +39,14 @@ def test_oracle_template_typechecks(filename):
     """Each oracle / schema marketplace template must typecheck."""
     path = EXAMPLES_DIR / filename
     assert path.exists(), f"Template {filename} not found"
-    src = path.read_text()
+    src = path.read_text(encoding="utf-8")
     errors = type_check(src)
     assert not errors, f"Type errors in {filename}: {errors[:3]}"
 
 
 def test_generic_oracle_has_quorum_threshold():
     """Generic oracle must enforce k-of-n threshold."""
-    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text(encoding="utf-8")
     assert "required_quorum" in src
     assert "quorum not reached" in src
     assert "quorum_bounded" in src
@@ -54,61 +54,61 @@ def test_generic_oracle_has_quorum_threshold():
 
 def test_generic_oracle_has_role_separation():
     """Aggregator must be distinct from network admin."""
-    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text(encoding="utf-8")
     assert "aggregator != network_admin" in src
 
 
 def test_generic_oracle_has_anomaly_tracking():
     """Anomalous readings (outside tolerance band) are tracked."""
-    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text(encoding="utf-8")
     assert "anomalous_readings_count" in src
     assert "record_anomalous_reading" in src
 
 
 def test_generic_oracle_has_staleness_views():
     """Consumers can check freshness."""
-    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text(encoding="utf-8")
     assert "is_fresh" in src
     assert "max_staleness_levels" in src
 
 
 def test_generic_oracle_can_abort_round_no_quorum():
     """If quorum cannot be reached, anyone can abort the round."""
-    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "generic-data-oracle.skald").read_text(encoding="utf-8")
     assert "abort_round_no_quorum" in src
     assert "consecutive_failed_rounds" in src
 
 
 def test_defi_oracle_has_circuit_breaker():
     """DeFi oracle must have a per-round max-change circuit breaker."""
-    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text(encoding="utf-8")
     assert "max_round_change_bps" in src
     assert "circuit_breaker_trips" in src
 
 
 def test_defi_oracle_has_heartbeat():
     """DeFi oracle must have a heartbeat to detect lazy aggregators."""
-    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text(encoding="utf-8")
     assert "heartbeat_levels" in src
     assert "is_within_heartbeat" in src
 
 
 def test_defi_oracle_has_decimal_handling():
     """DeFi oracle declares price decimals for consumer normalization."""
-    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text(encoding="utf-8")
     assert "price_decimals" in src
     assert "decimals_in_range" in src
 
 
 def test_defi_oracle_circuit_breaker_invariant():
     """Circuit breaker basis points are bounded."""
-    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text(encoding="utf-8")
     assert "change_limit_range" in src
 
 
 def test_defi_oracle_first_round_no_breaker():
     """First round should not be subject to circuit breaker (no baseline)."""
-    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text()
+    src = (EXAMPLES_DIR / "defi-price-oracle.skald").read_text(encoding="utf-8")
     # The implementation handles the first-round case via latest_round_number == 0 branch
     assert "latest_round_number == 0" in src
 
@@ -119,14 +119,14 @@ def test_defi_oracle_first_round_no_breaker():
 
 def test_schema_marketplace_has_minimum_bond():
     """Marketplace enforces a minimum bond per schema."""
-    src = (EXAMPLES_DIR / "schema-marketplace.skald").read_text()
+    src = (EXAMPLES_DIR / "schema-marketplace.skald").read_text(encoding="utf-8")
     assert "minimum_bond_mukrn" in src
     assert "min_bond_nonneg" in src
 
 
 def test_schema_marketplace_has_version_monotonic():
     """Schema versions can only go forward."""
-    src = (EXAMPLES_DIR / "schema-marketplace.skald").read_text()
+    src = (EXAMPLES_DIR / "schema-marketplace.skald").read_text(encoding="utf-8")
     assert "schema_version" in src
     assert "bump_version" in src
     assert "schema_version = schema_version + 1" in src
@@ -134,7 +134,7 @@ def test_schema_marketplace_has_version_monotonic():
 
 def test_schema_marketplace_has_deprecation():
     """Schema can be deprecated; consumers see the status."""
-    src = (EXAMPLES_DIR / "schema-marketplace.skald").read_text()
+    src = (EXAMPLES_DIR / "schema-marketplace.skald").read_text(encoding="utf-8")
     assert "entry deprecate" in src
     assert "deprecated_at_level" in src
     assert "deprecated_reason" in src
@@ -142,7 +142,7 @@ def test_schema_marketplace_has_deprecation():
 
 def test_schema_marketplace_tracks_issuer_quality():
     """Marketplace tracks recognized issuer count and slashing rate."""
-    src = (EXAMPLES_DIR / "schema-marketplace.skald").read_text()
+    src = (EXAMPLES_DIR / "schema-marketplace.skald").read_text(encoding="utf-8")
     assert "recognized_issuer_count" in src
     assert "total_issuer_slashings" in src
     assert "quality_score" in src

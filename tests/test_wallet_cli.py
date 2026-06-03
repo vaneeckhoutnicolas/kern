@@ -63,7 +63,7 @@ def test_keygen_creates_valid_keyfile():
             assert mode == 0o600, f"keyfile permissions {oct(mode)} not 0600"
 
         # File should be valid JSON with expected fields
-        with open(keyfile) as f:
+        with open(keyfile, encoding="utf-8") as f:
             data = json.load(f)
         assert "address" in data
         assert data["address"].startswith("kn1")
@@ -96,11 +96,11 @@ def test_keygen_force_overrides():
     with tempfile.TemporaryDirectory() as td:
         keyfile = os.path.join(td, "test.json")
         run_cli("keygen", "--out", keyfile)
-        with open(keyfile) as f:
+        with open(keyfile, encoding="utf-8") as f:
             first = json.load(f)
 
         run_cli("keygen", "--out", keyfile, "--force")
-        with open(keyfile) as f:
+        with open(keyfile, encoding="utf-8") as f:
             second = json.load(f)
 
         # The two keys should be different
