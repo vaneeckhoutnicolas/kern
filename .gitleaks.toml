@@ -1,0 +1,13 @@
+# Kern — gitleaks configuration
+# Extends the built-in ruleset (keeps full secret detection) and allowlists
+# documented EXAMPLE keys/addresses that are public by design — not secrets.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented example node keys/addresses (public by design, not secrets)"
+regexes = [
+  # Example baker public key shown in docs/running-a-node.md
+  '''9XYenoNdH5oAsQ7r4wE74DpDMKpYLQDzMB95revzeR2ZXEU8UFo5f''',
+]

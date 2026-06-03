@@ -1,0 +1,20 @@
+# Code owners for Kern.
+# Owners are automatically requested for review on pull requests that touch the
+# matched paths. This takes effect once branch protection enables
+# "Require review from Code Owners". The last matching pattern wins.
+
+# Default owner for everything in the repository
+*                       @vaneeckhoutnicolas
+
+# Protocol-critical: consensus, EVM execution, Skald, crypto
+/kern/                  @vaneeckhoutnicolas
+
+# Genesis and network parameters
+/genesis.json           @vaneeckhoutnicolas
+/genesis_vesting.json   @vaneeckhoutnicolas
+/networks/              @vaneeckhoutnicolas
+
+# CI, security configuration, and repo governance
+/.github/               @vaneeckhoutnicolas
+/.gitleaks.toml         @vaneeckhoutnicolas
+/SECURITY.md            @vaneeckhoutnicolas

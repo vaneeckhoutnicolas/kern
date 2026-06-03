@@ -15,14 +15,29 @@ data/
 *.sqlite-wal
 *.sqlite-shm
 
-# Secrets
+# Secrets — never commit signing material or credentials
 keys/
 *.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.jks
+.env
+.env.*
+*.env
+id_rsa*
+id_ed25519*
 
-# Editor
+# Secret-scanner reports (local runs)
+gitleaks-report.json
+results.json
+
+# Editor / OS
 .idea/
 .vscode/
 *.swp
 .DS_Store
+Thumbs.db
 site/
 networks/devnet/

@@ -1,0 +1,72 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"   # weekly (Mon 06:00 UTC) — catch new CVEs in unchanged code
+  workflow_dispatch:
+
+# Least privilege by default; each job elevates only what it needs.
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (Python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write   # required to upload CodeQL results
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@87557b9c84dde89fdd9b10e88954ac2f4248e463  # v4.36.1
+        with:
+          languages: python
+          queries: security-extended
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@87557b9c84dde89fdd9b10e88954ac2f4248e463  # v4.36.1
+
+  pip-audit:
+    name: pip-audit (dependency CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Run pip-audit
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit -r requirements.txt
+        # If a transitive CVE has no fix yet, you can temporarily ignore it:
+        #   pip-audit -r requirements.txt --ignore-vuln GHSA-xxxx-xxxx-xxxx
+
+  gitleaks:
+    name: gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          fetch-depth: 0   # full history so gitleaks scans every commit
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e  # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Free for individual / public repositories. Reads .gitleaks.toml automatically.
+        # (Organizations require a GITLEAKS_LICENSE; a personal account does not.)
+
+  dependency-review:
+    name: Dependency review (PRs only)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - name: Dependency review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
