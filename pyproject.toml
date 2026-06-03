@@ -27,13 +27,13 @@ dev = [
     "pyyaml>=6.0",                      # used by the Heimdall alert-rule tests
     "fastapi>=0.110.0",                 # Heimdall explorer tests import the app
     "uvicorn[standard]>=0.27.0",
-    "jinja2>=3.1.0",
+    "jinja2>=3.1.6",
 ]
 explorer = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "httpx>=0.27.0",
-    "jinja2>=3.1.0",
+    "jinja2>=3.1.6",
 ]
 docs = [
     "mkdocs>=1.5.0",
