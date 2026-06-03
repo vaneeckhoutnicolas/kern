@@ -52,7 +52,7 @@ def main() -> int:
     p.add_argument("--fee", type=int, default=1_000)
     args = p.parse_args()
 
-    with open(args.key) as f:
+    with open(args.key, encoding="utf-8") as f:
         keyfile = json.load(f)
     kp = KernKeypair.from_seed(bytes.fromhex(keyfile["seed_hex"]))
 

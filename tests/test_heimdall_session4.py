@@ -278,7 +278,7 @@ class TestRfpDoc:
     @pytest.fixture
     def rfp(self):
         path = Path(__file__).resolve().parent.parent / "docs" / "heimdall-rfp-next-gen.md"
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
 
     def test_rfp_file_exists(self, rfp):
         assert len(rfp) > 1000

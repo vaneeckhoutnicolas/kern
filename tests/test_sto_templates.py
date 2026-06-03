@@ -32,14 +32,14 @@ def test_sto_template_typechecks(filename):
     """Each STO template must type-check successfully."""
     path = EXAMPLES_DIR / filename
     assert path.exists(), f"Template {filename} not found"
-    source = path.read_text()
+    source = path.read_text(encoding="utf-8")
     errors = type_check(source)
     assert not errors, f"Type errors in {filename}: {errors[:3]}"
 
 
 def test_startup_equity_has_securities_invariants():
     """The startup-equity template must declare prospectus + custody-segregation invariants."""
-    source = (EXAMPLES_DIR / "sto-startup-equity.skald").read_text()
+    source = (EXAMPLES_DIR / "sto-startup-equity.skald").read_text(encoding="utf-8")
     # Check that the named invariants are present.
     assert "prospectus_whitepaper_before_issuance" in source
     assert "mifid_art16_custody_segregation" in source
@@ -48,7 +48,7 @@ def test_startup_equity_has_securities_invariants():
 
 def test_institutional_fund_has_aifmd_invariants():
     """The institutional-fund template must encode AIFMD requirements."""
-    source = (EXAMPLES_DIR / "sto-institutional-fund.skald").read_text()
+    source = (EXAMPLES_DIR / "sto-institutional-fund.skald").read_text(encoding="utf-8")
     assert "aifmd_art21_depositary_independence" in source
     assert "aifmd_art18_concentration_limit" in source
     assert "prospectus_before_issuance" in source
@@ -56,7 +56,7 @@ def test_institutional_fund_has_aifmd_invariants():
 
 def test_real_estate_has_title_invariant():
     """The real-estate template must require title registration before issuance."""
-    source = (EXAMPLES_DIR / "sto-real-estate.skald").read_text()
+    source = (EXAMPLES_DIR / "sto-real-estate.skald").read_text(encoding="utf-8")
     assert "title_registered_before_issuance" in source
     assert "prospectus_before_issuance" in source
     # Rental distribution bounded by collected rent (anti-Ponzi).
@@ -66,7 +66,7 @@ def test_real_estate_has_title_invariant():
 def test_all_stos_have_regulator_freeze():
     """Every STO must allow the regulator to freeze the contract (emergency stop)."""
     for filename in STO_TEMPLATES:
-        source = (EXAMPLES_DIR / filename).read_text()
+        source = (EXAMPLES_DIR / filename).read_text(encoding="utf-8")
         assert "regulator_freeze" in source, f"{filename} missing regulator_freeze entry"
         assert "regulator" in source, f"{filename} missing regulator role"
 
@@ -74,7 +74,7 @@ def test_all_stos_have_regulator_freeze():
 def test_all_stos_have_blackout_support():
     """MAR (market-abuse) — every STO must support blackout windows."""
     for filename in STO_TEMPLATES:
-        source = (EXAMPLES_DIR / filename).read_text()
+        source = (EXAMPLES_DIR / filename).read_text(encoding="utf-8")
         assert "blackout_active" in source, f"{filename} missing blackout_active"
         assert "start_blackout" in source, f"{filename} missing start_blackout"
         assert "end_blackout" in source, f"{filename} missing end_blackout"
@@ -83,13 +83,13 @@ def test_all_stos_have_blackout_support():
 def test_all_stos_have_compliance_oracle_role():
     """All templates rely on an off-chain compliance oracle for attestation reading."""
     for filename in STO_TEMPLATES:
-        source = (EXAMPLES_DIR / filename).read_text()
+        source = (EXAMPLES_DIR / filename).read_text(encoding="utf-8")
         assert "compliance_oracle" in source, f"{filename} missing compliance_oracle role"
 
 
 def test_real_estate_requires_notary():
     """Real estate tokenization requires a notary role for title attestation."""
-    source = (EXAMPLES_DIR / "sto-real-estate.skald").read_text()
+    source = (EXAMPLES_DIR / "sto-real-estate.skald").read_text(encoding="utf-8")
     assert "notary" in source.lower()
     assert "title_registered" in source
     assert "title_attestation_hash" in source
@@ -97,20 +97,20 @@ def test_real_estate_requires_notary():
 
 def test_institutional_fund_requires_independent_depositary():
     """AIFMD Art. 21: depositary must be distinct from AIFM."""
-    source = (EXAMPLES_DIR / "sto-institutional-fund.skald").read_text()
+    source = (EXAMPLES_DIR / "sto-institutional-fund.skald").read_text(encoding="utf-8")
     assert "aifm != depositary" in source
 
 
 def test_institutional_fund_has_nav_staleness_check():
     """AIFMD Art. 22: NAV staleness blocks redemptions."""
-    source = (EXAMPLES_DIR / "sto-institutional-fund.skald").read_text()
+    source = (EXAMPLES_DIR / "sto-institutional-fund.skald").read_text(encoding="utf-8")
     assert "nav_max_staleness_levels" in source
     assert "NAV too stale" in source
 
 
 def test_real_estate_has_rental_distribution_bound():
     """Anti-Ponzi: distributions must be bounded by actual rent received."""
-    source = (EXAMPLES_DIR / "sto-real-estate.skald").read_text()
+    source = (EXAMPLES_DIR / "sto-real-estate.skald").read_text(encoding="utf-8")
     # Verify the invariant exists and that distributions cannot exceed received
     assert "rental_income_distributed <= rental_income_received" in source
 

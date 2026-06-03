@@ -49,7 +49,7 @@ def metric_names_emitted_by_heimdall() -> set[str]:
     `kern_` or `heimdall_` in either a `_write(buf, "name", …)` call or a
     raw `buf.write(f'name{…}')` line.
     """
-    src = Path(kern_metrics.__file__).read_text()
+    src = Path(kern_metrics.__file__).read_text(encoding="utf-8")
     names = set()
     # _write(buf, "metric_name", ...)
     for m in re.finditer(r'_write\(buf,\s*"([a-z_]+)"', src):
@@ -92,13 +92,13 @@ class TestGrafanaDashboards:
     @pytest.mark.parametrize("filename", EXPECTED_FILES)
     def test_dashboard_is_valid_json(self, filename):
         p = GRAFANA_DIR / filename
-        with open(p) as f:
+        with open(p, encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, dict)
 
     @pytest.mark.parametrize("filename", EXPECTED_FILES)
     def test_dashboard_has_required_top_level_keys(self, filename):
-        data = json.loads((GRAFANA_DIR / filename).read_text())
+        data = json.loads((GRAFANA_DIR / filename).read_text(encoding="utf-8"))
         assert "title" in data and isinstance(data["title"], str) and data["title"]
         assert "uid" in data and data["uid"], f"{filename} must have a uid"
         assert "panels" in data and isinstance(data["panels"], list)
@@ -109,7 +109,7 @@ class TestGrafanaDashboards:
 
     @pytest.mark.parametrize("filename", EXPECTED_FILES)
     def test_dashboard_has_datasource_template_var(self, filename):
-        data = json.loads((GRAFANA_DIR / filename).read_text())
+        data = json.loads((GRAFANA_DIR / filename).read_text(encoding="utf-8"))
         templating = data.get("templating", {}).get("list", [])
         assert any(t.get("name") == "DS_PROMETHEUS" and t.get("type") == "datasource"
                    for t in templating), \
@@ -117,7 +117,7 @@ class TestGrafanaDashboards:
 
     @pytest.mark.parametrize("filename", EXPECTED_FILES)
     def test_dashboard_panels_have_targets(self, filename):
-        data = json.loads((GRAFANA_DIR / filename).read_text())
+        data = json.loads((GRAFANA_DIR / filename).read_text(encoding="utf-8"))
         for panel in data["panels"]:
             # `text`, `row`, `dashlist` etc. don't need targets — skip those
             if panel.get("type") in ("text", "row", "dashlist"):
@@ -129,7 +129,7 @@ class TestGrafanaDashboards:
     @pytest.mark.parametrize("filename", EXPECTED_FILES)
     def test_dashboard_uses_only_emitted_metrics(self, filename):
         emitted = metric_names_emitted_by_heimdall()
-        data = json.loads((GRAFANA_DIR / filename).read_text())
+        data = json.loads((GRAFANA_DIR / filename).read_text(encoding="utf-8"))
         # Collect all PromQL expressions from all targets
         for panel in data["panels"]:
             for target in panel.get("targets", []):
@@ -150,7 +150,7 @@ class TestAlertingRules:
 
     @pytest.fixture
     def rules(self):
-        with open(ALERTS_FILE) as f:
+        with open(ALERTS_FILE, encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     def test_alerts_file_parses(self, rules):
@@ -205,7 +205,7 @@ class TestAlertingRules:
 
         We accept both `#anchor-name` and full URLs containing `runbook#anchor`.
         """
-        runbook_text = RUNBOOK_FILE.read_text()
+        runbook_text = RUNBOOK_FILE.read_text(encoding="utf-8")
         # Markdown auto-anchors are H2/H3 lowercase with hyphens; we also use
         # explicit `{#name}` syntax in places. Collect both.
         explicit_anchors = set(re.findall(r'\{#([a-z0-9-]+)\}', runbook_text))
@@ -236,7 +236,7 @@ class TestDockerComposeStack:
 
     @pytest.fixture
     def compose(self):
-        with open(DOCKER_DIR / "docker-compose.monitoring.yml") as f:
+        with open(DOCKER_DIR / "docker-compose.monitoring.yml", encoding="utf-8") as f:
             return yaml.safe_load(f)
 
     def test_compose_parses(self, compose):
@@ -267,7 +267,7 @@ class TestDockerComposeStack:
 class TestPrometheusConfig:
 
     def test_prometheus_yml_parses(self):
-        with open(DOCKER_DIR / "prometheus.yml") as f:
+        with open(DOCKER_DIR / "prometheus.yml", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert "scrape_configs" in data
         # Must scrape Heimdall
@@ -279,7 +279,7 @@ class TestPrometheusConfig:
             "prometheus.yml must include a heimdall scrape target"
 
     def test_prometheus_references_alert_file(self):
-        with open(DOCKER_DIR / "prometheus.yml") as f:
+        with open(DOCKER_DIR / "prometheus.yml", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         rule_files = data.get("rule_files", [])
         assert any("kern-alerts" in f for f in rule_files), \
@@ -289,14 +289,14 @@ class TestPrometheusConfig:
 class TestGrafanaProvisioning:
 
     def test_datasources_yml_parses(self):
-        with open(DOCKER_DIR / "grafana-datasources.yml") as f:
+        with open(DOCKER_DIR / "grafana-datasources.yml", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert "datasources" in data
         names = [d["name"] for d in data["datasources"]]
         assert "Prometheus" in names
 
     def test_dashboards_provider_parses(self):
-        with open(DOCKER_DIR / "grafana-dashboards-provider.yml") as f:
+        with open(DOCKER_DIR / "grafana-dashboards-provider.yml", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert "providers" in data
         assert len(data["providers"]) >= 1
