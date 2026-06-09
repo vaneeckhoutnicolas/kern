@@ -6,13 +6,13 @@
 
 > *The noyau. The kernel. The grain of state that endures.*
 
-**Kern** is a Layer-1 blockchain protocol that combines the developer ecosystem and EVM tooling of Ethereum with the on-chain governance, formal verifiability, and Liquid Proof-of-Stake of Tezos. Smart contracts are written in **Skald**, a resource-typed language with declared invariants compiled to a verifiable bytecode and executed deterministically.
+**Kern** is a Layer-1 blockchain protocol that combines EVM tooling and developer-ecosystem compatibility with native on-chain governance, formal verifiability, and Liquid Proof-of-Stake. Smart contracts are written in **Skald**, a resource-typed language with declared invariants compiled to a verifiable bytecode and executed deterministically.
 
 This repository is the **v1.1 release candidate** — building on the v1.0-rc audit-frozen foundation with **slashable attestations** as a new L1 primitive, three **tokenized-securities Skald templates** for the EU securities regime — MiFID II / Prospectus Regulation / AIFMD, *not* MiCA, which excludes financial instruments under Art. 2(4) (startup equity, institutional fund, real estate; see [docs/sto-mica.md](docs/sto-mica.md)), **public goods funding primitives** (Quadratic Funding + Retroactive PGF), an **oracle network** (generic data + DeFi prices + schema marketplace), **ZK-claims** for privacy-preserving attestations, and **Heimdall** — the official block explorer + monitoring stack that surfaces the institutional-legibility features Kern was built to support. See [docs/v11rc-changes.md](docs/v11rc-changes.md) for the full vertical and [docs/setup-heimdall-operator.md](docs/setup-heimdall-operator.md) for the explorer.
 
-The v1.0-rc foundation includes: the Skald language with static type checker, a multi-validator BFT consensus engine, an optimistic rollup framework with a multi-frame Mini-EVM and bisection-based fraud proofs, **Liquid PoS baking delegation with no LSTs and no lockups**, **EVM Yellow Paper-compliant gas metering in the rollup Mini-EVM** (the L1 native layer uses a flat per-transaction fee and a non-recursive, loop-free Skald execution model that terminates by construction — see [docs/skald-language.md](docs/skald-language.md), with an optional governance-gated [fee floor + per-block size cap](docs/fee-floor.md) that is off by default), **real BN254 pairing via py_ecc**, and a complete on-chain governance system with slashing.
+The v1.0-rc foundation includes: the Skald language with static type checker, a multi-validator BFT consensus engine, an optimistic rollup framework with a multi-frame Mini-EVM and bisection-based fraud proofs, **Liquid PoS delegation with no LSTs and no lockups**, **EVM Yellow Paper-compliant gas metering in the rollup Mini-EVM** (the L1 native layer uses a flat per-transaction fee and a non-recursive, loop-free Skald execution model that terminates by construction — see [docs/skald-language.md](docs/skald-language.md), with an optional governance-gated [fee floor + per-block size cap](docs/fee-floor.md) that is off by default), **real BN254 pairing via py_ecc**, and a complete on-chain governance system with slashing.
 
-The economy is finalized: **100 000 000 KRN** genesis supply, Ethereum-style distribution (70% public sale / 10% founder vested 4 years / 15% Foundation / 3% contributors / 2% validator bootstrap), and a documented **API stability spec** declaring what's frozen at v1.0.
+The economy is finalized: **100 000 000 KRN** genesis supply, broad public distribution (70% public sale / 10% founder vested 4 years / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake), and a documented **API stability spec** declaring what's frozen at v1.0.
 
 ---
 
@@ -23,7 +23,7 @@ The economy is finalized: **100 000 000 KRN** genesis supply, Ethereum-style dis
 | [**Executive Summary**](docs/executive-summary.md) | The 5-minute pitch. Value proposition, differentiation, use cases, roadmap. **Read this first.** |
 | [Whitepaper](docs/whitepaper.md) | Technical long-form: design principles, architecture, governance |
 | [Tokenomics](docs/tokenomics.md) | KRN token economy: supply, distribution, sinks, governance |
-| [**Staking & delegation**](docs/staking.md) | **Liquid PoS baking delegation: how it works, how to delegate** |
+| [**Staking & delegation**](docs/staking.md) | **Liquid PoS delegation: how it works, how to delegate** |
 | [Contributors program](docs/contributors-program.md) | Three funding channels: genesis pool, Foundation, on-chain treasury |
 | [Use cases](docs/use-cases.md) | Six target application domains, in detail |
 | [Naming and symbolism](docs/naming-and-symbolism.md) | Glossary explaining Kern, Skald, Heimdall, network names, and design runes |
@@ -39,13 +39,12 @@ The economy is finalized: **100 000 000 KRN** genesis supply, Ethereum-style dis
 | [Architecture](docs/architecture.md) | Component-by-component map of the codebase |
 | [API reference](docs/api.md) | The RPC surface |
 | [**API stability spec**](docs/api-stability.md) | What's frozen, stable, beta — for downstream code |
-| [Publishing](PUBLISHING.md) | How to push this repo to GitHub |
 
 ## ⚙️ Protocol details
 
 | Document | What it is |
 |----------|------------|
-| [Consensus](docs/consensus.md) | Tenderbake-style BFT — the single-validator view |
+| [Consensus](docs/consensus.md) | Three-phase BFT consensus — the single-validator view |
 | [Multi-validator BFT](docs/bft.md) | The full 3-phase protocol: propose / pre-endorse / endorse |
 | [Skald language](docs/skald-language.md) | Grammar, semantics, examples |
 | [Skald static typing](docs/typecheck.md) | The compile-time type checker |
@@ -61,7 +60,7 @@ The economy is finalized: **100 000 000 KRN** genesis supply, Ethereum-style dis
 | [v0.5 changes](docs/v05-changes.md) | What was new in v0.5 |
 | [v0.6 changes](docs/v06-changes.md) | What was new in v0.6 |
 | [v0.7-v0.9 changes](docs/v07-v08-v09-changes.md) | BN254 + dynamic gas + voting + observability + fuzzing |
-| [v1.0-rc changes](docs/v10rc-changes.md) | Genesis 100M + Tezos delegation + real pairing + API freeze |
+| [v1.0-rc changes](docs/v10rc-changes.md) | Genesis 100M + Liquid PoS delegation + real pairing + API freeze |
 | [**v1.1-rc changes**](docs/v11rc-changes.md) | **Slashable attestations + STO securities templates + public goods funding + oracle network + ZK-claims (this version)** |
 | [Pre-mainnet checklist](docs/pre-mainnet-checklist.md) | Everything that must complete before Midgard launches |
 
@@ -69,7 +68,7 @@ The economy is finalized: **100 000 000 KRN** genesis supply, Ethereum-style dis
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~50 markdown specifications, 672 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~50 markdown specifications, 692 tests passing.**
 
 ```
 kern/
@@ -119,9 +118,9 @@ kern/
 ├── scripts/
 │   ├── generate_keys.py
 │   ├── build_genesis.py
-│   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/15/3/2
+│   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 672 tests (+ 2 chaos skipped by default)
+├── tests/                      # 692 tests (+ 2 chaos skipped by default)
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -182,7 +181,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 672 passed, 2 skipped (chaos tests) in ~20s
+# 692 passed, 2 skipped (chaos tests) in ~20s
 ```
 
 ### Open the block explorer (Heimdall)
@@ -339,7 +338,7 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | v0.7 | BN254 scaffolding + dynamic gas constants (Yellow Paper) | ✅ |
 | v0.8 | Quadratic + delegated voting + equivocation tracking | ✅ |
 | v0.9 | Observability + property-based fuzzing + devnet bootstrap | ✅ |
-| **v1.0-rc** | Genesis 100M + Tezos delegation + dynamic gas wired + real BN254 + slashing tx + API freeze | ✅ |
+| **v1.0-rc** | Genesis 100M + Liquid PoS delegation + dynamic gas wired + real BN254 + slashing tx + API freeze | ✅ |
 | **v1.1-rc** | **Slashable attestations + STO securities templates + QF/RPGF + oracle network + ZK-claims** | **✅ (this version)** |
 | v1.0 | First stable release after audit cycle 1 | 🔵 |
 | Yggdrasil testnet | Public testnet, permissionless validators | 🔵 |
