@@ -47,22 +47,40 @@ Both limits are constructor parameters, so a deployment can tune them
 sliding-window `RateLimiter` keyed by client identity (`req.remote`):
 at most `rate_limit_max` injections (default `100`) per
 `rate_limit_window_s` (default `10s`). Over-budget requests get
-`429 Too Many Requests` with a `Retry-After` header. Read endpoints are
-not limited.
+`429 Too Many Requests` with a `Retry-After` header. When admission fails
+for a mempool-cap reason, the endpoint also returns `429` with an
+explanatory body. A transaction is broadcast to peers only *after* it is
+accepted locally, so a rejected transaction is not gossiped.
 
-When admission fails for a mempool-cap reason, the endpoint also returns
-`429` with an explanatory body. A transaction is broadcast to peers only
-*after* it is accepted locally, so a rejected transaction is not gossiped.
+### 3. Read throttling (`kern/rpc.py`)
+
+Every `GET` endpoint is wrapped by a middleware (`make_read_throttle`) that
+applies a **separate, more generous** per-client budget
+(`read_rate_limit_max`, default `600` per window). Reads are far cheaper to
+issue than the write path, so a GET flood — of `/metrics`, `/chain/head`,
+`/chain/mempool` — was the larger residual exposure once injection was
+throttled. The read budget is high enough that legitimate polling (block
+explorers, Prometheus scrapes) is never affected, while a flood is shed
+with `429 + Retry-After`. The liveness endpoint `/chain/health` is
+**exempt**, so a `429` can never be misread as an unhealthy node by a load
+balancer or monitor. Non-`GET` requests pass through untouched (the write
+path does its own, stricter limiting).
+
+`/chain/mempool` is additionally bounded: it now reports the true mempool
+size but serialises only a capped slice of hashes (1,000), where it
+previously drained up to 10,000 rows per call — removing a cheap
+amplification vector.
 
 ## Scope and limitations
 
 This is a **first line of defence**, not a complete anti-DoS posture:
 
-- The rate limiter is **per-process and per-node**. It is keyed by the
-  immediate peer address, so it does not by itself defend against a
-  distributed flood from many source addresses. Production deployments
-  should still front the RPC with an edge proxy / WAF and, where
-  applicable, authentication — see the operator runbook.
+- The rate limiters are **per-process and per-node**. They are keyed by the
+  immediate peer address, so they do not by themselves defend against a
+  distributed flood from many source addresses, nor against many clients
+  sharing one NAT/proxy address. Production deployments should still front
+  the RPC with an edge proxy / WAF and, where applicable, authentication —
+  see the operator runbook.
 - The mempool caps bound *memory*, not *bandwidth*: gossip validation
   (signature checks) still costs CPU per received transaction. Peer
   scoring and gossip-layer throttling remain future work and are tracked
