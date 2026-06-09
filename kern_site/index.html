@@ -258,6 +258,30 @@
     .btn-primary .arrow { transition: transform 0.18s ease; }
     .btn-primary:hover .arrow { transform: translateX(2px); }
 
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1.05rem;
+      background: transparent;
+      color: var(--ink-primary);
+      border: 1px solid var(--rule-strong);
+      border-radius: 999px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: border-color 0.18s, background 0.18s, transform 0.18s ease;
+    }
+    .btn-ghost:hover { border-color: var(--ink-primary); background: rgba(14, 26, 43, 0.04); transform: translateY(-1px); }
+    .btn-ghost .pdftag {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      letter-spacing: 0.6px;
+      color: var(--amber-deep);
+      border: 1px solid rgba(142, 94, 58, 0.35);
+      border-radius: 4px;
+      padding: 0.05rem 0.3rem;
+    }
+
     /* ===================================================================
        Hero
        =================================================================== */
@@ -1007,6 +1031,7 @@
       <a href="manifesto.html">Manifesto</a>
       <a href="glossary.html">Glossary</a>
       <a href="github.html">Source</a>
+      <a href="kern-institutional-brief.pdf" target="_blank" rel="noopener">Brief</a>
     </nav>
     <a href="#subscribe" class="btn-primary">
       Stay informed
@@ -1032,10 +1057,15 @@
           Kern is a Layer-1 blockchain combining Ethereum's developer ecosystem with Tezos' on-chain governance — designed so the rules of an STO, a public goods fund, or an oracle network are visible at the source, not buried in a 200-page audit report.
         </p>
         <div class="capture reveal" data-delay="4">
+          <div style="display:flex; flex-wrap:wrap; gap:0.6rem; align-items:center;">
           <a href="https://www.linkedin.com/in/vaneeckhout/" class="btn-primary" target="_blank" rel="noopener">
             Follow on LinkedIn
             <span class="arrow" aria-hidden="true">→</span>
           </a>
+          <a href="kern-institutional-brief.pdf" class="btn-ghost" target="_blank" rel="noopener" download>
+            Institutional brief&nbsp;<span class="pdftag">PDF</span>
+          </a>
+          </div>
           <p class="capture-hint">Built in the open by <a href="https://www.linkedin.com/in/vaneeckhout/" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">Nicolas Van Eeckhout</a> — follow along on LinkedIn for protocol milestones, audit results, and testnet launches. No list, no inbox.</p>
         </div>
       </div>
@@ -1520,6 +1550,7 @@
         <h5>Protocol</h5>
         <ul>
           <li><a href="whitepaper.html">Whitepaper</a></li>
+          <li><a href="kern-institutional-brief.pdf" target="_blank" rel="noopener">Institutional brief (PDF)</a></li>
           <li><a href="manifesto.html">Manifesto</a></li>
           <li><a href="#compare">Tokenomics</a></li>
           <li><a href="#verticals">Skald language</a></li>
