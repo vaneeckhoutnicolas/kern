@@ -12,7 +12,7 @@
 
 We present Kern, a Layer-1 blockchain protocol designed around a specific thesis we call **institutional legibility**: the property that the rules an institution must follow — whether regulatory (MiCA, AIFMD, MiFID II), procedural (grant-making, funding allocation), or evidentiary (oracle attestations, supply chain provenance) — are encoded as protocol-enforced invariants that regulators, auditors, and counterparties can read directly, without trusting any intermediary.
 
-Kern combines five primitives that together support this thesis. None of them is individually novel; the combination has not previously been delivered by any production Layer-1 protocol. Those primitives are: (1) Tenderbake-style BFT consensus with Liquid Proof-of-Stake delegation; (2) the Skald contract language with first-class runtime-enforced invariants and a static type system; (3) dual-track on-chain governance with equivocation slashing; (4) the slashable attestation primitive — generalized equivocation detection for any signed claim about the world; (5) BN254 zk-SNARK verification precompiles enabling privacy-preserving compliance attestations.
+Kern combines five primitives that together support this thesis. None of them is individually novel; the combination has not previously been delivered by any production Layer-1 protocol. Those primitives are: (1) a four-phase BFT consensus protocol with Liquid Proof-of-Stake delegation; (2) the Skald contract language with first-class runtime-enforced invariants and a static type system; (3) dual-track on-chain governance with equivocation slashing; (4) the slashable attestation primitive — generalized equivocation detection for any signed claim about the world; (5) BN254 zk-SNARK verification precompiles enabling privacy-preserving compliance attestations.
 
 We describe the protocol architecture, the four application verticals it enables (compliance-by-construction Security Token Offerings, public goods funding, generic data oracle networks, and ZK-claims-based identity), and the operational path from the v1.1-rc reference implementation to the Midgard mainnet. We are explicit about what Kern is not, what audits are required before launch, and which design decisions are deliberate trade-offs.
 
@@ -24,7 +24,7 @@ The reference implementation is open-source under Apache-2.0 and ships with 483 
 2. **Motivation** — the structural gap in existing L1s
 3. **Use cases envisioned** — nine personae across compliance, public goods, oracles, identity
 4. **The core thesis: institutional legibility** — what Kern provides that other L1s don't (5 rows)
-5. **Consensus** — Tenderbake LPoS, validator economics, slashing
+5. **Consensus** — four-phase BFT finality with LPoS, validator economics, slashing
 6. **Skald and the KVM** — first-class invariants, static typing, deterministic interpreter
 7. **EVM compatibility via Optimistic Smart Rollups** — Solidity gets a home without compromising L1 design
 8. **The slashable attestation primitive** — the new L1 primitive in v1.1-rc
@@ -60,7 +60,7 @@ All four of these gaps exist not because the underlying problems are unsolvable,
 
 The why is: **institutions deserve infrastructure that lets them remain institutions while using blockchain rails**. Not "DeFi for everyone" — DeFi for those who choose it. Beyond DeFi, **accountable infrastructure for the institutions that make collective life work**: banks, foundations, public bodies, regulators, NGOs, industry consortia.
 
-This conviction predates Kern; the Tezos community has been articulating something close to it since 2018. What's new is the convergence of MiCA (which gives institutions a clear regulatory framework to anchor to), zk-SNARKs reaching production maturity (Groth16 + BN254 is now standard), and the slashing primitive design (proven at consensus layer, generalizable to off-chain claims).
+This conviction predates Kern; the Tezos community has been articulating something close to it since 2018. What's new is the convergence of a maturing EU regulatory perimeter (MiCA for crypto-assets; MiFID II, the Prospectus Regulation and AIFMD for financial instruments), zk-SNARKs reaching production maturity (Groth16 + BN254 is now standard), and the slashing primitive design (proven at consensus layer, generalizable to off-chain claims).
 
 ### 1.2 HOW — the design principles that constrain Kern
 
@@ -135,7 +135,7 @@ Kern's reference implementation provides (a) through (f) as a coherent design. T
 
 **Kern is**:
 - A new Layer-1 protocol with native KRN token
-- A Tenderbake-derived BFT consensus engine
+- A four-phase BFT consensus engine
 - A Liquid Proof-of-Stake delegation model (no LSTs, no lockups)
 - The Skald contract language with declared, runtime-enforced invariants
 - An optimistic-rollup framework with EVM compatibility for application developers
@@ -368,7 +368,7 @@ This composition is not coincidental — it falls out naturally from having the 
 
 ## 5. Consensus
 
-Kern's consensus engine is a Python implementation of a variant of Tenderbake, the consensus algorithm Tezos has used since the Ithaca upgrade in 2022.
+Kern's consensus engine is a Python implementation of a BFT finality protocol in the four-phase family (propose → prevote → precommit → commit) with Liquid Proof-of-Stake delegation.
 
 ### 3.1 Design goals
 
@@ -377,11 +377,11 @@ The consensus engine optimizes for:
 - **Deterministic finality**: a block is final within 2 blocks (~2 seconds at 1-second block cadence) and cannot be rolled back without a long-range attack.
 - **Liveness under partial synchrony**: the protocol makes progress as long as a supermajority (greater than two-thirds) of validator-weighted stake is honest and reachable.
 - **Equivocation accountability**: every double-baking and double-endorsing is provable on-chain and slashable.
-- **Validator accessibility**: validators delegate operationally (run nodes, sign blocks) but operationally the burden is comparable to a Tezos baker.
+- **Validator accessibility**: validators delegate operationally (run nodes, sign blocks) but operationally the burden is comparable to running a validator on any BFT proof-of-stake network.
 
 ### 3.2 Validator economics
 
-Validators ("bakers" in the Tezos lexicon) stake KRN to participate. Delegators can lend their stake without giving up custody — the KRN remains in the delegator's account; the delegation is a pointer to a validator that the validator's effective stake includes. This is **Liquid Proof-of-Stake without Liquid Staking Tokens**: no Lido equivalent, no rehypothecation, no LST risk.
+Validators (Kern calls them *bakers*) stake KRN to participate. Delegators can lend their stake without giving up custody — the KRN remains in the delegator's account; the delegation is a pointer to a validator that the validator's effective stake includes. This is **Liquid Proof-of-Stake without Liquid Staking Tokens**: no Lido equivalent, no rehypothecation, no LST risk.
 
 Block rewards come from two sources: newly issued KRN per the adaptive issuance schedule, and transaction fees. The split between validator and delegators is determined by a per-validator commission rate (default 10%).
 

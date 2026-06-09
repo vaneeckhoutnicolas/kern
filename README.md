@@ -62,7 +62,7 @@ The economy is finalized: **100 000 000 KRN** genesis supply, Ethereum-style dis
 | [v0.6 changes](docs/v06-changes.md) | What was new in v0.6 |
 | [v0.7-v0.9 changes](docs/v07-v08-v09-changes.md) | BN254 + dynamic gas + voting + observability + fuzzing |
 | [v1.0-rc changes](docs/v10rc-changes.md) | Genesis 100M + Tezos delegation + real pairing + API freeze |
-| [**v1.1-rc changes**](docs/v11rc-changes.md) | **Slashable attestations + STO MiCA + public goods funding + oracle network + ZK-claims (this version)** |
+| [**v1.1-rc changes**](docs/v11rc-changes.md) | **Slashable attestations + STO securities templates + public goods funding + oracle network + ZK-claims (this version)** |
 | [Pre-mainnet checklist](docs/pre-mainnet-checklist.md) | Everything that must complete before Midgard launches |
 
 ---
@@ -340,7 +340,7 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | v0.8 | Quadratic + delegated voting + equivocation tracking | ✅ |
 | v0.9 | Observability + property-based fuzzing + devnet bootstrap | ✅ |
 | **v1.0-rc** | Genesis 100M + Tezos delegation + dynamic gas wired + real BN254 + slashing tx + API freeze | ✅ |
-| **v1.1-rc** | **Slashable attestations + STO MiCA templates + QF/RPGF + oracle network + ZK-claims** | **✅ (this version)** |
+| **v1.1-rc** | **Slashable attestations + STO securities templates + QF/RPGF + oracle network + ZK-claims** | **✅ (this version)** |
 | v1.0 | First stable release after audit cycle 1 | 🔵 |
 | Yggdrasil testnet | Public testnet, permissionless validators | 🔵 |
 | Midgard mainnet | Production launch with 100M KRN distribution | 🔵 |

@@ -1,6 +1,6 @@
 # Multi-validator BFT
 
-This document specifies Kern's multi-validator consensus protocol — the full three-phase Tenderbake-style message exchange that the v0.2 reference implementation in [`kern/bft.py`](../kern/bft.py) realizes.
+This document specifies Kern's multi-validator consensus protocol — the full three-phase BFT message exchange that the v0.2 reference implementation in [`kern/bft.py`](../kern/bft.py) realizes.
 
 The single-validator view (where the lone baker self-commits) lives in [`consensus.md`](consensus.md). This document picks up where that one stops.
 
@@ -170,7 +170,7 @@ In the steady state: block at level L is final approximately 2 seconds after its
 | Ethereum   | Gasper       | 2      | ~12 min       | Double-vote, surround-vote        |
 | Cosmos     | Tendermint   | 3      | 1 block ~6s   | Double-sign                       |
 | Aptos      | DiemBFT v4   | 3      | ~1s           | Double-sign                       |
-| **Kern**   | **Tenderbake-lite** | **3** | **~2s** | **Double-baking, double-endorsing** |
+| **Kern**   | **BFT (3-phase)** | **3** | **~2s** | **Double-baking, double-endorsing** |
 
 Kern's design choices (3-phase, ~2s finality, double-X slashing) sit within the established BFT-with-slashing family. The embedded governance + Skald story are not properties of the consensus algorithm itself.
 
