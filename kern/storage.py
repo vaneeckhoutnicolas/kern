@@ -10,11 +10,17 @@ The schema is deliberately simple:
 
     blocks(level INTEGER PRIMARY KEY, hash TEXT UNIQUE, json TEXT)
     state(key TEXT PRIMARY KEY, json TEXT)
-    mempool(hash TEXT PRIMARY KEY, json TEXT, received_at INTEGER)
+    mempool(hash TEXT PRIMARY KEY, json TEXT, received_at INTEGER, sender TEXT)
 
 State snapshots are stored as a single JSON blob keyed by "head". A
 production node would maintain incremental state diffs and a state trie
 with proof generation; this is sufficient for the reference node.
+
+The mempool is bounded. ``add_to_mempool`` enforces both a global size
+cap and a per-sender cap so that a single sender cannot exhaust node
+memory by flooding cheap, never-includable transactions. Both the RPC
+injection path and the P2P gossip path go through ``add_to_mempool``, so
+the caps protect every intake route. See ``docs/mempool-rpc-hardening.md``.
 """
 
 from __future__ import annotations
@@ -43,19 +49,44 @@ CREATE TABLE IF NOT EXISTS state (
 CREATE TABLE IF NOT EXISTS mempool (
     hash  TEXT PRIMARY KEY,
     json  TEXT NOT NULL,
-    received_at INTEGER NOT NULL
+    received_at INTEGER NOT NULL,
+    sender TEXT NOT NULL DEFAULT ''
 );
 """
 
+# Default mempool bounds. A single sender cannot hold more than
+# MAX_MEMPOOL_PER_SENDER pending transactions, and the mempool as a whole
+# cannot exceed MAX_MEMPOOL_SIZE entries. These are deliberately generous
+# for a reference node and can be tuned per deployment via the Storage
+# constructor.
+MAX_MEMPOOL_SIZE = 50_000
+MAX_MEMPOOL_PER_SENDER = 256
+
 
 class Storage:
-    def __init__(self, data_dir: str):
+    def __init__(
+        self,
+        data_dir: str,
+        max_mempool_size: int = MAX_MEMPOOL_SIZE,
+        max_mempool_per_sender: int = MAX_MEMPOOL_PER_SENDER,
+    ):
         os.makedirs(data_dir, exist_ok=True)
         self.path = os.path.join(data_dir, "kern.sqlite")
+        self.max_mempool_size = max_mempool_size
+        self.max_mempool_per_sender = max_mempool_per_sender
         self.conn = sqlite3.connect(self.path, isolation_level=None)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(_SCHEMA)
+        # Migration: older databases created before mempool bounds lack the
+        # `sender` column. Add it idempotently; SQLite has no
+        # "ADD COLUMN IF NOT EXISTS", so we swallow the duplicate-column error.
+        try:
+            self.conn.execute(
+                "ALTER TABLE mempool ADD COLUMN sender TEXT NOT NULL DEFAULT ''"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already present
 
     def close(self) -> None:
         self.conn.close()
@@ -108,11 +139,39 @@ class Storage:
 
     # --- Mempool -------------------------------------------------------------
 
-    def add_to_mempool(self, tx: Transaction) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO mempool(hash, json, received_at) VALUES (?, ?, ?)",
-            (tx.hash_hex(), json.dumps(tx.to_dict()), int(time.time())),
+    def add_to_mempool(self, tx: Transaction) -> bool:
+        """Admit ``tx`` to the mempool, subject to size caps.
+
+        Returns ``True`` if the transaction was admitted (or was already
+        present and thus re-inserted), ``False`` if it was rejected because a
+        cap was reached. Re-inserting a transaction already in the mempool
+        (same hash) never counts against the caps, so honest resubmission is
+        always allowed.
+        """
+        h = tx.hash_hex()
+        already_present = (
+            self.conn.execute(
+                "SELECT 1 FROM mempool WHERE hash = ?", (h,)
+            ).fetchone()
+            is not None
         )
+        if not already_present:
+            if self.mempool_size() >= self.max_mempool_size:
+                return False
+            if self._mempool_count_for_sender(tx.sender) >= self.max_mempool_per_sender:
+                return False
+        self.conn.execute(
+            "INSERT OR REPLACE INTO mempool(hash, json, received_at, sender) "
+            "VALUES (?, ?, ?, ?)",
+            (h, json.dumps(tx.to_dict()), int(time.time()), tx.sender),
+        )
+        return True
+
+    def _mempool_count_for_sender(self, sender: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM mempool WHERE sender = ?", (sender,)
+        ).fetchone()
+        return row[0] if row else 0
 
     def drain_mempool(self, max_n: int = 1000) -> List[Transaction]:
         rows = self.conn.execute(

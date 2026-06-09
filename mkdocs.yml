@@ -154,6 +154,7 @@ nav:
       - Pre-mainnet checklist: pre-mainnet-checklist.md
       - Release tagging guide: release-tagging.md
       - Internal security review (v1.1-rc): security-review-v11rc.md
+      - Mempool & RPC hardening: mempool-rpc-hardening.md
 
 extra:
   social:

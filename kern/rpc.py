@@ -4,9 +4,14 @@
 kern.rpc
 --------
 
-JSON-over-HTTP RPC for the Kern node. Endpoints loosely follow the Tezos
-RPC structure to keep the cognitive load low for anyone coming from
-Tezos.
+JSON-over-HTTP RPC for the Kern node. Endpoints use a flat, predictable
+`/chain/...` namespace so that wallets, explorers and tooling can target
+them without ceremony.
+
+The injection endpoint is write-facing and therefore guarded: a per-client
+fixed-window rate limiter sheds abusive request volume, and mempool
+admission is bounded per sender and globally (see
+`docs/mempool-rpc-hardening.md`).
 
 Endpoints:
 
@@ -28,7 +33,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING
+import time
+from collections import deque
+from typing import TYPE_CHECKING, Deque, Dict
 
 from aiohttp import web
 
@@ -40,8 +47,47 @@ if TYPE_CHECKING:
     from .node import Node
 
 
-def build_app(node: "Node") -> web.Application:
+# Default rate-limit budget for write-facing endpoints: at most
+# RATE_LIMIT_MAX requests per client identity within a RATE_LIMIT_WINDOW_S
+# sliding window. Reads are not limited.
+RATE_LIMIT_MAX = 100
+RATE_LIMIT_WINDOW_S = 10.0
+
+
+class RateLimiter:
+    """In-process sliding-window rate limiter keyed by client identity.
+
+    Deliberately dependency-free and per-process: it is a first line of
+    defence against trivial flooding of the injection endpoint, not a
+    substitute for an edge proxy / WAF in production deployments.
+    """
+
+    def __init__(self, max_events: int = RATE_LIMIT_MAX,
+                 window_s: float = RATE_LIMIT_WINDOW_S):
+        self.max_events = max_events
+        self.window_s = window_s
+        self._hits: Dict[str, Deque[float]] = {}
+
+    def allow(self, key: str, now: float | None = None) -> bool:
+        now = time.monotonic() if now is None else now
+        dq = self._hits.setdefault(key, deque())
+        cutoff = now - self.window_s
+        while dq and dq[0] < cutoff:
+            dq.popleft()
+        if len(dq) >= self.max_events:
+            return False
+        dq.append(now)
+        return True
+
+
+def build_app(
+    node: "Node",
+    rate_limit_max: int = RATE_LIMIT_MAX,
+    rate_limit_window_s: float = RATE_LIMIT_WINDOW_S,
+) -> web.Application:
     app = web.Application()
+    limiter = RateLimiter(rate_limit_max, rate_limit_window_s)
+    app["rate_limiter"] = limiter
 
     async def head(_req: web.Request) -> web.Response:
         h = node.chain.head
@@ -87,6 +133,13 @@ def build_app(node: "Node") -> web.Application:
         return web.json_response({"address": addr, **c})
 
     async def inject_transaction(req: web.Request) -> web.Response:
+        client = req.remote or "unknown"
+        if not limiter.allow(client):
+            return web.json_response(
+                {"error": "rate limit exceeded"},
+                status=429,
+                headers={"Retry-After": str(int(rate_limit_window_s))},
+            )
         body = await req.json()
         try:
             tx = Transaction.from_dict(body)
@@ -94,8 +147,13 @@ def build_app(node: "Node") -> web.Application:
             return web.json_response({"error": f"malformed transaction: {e}"}, status=400)
         if not tx.verify_signature():
             return web.json_response({"error": "invalid signature"}, status=400)
-        node.storage.add_to_mempool(tx)
-        # Broadcast to peers.
+        admitted = node.storage.add_to_mempool(tx)
+        if not admitted:
+            return web.json_response(
+                {"error": "mempool full or per-sender limit reached"},
+                status=429,
+            )
+        # Broadcast to peers only once the tx is accepted locally.
         if node.network is not None:
             asyncio.create_task(node.network.broadcast_tx(tx.to_dict()))
         return web.json_response({"hash": tx.hash_hex()})
