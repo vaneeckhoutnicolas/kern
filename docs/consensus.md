@@ -1,6 +1,6 @@
 # Consensus
 
-Kern uses a simplified variant of **Tenderbake**, a BFT consensus algorithm in the four-phase family. This document describes the protocol as designed; the reference implementation in [`consensus.py`](../kern/consensus.py) implements its single-validator collapse.
+Kern uses a simplified BFT consensus algorithm in the four-phase family (propose, prevote, precommit, commit). This document describes the protocol as designed; the reference implementation in [`consensus.py`](../kern/consensus.py) implements its single-validator collapse.
 
 ## Goals
 

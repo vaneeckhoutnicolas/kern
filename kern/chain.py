@@ -577,7 +577,7 @@ def _apply_slash_equivocation(state: dict, tx: Transaction) -> ApplyResult:
 
     # v1.0-rc: proportional slashing of delegators. If the equivocator has
     # delegators, they share the slash penalty in proportion to their
-    # delegated balance. This is the Tezos "skin in the game" property —
+    # delegated balance. This enforces the "skin in the game" property —
     # delegators can't earn baking yield without exposure to the
     # validator's misconduct.
     delegator_slashes = {}

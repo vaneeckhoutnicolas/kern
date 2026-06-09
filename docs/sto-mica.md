@@ -31,7 +31,7 @@ This document is the design rationale and integration guide for the three Skald 
 
 ## 1. The compliance gap that Skald closes
 
-In current EU practice, MiCA compliance is enforced through:
+In current EU practice, compliance with the EU securities regime is enforced through:
 
 1. **Pre-launch white paper review** by a competent authority (FSMA in Belgium, AMF in France, etc.)
 2. **Annual audit** by an external auditor (Big 4 typically) confirming ongoing compliance with the prospectus and applicable regulations
@@ -59,12 +59,12 @@ Skald doesn't replace auditors entirely — they still verify that the contract 
 
 ## 2. Regulatory articles encoded as Skald invariants
 
-> **Note (per the scope correction above):** the article *numbers* in this section were written against MiCA in an earlier draft. For a security token the substantive obligation is real but the citation should read against the securities regime — e.g. market-abuse/blackout → **MAR**, asset segregation → **MiFID II Art. 16 / AIFMD Art. 21**, prospectus/whitepaper → **Prospectus Regulation**. The invariant *mechanics* below are unchanged; treat the statute labels as illustrative pending counsel review.
+> **Note:** each obligation below is cited against the *securities* regime that actually governs a financial instrument — prospectus/admission → **Prospectus Regulation**, asset segregation → **MiFID II Art. 16(8)–(9) / AIFMD Art. 21**, market-abuse/blackout → **MAR**. The article numbers are illustrative and remain subject to counsel review; the invariant *mechanics* are the point and are framework-independent.
 
 
-### MiCA Article 14 — Whitepaper / prospectus requirements
+### Prospectus Regulation — Prospectus / admission document
 
-> *Issuers of asset-referenced tokens or e-money tokens must publish a crypto-asset white paper before offering tokens to the public, and that white paper must be reviewed by the competent authority.*
+> *An issuer offering transferable securities to the public must publish a prospectus approved by the competent authority before the offer, unless an exemption applies (Regulation (EU) 2017/1129).*
 
 **Skald encoding:**
 
@@ -80,7 +80,7 @@ invariant prospectus_whitepaper_before_issuance {
 }
 
 entry buy_tokens(token_amount: int) {
-    require whitepaper_registered with "whitepaper not registered (MiCA Art. 14)";
+    require whitepaper_registered with "prospectus not registered (Prospectus Regulation)";
     ...
 }
 ```
@@ -89,9 +89,9 @@ The invariant guarantees that the *total state of the chain* cannot evolve such 
 
 The pre-condition on the entry point is technically redundant given the invariant (any violation would revert the transaction), but it gives a better error message to a non-compliant caller.
 
-### MiCA Article 50 — Segregation of client assets
+### MiFID II Art. 16(8)–(9) / AIFMD Art. 21 — Segregation of client assets
 
-> *Crypto-asset service providers must hold client crypto-assets and funds segregated from their own crypto-assets and funds. They must ensure that client assets cannot be used for the provider's own account.*
+> *An investment firm must safeguard client funds and instruments, holding them segregated from its own; a fund's assets must be entrusted to an independent depositary and may not be used for the manager's own account.*
 
 **Skald encoding:**
 
@@ -113,9 +113,9 @@ invariant mifid_art16_release_requires_authorization {
 
 The issuer cannot drain investor funds. The path from `funds_raised_mukrn` to the issuer's working capital goes through a regulator-authorized release event. The custodian role is the only address that can execute the release.
 
-### MiCA Article 88 — Market abuse prevention
+### MAR — Market abuse prevention
 
-> *Persons in possession of inside information about asset-referenced tokens or e-money tokens shall not unlawfully disclose that information or use it to acquire or dispose of such tokens.*
+> *Persons in possession of inside information must not unlawfully disclose it or use it to acquire or dispose of the financial instruments to which it relates (Regulation (EU) 596/2014).*
 
 **Skald encoding:**
 
@@ -125,7 +125,7 @@ storage {
 }
 
 entry attempt_transfer(token_amount: int, current_level: int) {
-    require !blackout_active with "transfer blocked: blackout window (MiCA Art. 88)";
+    require !blackout_active with "transfer blocked: blackout window (MAR)";
     ...
 }
 ```
@@ -215,7 +215,7 @@ The compliance oracle reads off-chain trade execution reports, verifies the best
 |---|---|---|---|
 | **Target deal size** | €5M-50M | €50M-500M | €10M-100M |
 | **Issuer profile** | Tech scale-up | Established financial institution | Real estate fund / SPV |
-| **Compliance frameworks** | MiCA only | MiCA + AIFMD + MiFID II | MiCA + national real estate law |
+| **Compliance frameworks** | Prospectus Reg + MiFID II + MAR | AIFMD + MiFID II + MAR | AIFMD + national real-estate law |
 | **NAV publishing** | Not required | Required, with staleness SLA | Annual valuation required |
 | **Redemption** | Lock-up + exit event | Per-NAV redemption | Secondary market or property sale |
 | **Custody** | Issuer-multisig or third-party | Independent depositary mandatory | Depositary + notary (for title) |
@@ -328,7 +328,7 @@ The storage layout names the invariants explicitly (`prospectus_whitepaper_befor
 
 ```bash
 # Is the STO compliant right now?
-curl -s $KERN_RPC/chain/view/$STO_CONTRACT/is_mica_compliant
+curl -s $KERN_RPC/chain/view/$STO_CONTRACT/is_compliant
 # {"result": true}
 
 # How much has been raised? Distributed? Released?
@@ -357,7 +357,7 @@ If anomalies appear (e.g., the KYC provider issued equivocating attestations), t
 A regulator (e.g., FSMA in Belgium) reviewing whether to approve an STO on Kern can be presented with:
 
 1. **The Skald source file** (one PDF, 200-300 lines, human-readable)
-2. **A mapping table** (5 lines) from MiCA articles to the contract's `invariant` declarations
+2. **A mapping table** (5 lines) from the applicable securities-law obligations to the contract's `invariant` declarations
 3. **A test suite** demonstrating that the type checker accepts the contract
 4. **An attestation policy** describing which oracles provide which attestations and with what bonds
 
