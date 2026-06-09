@@ -53,6 +53,11 @@ if TYPE_CHECKING:
 RATE_LIMIT_MAX = 100
 RATE_LIMIT_WINDOW_S = 10.0
 
+# Read endpoints get their own, more generous budget: legitimate polling
+# (block explorers, Prometheus scrapes) must not be throttled, but a GET
+# flood — cheaper for an attacker than the write path — should still be shed.
+READ_RATE_LIMIT_MAX = 600
+
 
 class RateLimiter:
     """In-process sliding-window rate limiter keyed by client identity.
@@ -80,14 +85,46 @@ class RateLimiter:
         return True
 
 
+def make_read_throttle(read_limiter: "RateLimiter", window_s: float, exempt: set):
+    """Build an aiohttp middleware that rate-limits GET requests per client.
+
+    Non-GET requests pass through untouched (the write path does its own,
+    stricter limiting inside ``inject_transaction``). Paths in ``exempt`` —
+    typically the liveness endpoint — are never throttled, so a ``429`` can
+    never be mistaken for an unhealthy node by a load balancer or monitor.
+    """
+    @web.middleware
+    async def throttle_reads(request: web.Request, handler):
+        if request.method == "GET" and request.path not in exempt:
+            client = request.remote or "unknown"
+            if not read_limiter.allow(client):
+                return web.json_response(
+                    {"error": "rate limit exceeded"},
+                    status=429,
+                    headers={"Retry-After": str(int(window_s))},
+                )
+        return await handler(request)
+
+    return throttle_reads
+
+
 def build_app(
     node: "Node",
     rate_limit_max: int = RATE_LIMIT_MAX,
     rate_limit_window_s: float = RATE_LIMIT_WINDOW_S,
+    read_rate_limit_max: int = READ_RATE_LIMIT_MAX,
 ) -> web.Application:
     app = web.Application()
+    # Write path (transaction injection): a strict budget — see inject_transaction.
     limiter = RateLimiter(rate_limit_max, rate_limit_window_s)
     app["rate_limiter"] = limiter
+    # Read path (every GET endpoint): a separate, more generous budget applied
+    # as a middleware, with the liveness endpoint exempt.
+    read_limiter = RateLimiter(read_rate_limit_max, rate_limit_window_s)
+    app["read_rate_limiter"] = read_limiter
+    app.middlewares.append(
+        make_read_throttle(read_limiter, rate_limit_window_s, {"/chain/health"})
+    )
 
     async def head(_req: web.Request) -> web.Response:
         h = node.chain.head
@@ -159,9 +196,13 @@ def build_app(
         return web.json_response({"hash": tx.hash_hex()})
 
     async def mempool(_req: web.Request) -> web.Response:
-        txs = node.storage.drain_mempool(max_n=10_000)
+        # Bound per-request work: report the true mempool size, but serialise
+        # only a capped slice of hashes so this read cannot be turned into an
+        # amplification vector (previously it drained up to 10,000 rows/call).
+        txs = node.storage.drain_mempool(max_n=1000)
         return web.json_response({
-            "size": len(txs),
+            "size": node.storage.mempool_size(),
+            "returned": len(txs),
             "hashes": [tx.hash_hex() for tx in txs],
         })
 

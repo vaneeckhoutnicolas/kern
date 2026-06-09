@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from kern.crypto import KernKeypair
-from kern.rpc import RateLimiter
+from kern.rpc import RateLimiter, make_read_throttle
 from kern.storage import Storage
 from kern.transaction import make_transfer
 
@@ -104,3 +104,56 @@ def test_sender_column_migration_on_legacy_db():
         make_transfer(alice, recipient=dest, amount=1, nonce=0)
     ) is True
     assert st._mempool_count_for_sender(alice.address) == 1
+
+
+# --- GET read-throttle middleware ------------------------------------------
+
+def _fake_req(path, method="GET", remote="1.1.1.1"):
+    from types import SimpleNamespace
+    return SimpleNamespace(method=method, path=path, remote=remote)
+
+
+def _run(coro):
+    import asyncio
+    return asyncio.new_event_loop().run_until_complete(coro)
+
+
+async def _ok(_req):
+    from aiohttp import web
+    return web.json_response({"ok": True})
+
+
+def test_read_throttle_sheds_get_flood():
+    rl = RateLimiter(max_events=3, window_s=10.0)
+    mw = make_read_throttle(rl, 10.0, {"/chain/health"})
+
+    async def scenario():
+        codes = []
+        for _ in range(4):
+            r = await mw(_fake_req("/chain/head"), _ok)
+            codes.append(r.status)
+        # First three GETs from this client pass, the fourth is shed.
+        assert codes == [200, 200, 200, 429]
+        # Liveness is exempt no matter what.
+        assert (await mw(_fake_req("/chain/health"), _ok)).status == 200
+        # A different client has its own budget.
+        assert (await mw(_fake_req("/chain/head", remote="2.2.2.2"), _ok)).status == 200
+        # POST (the write path) is not touched by the read middleware.
+        assert (await mw(_fake_req("/chain/inject_transaction", method="POST"), _ok)).status == 200
+
+    _run(scenario())
+
+
+def test_read_throttle_exempt_path_never_consumes_budget():
+    rl = RateLimiter(max_events=1, window_s=10.0)
+    mw = make_read_throttle(rl, 10.0, {"/chain/health"})
+
+    async def scenario():
+        # Hammering the exempt path must never trip the limiter for real reads.
+        for _ in range(10):
+            assert (await mw(_fake_req("/chain/health"), _ok)).status == 200
+        # The budget for non-exempt GETs is still intact (1 allowed, then shed).
+        assert (await mw(_fake_req("/chain/head"), _ok)).status == 200
+        assert (await mw(_fake_req("/chain/head"), _ok)).status == 429
+
+    _run(scenario())
