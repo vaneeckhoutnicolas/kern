@@ -46,7 +46,7 @@ kern-node = "kern.node:main"
 heimdall = "kern_explorer.app:main"
 
 [build-system]
-requires = ["setuptools>=82.0.1", "wheel"]
+requires = ["setuptools>=84.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
