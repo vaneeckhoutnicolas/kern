@@ -16,7 +16,7 @@ classifiers = [
 ]
 dependencies = [
     "pynacl>=1.6.2",
-    "aiohttp>=3.14.1",
+    "aiohttp>=3.14.3",
     "py_ecc>=8.0.0",
 ]
 
