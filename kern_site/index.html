@@ -628,6 +628,11 @@
       background: linear-gradient(to right, transparent, rgba(194, 136, 94, 0.04));
     }
     .comparison tbody tr:last-child td { border-bottom: 0; }
+    .comparison .comparison-note {
+      margin-top: var(--sp-2, 0.75rem);
+      font-size: 0.8125rem;
+      color: var(--ink-muted);
+    }
 
     /* ===================================================================
        Roadmap
@@ -1075,7 +1080,7 @@
       </aside>
     </div>
     <div class="hero-meta reveal" data-delay="4">
-      <span class="item">1004 tests passing</span>
+      <span class="item">1006 tests passing</span>
       <span class="item">~33 000 LOC reference impl</span>
       <span class="item">Apache-2.0 · open source</span>
       <span class="item pending">Foundation — establishing</span>
@@ -1096,8 +1101,8 @@
     <div class="three-up">
       <div class="item">
         <span class="ord">01 / Finality</span>
-        <h3>Deterministic, in two seconds.</h3>
-        <p>Three-phase BFT consensus. One-second block time, two-second finality. No probabilistic reorganizations. Validators stake KRN; rewards adapt to participation.</p>
+        <h3>Deterministic, by design.</h3>
+        <p>Three-phase BFT consensus. Designed for one-second blocks and two-second finality, not yet measured on a network of independent operators. No probabilistic reorganizations. Validators stake KRN; rewards adapt to participation.</p>
       </div>
       <div class="item">
         <span class="ord">02 / Verification</span>
@@ -1205,7 +1210,7 @@
             <td>Probabilistic (~12 min)</td>
             <td>Deterministic (~30 s)</td>
             <td>Deterministic (~12 s)</td>
-            <td class="us">Deterministic (~2 s)</td>
+            <td class="us">Deterministic by design (target ~2 s)<sup>*</sup></td>
           </tr>
           <tr>
             <td class="feature">Staking model</td>
@@ -1251,6 +1256,7 @@
           </tr>
         </tbody>
       </table>
+      <p class="comparison-note"><sup>*</sup> Design target. The figures for the other chains are measured on their public networks; Kern's has not yet been measured on a network of independent operators.</p>
     </div>
 
     <div style="margin-top: var(--sp-6);">
@@ -1338,7 +1344,7 @@
         <div class="marker" aria-hidden="true"></div>
         <div class="phase-label">Phase 0 · Done</div>
         <h4>Reference impl</h4>
-        <p>v1.1-rc: 4 verticals, 1004 tests, Heimdall explorer.</p>
+        <p>v1.1-rc: 4 verticals, 1006 tests, Heimdall explorer.</p>
       </div>
       <div class="phase current">
         <div class="marker" aria-hidden="true"></div>

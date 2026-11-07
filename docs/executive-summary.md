@@ -32,7 +32,7 @@ Plus, shipping in v1.1-rc:
 
 | Property                          | Ethereum L1   | Tezos         | Solana        | **Kern**     |
 |-----------------------------------|---------------|---------------|---------------|--------------|
-| Finality                          | Probabilistic (~12 min) | Deterministic (~30s) | Deterministic (~12s) | **Deterministic (~2s)** |
+| Finality                          | Probabilistic (~12 min) | Deterministic (~30s) | Deterministic (~12s) | **Deterministic by design (target ~2s, not yet measured on an independent network)** |
 | Consensus                         | PoS (Casper)  | Tenderbake    | PoH + PoS     | **Tenderbake-lite BFT + bonded PoS** |
 | Block time                        | 12 s          | 8–15 s        | 0.4 s         | **1 s**      |
 | On-chain governance               | No            | Yes           | No            | **Yes (dual track)** |
