@@ -822,7 +822,7 @@ Quick start to run Kern locally:
 git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
 cd kern
 pip install -e ".[dev,explorer,docs]"
-pytest tests/                # 969 tests should pass in about 2 minutes
+pytest tests/                # 974 tests should pass in about 2 minutes
 python networks/devnet_bootstrap.py    # local 3-validator devnet
 python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 ```

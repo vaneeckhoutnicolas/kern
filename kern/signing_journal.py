@@ -60,7 +60,9 @@ proposal, or a validated proposal from another validator) is therefore
 appended to a second file, `signing_journal.blocks.jsonl`, and synced to
 disk BEFORE any signature over it. The node restores these blocks at
 start. The block file only helps liveness: a missing or damaged line is
-skipped, never trusted.
+skipped, never trusted. Review of 84cbbcc: a final line cut by a crash is
+removed at start, and every append starts on a fresh line, so a cut
+record can never swallow the next block.
 
 The journal only protects against a crash. It is not a substitute for
 running one signing process per validator key.
@@ -252,10 +254,12 @@ class SigningJournal:
             return
         try:
             with open(self.blocks_path, "rb") as f:
-                lines = f.read().split(b"\n")
+                raw = f.read()
         except OSError as e:
             LOG.warning("signing journal: cannot read kept blocks (%s)", e)
             return
+        lines = raw.split(b"\n")
+        cut = bool(lines and lines[-1])     # no final newline: a write cut by a crash
         for line in lines:
             if not line.strip():
                 continue
@@ -268,6 +272,21 @@ class SigningJournal:
                     and isinstance(rec.get("block_hash"), str)
                     and isinstance(rec.get("block"), dict)):
                 self.block_records.append(rec)
+        if cut:
+            LOG.warning("signing journal: dropping a kept block cut by a crash")
+            self._rewrite(self.block_records, self.blocks_path)
+
+    def _ends_cleanly(self, path: str) -> bool:
+        """True if `path` is empty or ends with a newline."""
+        try:
+            with open(path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                if f.tell() == 0:
+                    return True
+                f.seek(-1, os.SEEK_END)
+                return f.read(1) == b"\n"
+        except FileNotFoundError:
+            return True
 
     def has_block(self, level: int, block_hash: str) -> bool:
         return any(r["level"] == level and r["block_hash"] == block_hash
@@ -280,6 +299,8 @@ class SigningJournal:
             return
         rec = {"level": level, "block_hash": block_hash, "block": block}
         line = json.dumps(rec, sort_keys=True, separators=(",", ":")) + "\n"
+        if not self._ends_cleanly(self.blocks_path):
+            line = "\n" + line             # never glue a record to a cut fragment
         with open(self.blocks_path, "a", encoding="utf-8", newline="\n") as f:
             f.write(line)
             f.flush()

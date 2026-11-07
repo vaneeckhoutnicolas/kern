@@ -90,6 +90,9 @@ LOG = logging.getLogger("kern.bft")
 MAX_LEVELS_AHEAD = 2        # accept levels min_level .. min_level + 2
 MAX_ROUND_DISTANCE = 8      # accept rounds within +/- 8 of the node's round
 MAX_ROUND_STATES = 256      # hard cap on RoundState objects kept
+# Review of 84cbbcc: proposal equivocation evidence is kept (not slashable
+# yet) but bounded; the oldest entries are dropped first.
+MAX_PROPOSAL_EVIDENCE = 256
 
 
 # ---------------------------------------------------------------------------
@@ -748,6 +751,7 @@ class BftEngine:
                     for e in self.proposal_evidence):
                 LOG.error("PROPOSAL EQUIVOCATION: %s at L%d R%d", ev.offender, level, round_)
                 self.proposal_evidence.append(ev)
+                del self.proposal_evidence[:-MAX_PROPOSAL_EVIDENCE]
         if state.proposed_block_hash is None:
             state.proposed_block_hash = block_hash
             state.proposal_msg = proposal_msg
@@ -942,6 +946,10 @@ class BftEngine:
             del self.states[k]
         for lvl in [lvl for lvl in self.levels if lvl < level]:
             del self.levels[lvl]
+        # Review of 84cbbcc: the deduplication keys of vote evidence below
+        # `level` are no longer needed (messages below min_level are dropped
+        # before reaching the engine).
+        self._evidence_keys = {k for k in self._evidence_keys if k[2] >= level}
         self.min_level = max(self.min_level, level)
 
 

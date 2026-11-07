@@ -251,3 +251,20 @@ Fix: every journal record carries `valid_qc`, the pre-endorsement certificate of
 
 Tests: `tests/test_phase_e_qc_persistence.py` (certificate in the ENDORSE record, whole-cluster restart able to propose the locked block again, control without the certificate, five kinds of bad certificate ignored, thirteen malformed journals refused, node refusing to sign with an untrusted journal, node restoring the certificate at start); 24 of its 26 tests fail on 3f2b200.
 
+### 10.7 Review of 84cbbcc: block file, conflicting proposals, evidence bounds
+
+A third review of the implementation found three more points, each confirmed with a test that fails on 84cbbcc.
+
+**P1, the block file could lose a block after a cut write.** The main journal removed a final line cut by a crash; the block file (`signing_journal.blocks.jsonl`) only skipped it. The next block was then appended right after the fragment, on the same line, and was lost at the following restart, although the node had treated it as kept on disk before signing. Fix: a cut final line is removed at start, and every append checks that the file ends with a newline and starts a fresh line otherwise.
+
+**P2, conflicting proposals consumed resources.** The proposer of a round could sign many different valid blocks for that round; the node validated each in full, kept it in memory and wrote it to disk before the engine saw the conflict (20 blocks, 20 full validations on 84cbbcc). Fix: the node records the first block seen for each (level, round), once its PROPOSE signature and proposer have been checked. A different block for the same (level, round) is not validated, stored or kept: the engine checks the PROPOSE signature and keeps both messages as proposal equivocation evidence, and the node relays the conflict once so that other nodes see it. Only the proposer selected for the round can occupy that slot, so nobody else can block a round this way. A re-proposal belongs to a later round and is not affected.
+
+**P2, evidence grew without bound.** The deduplication keys of vote evidence are now dropped with their level (`prune_below`); messages below the engine's window never reach it anyway. Proposal equivocation evidence, which is kept but not slashable yet, is capped at `MAX_PROPOSAL_EVIDENCE` (256) entries, oldest dropped first.
+
+**Clarifications requested by the review.**
+
+- *Malformed record versus invalid certificate.* These are two different cases. A malformed journal record (wrong format version, other chain, missing or mistyped field) makes the whole journal unreadable: the node moves it aside and does not sign at the level in progress (fail closed). A certificate (`valid_qc`) that is well formed but does not verify cryptographically, or names another level, round or block, is ignored on its own: the rest of the journal is used, the lock is kept, and only the ability to propose the locked block again is lost.
+- *Which validator set verifies a restored certificate.* The journal is restored for the level in progress, `head + 1`, and the certificate is verified against `Chain.validators`, the consensus set in the state after the head block. That is exactly the set that weighs the votes of that level (section 4, Phase C), so a certificate is never checked against the stake of another level.
+
+Tests: `tests/test_phase_e_hardening.py`; all five fail on 84cbbcc.
+
