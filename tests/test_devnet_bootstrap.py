@@ -12,6 +12,7 @@ the genesis is initialized with the node's own `init`."""
 
 import json
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,7 +29,7 @@ import devnet_bootstrap  # noqa: E402
 def _generate(out, n=3):
     devnet_bootstrap.build(out, n, initial_stake=1_000_000_000_000,
                            initial_balance=10**12, faucet_balance=10**15)
-    return json.loads((out / "docker-compose.yml").read_text())
+    return json.loads((out / "docker-compose.yml").read_text(encoding="utf-8"))
 
 
 def _node_commands(service):
@@ -85,3 +86,22 @@ def test_the_generated_genesis_initializes_a_node(tmp_path):
     rc = node_mod.main(["init", "--genesis", str(tmp_path / "devnet" / "genesis.json"),
                         "--data-dir", str(data)])
     assert rc == 0
+
+
+def test_the_generator_does_not_depend_on_the_platform_encoding(tmp_path):
+    """On Windows the default file encoding is cp1252, which cannot write
+    the arrows of the generated README: every run failed there with
+    UnicodeEncodeError. Python reports any file opened without an explicit
+    encoding as an EncodingWarning; turned into an error, it catches the
+    fault on any platform."""
+    code = ("import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+            "import devnet_bootstrap as d; "
+            "d.build(Path(sys.argv[2]), 3, 10**12, 10**12, 10**15)")
+    r = subprocess.run([sys.executable, "-X", "warn_default_encoding",
+                        "-W", "error::EncodingWarning", "-c", code,
+                        str(ROOT / "networks"), str(tmp_path / "devnet")],
+                       capture_output=True, text=True, encoding="utf-8")
+    assert r.returncode == 0, r.stderr
+    readme = (tmp_path / "devnet" / "README.md").read_text(encoding="utf-8")
+    assert "\u2192" in readme                            # the arrows are written
+

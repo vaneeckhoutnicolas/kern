@@ -48,7 +48,7 @@ def write_keypair(path: Path, seed_hex: str) -> dict:
         "seed_hex": seed_hex,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return data
 
 
@@ -91,7 +91,7 @@ def build(out_dir: Path, n_validators: int, initial_stake: int,
         "treasury_address": treasury["address"],
         "issuance_params": None,
     }
-    (out_dir / "genesis.json").write_text(json.dumps(genesis, indent=2))
+    (out_dir / "genesis.json").write_text(json.dumps(genesis, indent=2), encoding="utf-8")
 
     # Docker-compose. The image's entrypoint is `python -m kern.node`; each
     # service runs a shell instead, to initialize its data volume on first
@@ -136,7 +136,7 @@ def build(out_dir: Path, n_validators: int, initial_stake: int,
         "volumes": {f"baker{i}-data": {} for i in range(n_validators)},
     }
     (out_dir / "docker-compose.yml").write_text(
-        json.dumps(compose, indent=2)
+        json.dumps(compose, indent=2), encoding="utf-8"
     )
 
     # README
@@ -219,7 +219,7 @@ Devnet is for contributor use only. Tokens have no value. Reset freely.
 For the next step on the network track, see `docs/roadmap.md`
 (Previewnet ← v0.9 ← here).
 """
-    (out_dir / "README.md").write_text(readme)
+    (out_dir / "README.md").write_text(readme, encoding="utf-8")
     print(f"Devnet bootstrap written to {out_dir}/")
     print(f"  - {n_validators} validators + 1 faucet + 1 treasury account")
     print(f"  - docker-compose with RPC ports {base_rpc}..{base_rpc + n_validators - 1}")
