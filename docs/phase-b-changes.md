@@ -1,8 +1,11 @@
-# v1.1-rc Phase B: external audit fixes
+# v1.1-rc Phase B: fixes from external reviews
 
-Phase B fixes every finding of the two external reviews received in
-September 2026: a state-machine review (audit 1, ten findings) and a
-claims-versus-code review (audit 2, seven points). Several changes alter
+Phase B fixes every finding of the two independent external reviews
+received in September 2026: a state-machine review (ten findings) and a
+claims-versus-code review (seven points). In this document and in code
+comments they are labelled "audit 1" and "audit 2" for reference only:
+neither is a professional security audit, which remains a gating item
+before any public network (see [disclaimer.md](disclaimer.md)). Several changes alter
 consensus rules; they are listed for client implementers in
 [go-port-breakpoints.md](go-port-breakpoints.md) §7, and the invariants
 they protect are in [state-machine-invariants.md](state-machine-invariants.md).
