@@ -20,7 +20,7 @@
 
 ## Concept refresher (one paragraph)
 
-Kern uses **Liquid PoS baking delegation**: your KRN stays in your account, fully spendable, no LST derivative is minted, no lockup period. The validator you delegate to counts your balance toward their effective stake at reward-distribution time. You receive baking yield in proportion to your share of the validator's effective stake, minus the validator's commission (default 10%). For full mechanics see [staking.md](staking.md).
+Kern uses **bonded delegation**: the amount you delegate leaves your spendable balance and is locked with the validator you choose. No LST derivative is minted. Your bond counts toward that validator's consensus weight from the next epoch, and it is slashed if the validator misbehaves. When you undelegate, the bond stays locked (and slashable) for the unbonding period, 86 400 blocks by default, then returns to your balance. You receive baking yield in proportion to your share of the validator's effective stake, minus the validator's commission (default 10%). For full mechanics see [staking.md](staking.md).
 
 ---
 

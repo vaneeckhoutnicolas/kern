@@ -55,17 +55,18 @@ def _delegated_state():
     d = KernKeypair.from_seed(bytes([0x52]) * 32)
     state = empty_state()
     state["validators"] = [{"address": v.address, "pubkey": v.public_key_b58, "stake": 100}]
-    state["balances"] = {v.address: 0, d.address: 900}
-    state["delegations"] = {d.address: v.address}
+    state["balances"] = {v.address: 0, d.address: 0}
+    # Phase D: delegation is bonded; 900 is held in the delegation record.
+    state["delegations"] = {d.address: {"validator": v.address, "amount": 900}}
     return state, v, d
 
 
-def test_emission_ratio_counts_delegated_balances():
+def test_emission_ratio_counts_delegated_bonds():
     state, _v, _d = _delegated_state()
     assert _compute_staked(state) == 1_000
 
 
-def test_governance_weighs_delegated_balances_on_both_tracks():
+def test_governance_weighs_delegated_bonds_on_both_tracks():
     state, v, d = _delegated_state()
     eff = _governance_validator_set(state)
     assert eff == [{"address": v.address, "pubkey": v.public_key_b58, "stake": 1_000}]

@@ -136,7 +136,7 @@ Kern's reference implementation provides (a) through (f) as a coherent design. T
 **Kern is**:
 - A new Layer-1 protocol with native KRN token
 - A four-phase BFT consensus engine
-- A Liquid Proof-of-Stake delegation model (no LSTs, no lockups)
+- A bonded Proof-of-Stake delegation model (no LSTs; delegated KRN are locked and slashable, with an unbonding period)
 - The Skald contract language with declared, runtime-enforced invariants
 - An optimistic-rollup framework with EVM compatibility for application developers
 - A slashable attestation registry as a protocol primitive
@@ -727,7 +727,7 @@ Nine **setup guides** live in `docs/setup-*.md`. Each is role-targeted and assum
 | If you are... | Read | What it covers |
 |---|---|---|
 | A protocol contributor or someone reading the code | [`setup-developer.md`](setup-developer.md) | Clone, install dependencies, run tests, navigate the codebase, run a local devnet, modify Skald, build the docs site |
-| A KRN holder wanting to earn baking yield without running a node | [`setup-delegator.md`](setup-delegator.md) | Wallet setup, choosing a validator, delegating with no lockup, monitoring rewards, undelegating |
+| A KRN holder wanting to earn baking yield without running a node | [`setup-delegator.md`](setup-delegator.md) | Wallet setup, choosing a validator, delegating (bonded, with an unbonding period), monitoring rewards, undelegating |
 | Someone planning to operate a validator on Yggdrasil testnet or Midgard mainnet | [`setup-validator.md`](setup-validator.md) | Hardware requirements, key management (hot vs cold), node setup, monitoring, slashing avoidance, commission rate setup |
 | A dApp developer building on Kern (native Skald or EVM via rollup) | [`setup-dapp-developer.md`](setup-dapp-developer.md) | Toolchain (Hardhat/Foundry for EVM rollup; Skald CLI for native), local testing, deploying to devnet/testnet, frontend integration |
 | A team running an Optimistic Smart Rollup on Kern | [`setup-rollup-operator.md`](setup-rollup-operator.md) | Rollup framework, sequencer setup, state commitment posting, fraud proof bisection, forced inclusion handling |
@@ -821,7 +821,7 @@ Quick start to run Kern locally:
 git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
 cd kern
 pip install -e ".[dev,explorer,docs]"
-pytest tests/                # 845 tests should pass in ~20 seconds
+pytest tests/                # 857 tests should pass in ~20 seconds
 python networks/devnet_bootstrap.py    # local 3-validator devnet
 python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 ```

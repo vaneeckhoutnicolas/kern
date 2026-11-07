@@ -192,6 +192,8 @@ class Node:
         self._seen_blocks: Set[str] = set()
         self._seen_txs: Set[str] = set()
         self._seen_cons: Set[Tuple[str, int, int, str, str]] = set()
+        # Next nonce for this validator's own slashing reports (Phase D).
+        self._next_report_nonce: int = 0
         # Round management for the level currently being decided.
         self._round: int = chain.head.header.round + 1
         self._round_deadline: float = 0.0
@@ -256,6 +258,8 @@ class Node:
     def _refresh_engine(self) -> None:
         if self.bft is not None:
             self.bft.validator_set = self.chain.validators
+            self.bft.current_round = self._round
+            self.bft.min_level = max(self.bft.min_level, self.chain.height + 1)
 
     @staticmethod
     def _trim(seen: set) -> None:
@@ -399,7 +403,12 @@ class Node:
         for ev in self.bft.take_evidence():
             try:
                 kp = self.baker.keypair
-                nonce = self.chain.state.get("nonces", {}).get(kp.address, 0)
+                # Phase D: several reports can be filed before any of them
+                # is included; each needs its own nonce. Take the higher of
+                # the chain's nonce and the next one this node handed out.
+                nonce = max(self.chain.state.get("nonces", {}).get(kp.address, 0),
+                            self._next_report_nonce)
+                self._next_report_nonce = nonce + 1
                 tx = make_slash_consensus_equivocation(
                     kp, ev.msg_a.to_dict(), ev.msg_b.to_dict(), nonce=nonce,
                     chain_id=self.chain.state.get("chain_id"),

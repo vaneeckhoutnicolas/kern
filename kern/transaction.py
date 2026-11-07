@@ -456,19 +456,17 @@ def make_delegate_stake(
     nonce: int,
     fee: int = 2_000,
     gas_limit: int = 20_000,
+    amount: int = 0,
+    chain_id: Optional[str] = None,
 ) -> Transaction:
-    """Delegate the sender's stake (their liquid KRN balance) to a validator
-    for baking. Liquid PoS: no lock-up, no minimum, no transfer of custody.
-    The balance stays in the sender's account and remains spendable; what
-    changes is that the validator gets to count the balance toward their
-    effective stake at reward-distribution time.
+    """Bond `amount` mukrn from the sender's balance to a validator.
 
-    A sender can delegate to exactly one validator at a time. Calling
-    DELEGATE_STAKE again with a different validator switches the
-    delegation. Use UNDELEGATE_STAKE to stop delegating.
-
-    The validator must be in the active validator set; otherwise the
-    transaction fails."""
+    Phase D: delegation is bonded. The amount leaves the balance, counts
+    in the validator's consensus weight and reward share, and is slashed
+    with the validator. Delegating again to the same validator adds to the
+    bond; switching validator requires UNDELEGATE_STAKE first, after which
+    the bond stays locked (and slashable) for the unbonding period before
+    returning to the balance."""
     tx = Transaction(
         kind=OpKind.DELEGATE_STAKE,
         sender=sender_kp.address,
@@ -476,7 +474,9 @@ def make_delegate_stake(
         nonce=nonce,
         fee=fee,
         gas_limit=gas_limit,
+        amount=amount,
         params={"validator": validator},
+        chain_id=chain_id,
     )
     tx.sign(sender_kp)
     return tx

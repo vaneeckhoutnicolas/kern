@@ -116,11 +116,16 @@ def test_effective_stake_no_delegators_equals_own():
     assert effective_stake(state, "kn1v1") == 1000
 
 
-def test_effective_stake_counts_delegated_balances():
+def _b(validator, amount):
+    return {"validator": validator, "amount": amount}
+
+
+def test_effective_stake_counts_bonded_amounts_only():
+    """Phase D: bonded amounts count, liquid balances never do."""
     state = empty_state()
     state["validators"] = [{"address": "kn1v1", "pubkey": "pk", "stake": 1000}]
-    state["balances"] = {"kn1alice": 5000, "kn1bob": 3000}
-    state["delegations"] = {"kn1alice": "kn1v1", "kn1bob": "kn1v1"}
+    state["balances"] = {"kn1alice": 999_999, "kn1bob": 999_999}
+    state["delegations"] = {"kn1alice": _b("kn1v1", 5000), "kn1bob": _b("kn1v1", 3000)}
     assert effective_stake(state, "kn1v1") == 1000 + 5000 + 3000
 
 
@@ -130,8 +135,7 @@ def test_effective_stake_ignores_other_validators_delegators():
         {"address": "kn1v1", "pubkey": "pk", "stake": 1000},
         {"address": "kn1v2", "pubkey": "pk", "stake": 2000},
     ]
-    state["balances"] = {"kn1alice": 5000, "kn1bob": 3000}
-    state["delegations"] = {"kn1alice": "kn1v1", "kn1bob": "kn1v2"}
+    state["delegations"] = {"kn1alice": _b("kn1v1", 5000), "kn1bob": _b("kn1v2", 3000)}
     assert effective_stake(state, "kn1v1") == 1000 + 5000
     assert effective_stake(state, "kn1v2") == 2000 + 3000
 
@@ -139,10 +143,9 @@ def test_effective_stake_ignores_other_validators_delegators():
 def test_delegators_of_returns_pairs():
     state = empty_state()
     state["validators"] = [{"address": "kn1v1", "pubkey": "pk", "stake": 1000}]
-    state["balances"] = {"kn1alice": 5000, "kn1bob": 3000, "kn1carol": 0}
     state["delegations"] = {
-        "kn1alice": "kn1v1", "kn1bob": "kn1v1",
-        "kn1carol": "kn1v1",  # zero balance → excluded
+        "kn1alice": _b("kn1v1", 5000), "kn1bob": _b("kn1v1", 3000),
+        "kn1carol": _b("kn1v1", 0),  # nothing bonded → excluded
     }
     dels = delegators_of(state, "kn1v1")
     assert sorted(dels) == [("kn1alice", 5000), ("kn1bob", 3000)]
@@ -183,12 +186,21 @@ def _state_with_validator_and_delegator():
     return state, val_kp, del_kp
 
 
-def test_delegate_records_in_state():
+def test_delegate_bonds_the_amount():
     state, val_kp, del_kp = _state_with_validator_and_delegator()
-    tx = make_delegate_stake(del_kp, validator=val_kp.address, nonce=0)
+    before = state["balances"][del_kp.address]
+    tx = make_delegate_stake(del_kp, validator=val_kp.address, nonce=0, amount=400_000)
     result = apply_transaction(state, tx, baker=val_kp.address)
     assert result.ok, result.error
-    assert state["delegations"][del_kp.address] == val_kp.address
+    assert state["delegations"][del_kp.address] == _b(val_kp.address, 400_000)
+    assert state["balances"][del_kp.address] == before - 400_000 - tx.fee
+
+
+def test_delegate_without_amount_fails():
+    state, val_kp, del_kp = _state_with_validator_and_delegator()
+    r = apply_transaction(state, make_delegate_stake(del_kp, val_kp.address, nonce=0),
+                          baker=val_kp.address)
+    assert not r.ok and "amount" in r.error
 
 
 def test_delegate_to_non_validator_fails():
@@ -218,20 +230,35 @@ def test_delegate_switches_validator():
         "stake": 500_000_000,
     })
     # First delegate to val1.
-    apply_transaction(state, make_delegate_stake(del_kp, val_kp.address, nonce=0), baker=val_kp.address)
-    # Then switch to val2.
-    result = apply_transaction(state, make_delegate_stake(del_kp, val2_kp.address, nonce=1), baker=val_kp.address)
-    assert result.ok
-    assert state["delegations"][del_kp.address] == val2_kp.address
+    assert apply_transaction(state, make_delegate_stake(del_kp, val_kp.address, nonce=0, amount=100),
+                             baker=val_kp.address).ok
+    # A direct switch is refused: the bond must unbond first.
+    result = apply_transaction(state, make_delegate_stake(del_kp, val2_kp.address, nonce=1, amount=100),
+                               baker=val_kp.address)
+    assert not result.ok and "undelegate first" in result.error
+    # After undelegating, a new bond to val2 is allowed.
+    assert apply_transaction(state, make_undelegate_stake(del_kp, nonce=2), baker=val_kp.address).ok
+    assert apply_transaction(state, make_delegate_stake(del_kp, val2_kp.address, nonce=3, amount=100),
+                             baker=val_kp.address).ok
+    assert state["delegations"][del_kp.address] == _b(val2_kp.address, 100)
 
 
-def test_undelegate_removes_delegation():
+def test_undelegate_starts_unbonding_then_releases():
+    from kern.chain import _release_matured_delegation_bonds
     state, val_kp, del_kp = _state_with_validator_and_delegator()
-    apply_transaction(state, make_delegate_stake(del_kp, val_kp.address, nonce=0), baker=val_kp.address)
-    assert del_kp.address in state["delegations"]
+    apply_transaction(state, make_delegate_stake(del_kp, val_kp.address, nonce=0, amount=500),
+                      baker=val_kp.address)
+    assert effective_stake(state, val_kp.address) == 1_000_000_000 + 500
     result = apply_transaction(state, make_undelegate_stake(del_kp, nonce=1), baker=val_kp.address)
     assert result.ok
     assert del_kp.address not in state["delegations"]
+    assert effective_stake(state, val_kp.address) == 1_000_000_000   # no weight while unbonding
+    bal = state["balances"][del_kp.address]
+    release = result.extra["release_level"]
+    _release_matured_delegation_bonds(state, release - 1)
+    assert state["balances"][del_kp.address] == bal                 # still locked
+    _release_matured_delegation_bonds(state, release)
+    assert state["balances"][del_kp.address] == bal + 500
 
 
 def test_undelegate_when_not_delegating_is_noop():
@@ -269,7 +296,7 @@ def test_delegator_receives_share_of_block_rewards():
     # adaptive curve would mint almost nothing; a supply of 100B keeps the
     # ratio near 10%, where issuance is meaningful.
     state["total_supply"] = 100_000_000_000
-    state["delegations"] = {del_kp.address: baker_kp.address}
+    state["delegations"] = {del_kp.address: _b(baker_kp.address, 9_000_000_000)}
 
     pre_del_balance = state["balances"][del_kp.address]
     pre_baker_balance = state["balances"][baker_kp.address]
@@ -328,7 +355,7 @@ def test_proportional_slashing_of_delegators():
     }
     state["nonces"] = {snitch_kp.address: 0}
     state["total_supply"] = 1_610_000_000
-    state["delegations"] = {del_kp.address: baker_kp.address}
+    state["delegations"] = {del_kp.address: _b(baker_kp.address, 500_000_000)}
 
     # Plant an equivocation record.
     state["governance"]["protocol"]["proposals"]["pid"] = {
@@ -346,10 +373,10 @@ def test_proportional_slashing_of_delegators():
     result = apply_transaction(state, tx, baker=baker_kp.address)
     assert result.ok, result.error
 
-    # Delegator was slashed by SLASHING_PERCENTAGE (30%) of their balance.
-    post_del_balance = state["balances"][del_kp.address]
-    expected_del_slash = pre_del_balance * SLASHING_PERCENTAGE // 100
-    assert post_del_balance == pre_del_balance - expected_del_slash
+    # Phase D: the BOND is slashed by SLASHING_PERCENTAGE (30%); the
+    # delegator's liquid balance is untouched.
+    assert state["delegations"][del_kp.address]["amount"] == 500_000_000 * (100 - SLASHING_PERCENTAGE) // 100
+    assert state["balances"][del_kp.address] == pre_del_balance
 
 
 if __name__ == "__main__":

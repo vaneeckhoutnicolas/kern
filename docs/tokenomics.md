@@ -177,11 +177,11 @@ A validator who voluntarily exits is subject to a 14-day unbonding period before
 
 Any account holding any KRN may delegate it to an active validator using the `DELEGATE_STAKE` transaction. The delegation has the following Liquid PoS properties:
 
-- **Custody stays with the delegator.** No KRN is transferred, no LST token is minted. The delegator's balance remains spendable at any time.
-- **No lockup.** Delegation can be changed (`DELEGATE_STAKE` to a different validator) or removed (`UNDELEGATE_STAKE`) at any time, no waiting period.
+- **Bonded, not liquid (since v1.1-rc Phase D).** The delegated amount leaves the delegator's balance and is held in a protocol-level bond. No LST token is minted.
+- **Unbonding period.** `UNDELEGATE_STAKE` starts an unbonding period (86 400 blocks by default) during which the bond is still slashable; switching validator requires undelegating first.
 - **No minimum.** Even 1 mukrn can be delegated. This is the main user-experience difference vs Ethereum's 32-ETH minimum.
 - **One validator at a time.** Each delegator picks one validator. To split, the delegator splits balances across multiple addresses.
-- **Effective stake = own stake + sum of delegated balances.** The validator's chance of being elected to propose a block, and their share of rewards, depends on this effective stake.
+- **Effective stake = bonded own stake + sum of bonded delegations.** The validator's chance of being elected to propose a block, and their share of rewards, depends on this effective stake.
 - **Reward split.** Block rewards earned by a validator are split: a `commission` (default 10%) goes to the validator off the top; the remainder is distributed to the validator and delegators in proportion to their share of effective stake.
 - **Slashing exposure.** If the validator is slashed for equivocation or double-baking, delegators are slashed proportionally to their delegated balance. This is "skin in the game" — picking a validator carelessly has real cost.
 

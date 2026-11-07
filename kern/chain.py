@@ -129,9 +129,22 @@ def initial_state_from_genesis(genesis: dict) -> dict:
     state = empty_state()
     for addr, balance in genesis.get("balances", {}).items():
         state["balances"][addr] = int(balance)
-    state["validators"] = list(genesis.get("validators", []))
+    state["validators"] = [dict(v) for v in genesis.get("validators", [])]
     # Total supply at genesis = sum of all pre-funded balances.
     state["total_supply"] = sum(state["balances"].values())
+    # Phase D: a validator's own stake is BONDED out of its balance. It
+    # used to be a number declared next to an equal, fully spendable
+    # balance, i.e. consensus weight with no collateral behind it.
+    # total_supply is unchanged: the stake is still part of the supply.
+    for v in state["validators"]:
+        stake = int(v.get("stake", 0))
+        bal = state["balances"].get(v["address"], 0)
+        if bal < stake:
+            raise ValueError(
+                f"genesis validator {v['address']} declares stake {stake} "
+                f"but only has a balance of {bal} to bond it from"
+            )
+        state["balances"][v["address"]] = bal - stake
     # Phase B (audit 1, finding 8): a declared total_supply must match the
     # balances it claims to sum. A genesis file whose two numbers disagree
     # is refused instead of being silently corrected.
@@ -148,8 +161,14 @@ def initial_state_from_genesis(genesis: dict) -> dict:
         raise ValueError("genesis chain_id must be a string")
     state["chain_id"] = chain_id
     # Phase C: optional epoch length, then the first consensus snapshot.
-    if genesis.get("epoch_blocks") is not None:
-        state["epoch_blocks"] = int(genesis["epoch_blocks"])
+    for key in ("epoch_blocks", "delegation_unbonding_blocks", "attestation_unbonding_blocks"):
+        if genesis.get(key) is not None:
+            state[key] = int(genesis[key])
+    # Phase D: bonded funds must stay slashable for at least as long as
+    # they can weigh in a consensus snapshot (one epoch), and slashing
+    # evidence is accepted for the unbonding period.
+    if delegation_unbonding_blocks(state) < epoch_blocks(state):
+        raise ValueError("delegation_unbonding_blocks must be >= epoch_blocks")
     state["consensus_set"] = compute_consensus_set(state)
     state["treasury_address"] = genesis.get("treasury_address")
     state["issuance_params"] = genesis.get("issuance_params")
@@ -743,48 +762,57 @@ def _apply_slash_equivocation(state: dict, tx: Transaction) -> ApplyResult:
 
 
 def _slash_validator(state: dict, offender: str, reporter: str) -> Optional[str]:
-    """Apply the validator slashing rule to `offender`: SLASHING_PERCENTAGE
-    of its own stake is removed, WHISTLEBLOWER_REWARD_PCT of that goes to
-    `reporter`, the rest is burned, and each delegator loses the same
-    percentage of its balance (burned). Returns an error string if nothing
-    can be slashed, else None. Shared by governance-vote equivocation and
-    consensus-vote equivocation."""
+    """Apply the validator slashing rule to `offender`.
+
+    - SLASHING_PERCENTAGE of the validator's own stake is removed;
+      WHISTLEBLOWER_REWARD_PCT of that goes to `reporter`, the rest is
+      burned.
+    - The same percentage of every amount BONDED to the offender, and of
+      every amount still UNBONDING from it, is burned (Phase D: these are
+      locked funds, so they cannot have left before the slash; liquid
+      balances are never touched).
+    - The offender's consensus weight drops at once.
+
+    Returns an error string if nothing at all can be slashed, else None.
+    Shared by governance-vote and consensus-vote equivocation."""
     validators = state.get("validators", [])
     val = next((v for v in validators if v["address"] == offender), None)
     if val is None:
         return "equivocator not a current validator"
 
-    stake = val.get("stake", 0)
-    slash_amount = stake * SLASHING_PERCENTAGE // 100
-    if slash_amount == 0:
+    own_slash = val.get("stake", 0) * SLASHING_PERCENTAGE // 100
+    reward = own_slash * WHISTLEBLOWER_REWARD_PCT // 100
+    burned = own_slash - reward
+
+    delegated_slash = 0
+    for entry in state.get("delegations", {}).values():
+        target, amount = _bond(entry)
+        if target == offender and amount > 0 and isinstance(entry, dict):
+            cut = amount * SLASHING_PERCENTAGE // 100
+            entry["amount"] = amount - cut
+            delegated_slash += cut
+    for entries in state.get("delegation_unbonding", {}).values():
+        for entry in entries:
+            if entry["validator"] == offender and entry["amount"] > 0:
+                cut = entry["amount"] * SLASHING_PERCENTAGE // 100
+                entry["amount"] -= cut
+                delegated_slash += cut
+
+    if own_slash == 0 and delegated_slash == 0:
         return "no stake to slash"
 
-    reward = slash_amount * WHISTLEBLOWER_REWARD_PCT // 100
-    burn = slash_amount - reward
-
-    # Validator stake is bonded outside balances, so the slashed amount
-    # leaves total_supply except for the whistleblower reward, which
-    # becomes a liquid balance.
-    val["stake"] -= slash_amount
+    val["stake"] -= own_slash
     _credit(state, reporter, reward)
-    state["total_supply"] = max(0, state.get("total_supply", 0) - burn)
+    state["total_supply"] = max(0, state.get("total_supply", 0) - burned - delegated_slash)
 
-    # Proportional slashing of delegators (skin in the game).
-    for del_addr, del_balance in delegators_of(state, offender):
-        del_slash = del_balance * SLASHING_PERCENTAGE // 100
-        if del_slash > 0:
-            actual = min(del_slash, state["balances"].get(del_addr, 0))
-            state["balances"][del_addr] = state["balances"].get(del_addr, 0) - actual
-            state["total_supply"] = max(0, state["total_supply"] - actual)
-
-    # Phase C: the offender's CONSENSUS weight drops at once, without
-    # waiting for the epoch boundary (it can only go down here).
+    # The offender's CONSENSUS weight drops at once, without waiting for
+    # the epoch boundary (it can only go down here).
     snap = state.get("consensus_set")
     if snap is not None:
         now = effective_stake(state, offender)
-        for entry in snap:
-            if entry["address"] == offender:
-                entry["stake"] = min(entry["stake"], now)
+        for item in snap:
+            if item["address"] == offender:
+                item["stake"] = min(item["stake"], now)
     return None
 
 
@@ -826,6 +854,10 @@ def _apply_slash_consensus_equivocation(state: dict, tx: Transaction) -> ApplyRe
         return ApplyResult(ok=False, error="votes not signed with the validator's registered key")
     if msg_a.level > _current_level(state):
         return ApplyResult(ok=False, error="evidence from a future level")
+    # Phase D: evidence is valid for as long as the funds behind the vote
+    # are guaranteed to be still locked: the delegation unbonding period.
+    if msg_a.level + delegation_unbonding_blocks(state) < _current_level(state):
+        return ApplyResult(ok=False, error="evidence expired (older than the unbonding period)")
 
     key = f"{offender}|{msg_a.kind.value}|{msg_a.level}|{msg_a.round}"
     done = state.setdefault("consensus_slashes", {})
@@ -847,83 +879,124 @@ def _apply_slash_consensus_equivocation(state: dict, tx: Transaction) -> ApplyRe
 DEFAULT_COMMISSION_PCT = 10
 
 
-def _apply_delegate_stake(state: dict, tx: Transaction) -> ApplyResult:
-    """Set the sender's stake delegation to the given validator.
+# Phase D: delegation is BONDED. Delegated KRN leave the delegator's
+# balance and are held in the delegation record; on undelegation they stay
+# locked, and slashable, for this many blocks before returning to the
+# balance. Consensus weight (effective_stake) counts bonded amounts only.
+# Before Phase D a delegation counted the delegator's LIQUID balance,
+# which could be moved away while still weighing in consensus (external
+# review, November 2026). Genesis override: state["delegation_unbonding_blocks"].
+DEFAULT_DELEGATION_UNBONDING_BLOCKS = 86_400
 
-    Effects:
-    - state["delegations"][sender] = validator
-    - If sender was already delegating to a different validator, the
-      delegation is switched (one delegation per delegator, latest wins).
-    - The validator must be in the active validator set.
-    - A delegator cannot delegate to themselves (that would be self-baking
-      which is just being a validator; if you want to be a validator,
-      register as one — delegation is the alternative to running a node).
+
+def delegation_unbonding_blocks(state: dict) -> int:
+    v = state.get("delegation_unbonding_blocks")
+    if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+        return v
+    return DEFAULT_DELEGATION_UNBONDING_BLOCKS
+
+
+def _bond(entry) -> Tuple[Optional[str], int]:
+    """(validator, bonded amount) of a delegation record. Records are
+    {"validator": addr, "amount": int}; a bare address (pre-Phase D
+    format) carries no bonded amount and therefore no weight."""
+    if isinstance(entry, dict):
+        return entry.get("validator"), int(entry.get("amount", 0))
+    if isinstance(entry, str):
+        return entry, 0
+    return None, 0
+
+
+def _apply_delegate_stake(state: dict, tx: Transaction) -> ApplyResult:
+    """Bond `tx.amount` KRN from the sender's balance to a validator.
+
+    - The amount leaves the sender's balance and is held in
+      state["delegations"][sender] = {"validator", "amount"}.
+    - Delegating again to the SAME validator adds to the bond. Switching
+      to another validator requires UNDELEGATE_STAKE first (the old bond
+      must go through its unbonding period).
+    - The validator must be in the active set; self-delegation is refused.
     """
     params = tx.params or {}
     validator = params.get("validator")
-    if not validator:
+    if not validator or not isinstance(validator, str):
         return ApplyResult(ok=False, error="missing validator address")
-
     if validator == tx.sender:
         return ApplyResult(ok=False, error="cannot delegate to self; register as a validator instead")
-
-    validators = state.get("validators", [])
-    if not any(v["address"] == validator for v in validators):
+    if not any(v["address"] == validator for v in state.get("validators", [])):
         return ApplyResult(ok=False, error=f"validator {validator} not in active set")
+    amount = tx.amount
+    if amount <= 0:
+        return ApplyResult(ok=False, error="delegation amount must be positive (tx.amount)")
 
     delegations = state.setdefault("delegations", {})
-    delegations[tx.sender] = validator
+    current, bonded = _bond(delegations.get(tx.sender))
+    if current is not None and current != validator and bonded > 0:
+        return ApplyResult(ok=False, error="already delegating to another validator; undelegate first")
+    err = _debit(state, tx.sender, amount)
+    if err:
+        return ApplyResult(ok=False, error=err)
+    delegations[tx.sender] = {"validator": validator, "amount": bonded + amount}
     return ApplyResult(ok=True, gas_used=tx.gas_limit,
-                       extra={"delegated_to": validator})
+                       extra={"delegated_to": validator, "bonded": bonded + amount})
 
 
 def _apply_undelegate_stake(state: dict, tx: Transaction) -> ApplyResult:
-    """Remove the sender's stake delegation. After this transaction the
-    sender's balance no longer counts toward any validator's effective
-    stake (and they no longer earn baking rewards, nor are exposed to
-    that validator's slashing risk)."""
+    """End the sender's delegation. The bond stops counting in consensus
+    and rewards at once, but stays locked and slashable for the unbonding
+    period, then returns to the sender's balance."""
     delegations = state.setdefault("delegations", {})
-    previous = delegations.pop(tx.sender, None)
+    validator, bonded = _bond(delegations.pop(tx.sender, None))
+    release_at = None
+    if validator is not None and bonded > 0:
+        release_at = _current_level(state) + delegation_unbonding_blocks(state)
+        queue = state.setdefault("delegation_unbonding", {})
+        queue.setdefault(str(release_at), []).append(
+            {"delegator": tx.sender, "validator": validator, "amount": bonded})
     return ApplyResult(ok=True, gas_used=tx.gas_limit,
-                       extra={"undelegated_from": previous})
+                       extra={"undelegated_from": validator, "unbonding": bonded,
+                              "release_level": release_at})
+
+
+def _release_matured_delegation_bonds(state: dict, level: int) -> None:
+    """Return unbonded delegations whose period ends at or before `level`.
+    Deterministic: ascending release level, then insertion order."""
+    queue = state.get("delegation_unbonding")
+    if not queue:
+        return
+    for key in sorted(int(k) for k in queue if int(k) <= level):
+        for entry in queue.pop(str(key)):
+            if entry["amount"] > 0:
+                _credit(state, entry["delegator"], entry["amount"])
 
 
 def effective_stake(state: dict, validator_address: str) -> int:
-    """Compute the effective stake of a validator: own stake + sum of
-    balances of all addresses currently delegating to this validator.
+    """Own stake plus every amount currently BONDED to this validator.
 
-    Note: "balance" is the LIQUID balance of the delegator at the moment
-    of the call. Delegators do NOT lose custody — their KRN remains
-    spendable. The price of that is that the snapshot is taken at the
-    moment effective_stake() is called (i.e., per block at reward time)
-    so a delegator who drains their account just before reward
-    distribution forfeits that block's yield."""
-    validators = state.get("validators", [])
+    Phase D: only locked, slashable funds count. A delegator's liquid
+    balance never does; unbonding amounts no longer do either (they remain
+    slashable but carry no weight)."""
     own = 0
-    for v in validators:
+    for v in state.get("validators", []):
         if v["address"] == validator_address:
             own = v.get("stake", 0)
             break
     delegated = 0
-    delegations = state.get("delegations", {})
-    balances = state.get("balances", {})
-    for delegator_addr, target in delegations.items():
+    for entry in state.get("delegations", {}).values():
+        target, amount = _bond(entry)
         if target == validator_address:
-            delegated += balances.get(delegator_addr, 0)
+            delegated += amount
     return own + delegated
 
 
 def delegators_of(state: dict, validator_address: str) -> list:
-    """Return the list of (delegator_address, delegated_balance) tuples
-    currently delegating to the given validator."""
-    delegations = state.get("delegations", {})
-    balances = state.get("balances", {})
+    """(delegator_address, bonded_amount) for every positive bond to the
+    given validator, in record order."""
     result = []
-    for delegator_addr, target in delegations.items():
-        if target == validator_address:
-            bal = balances.get(delegator_addr, 0)
-            if bal > 0:
-                result.append((delegator_addr, bal))
+    for delegator_addr, entry in state.get("delegations", {}).items():
+        target, amount = _bond(entry)
+        if target == validator_address and amount > 0:
+            result.append((delegator_addr, amount))
     return result
 
 
@@ -1288,8 +1361,10 @@ def apply_block(state: dict, block: Block) -> Tuple[dict, List[ApplyResult]]:
         # Block rewards are credited AFTER transaction processing so that they
         # appear in the post-block state_root commitment.
         _apply_block_rewards(new_state, block)
-        # Release attestation bonds whose unbonding period has ended.
+        # Release attestation bonds and delegation bonds whose unbonding
+        # period has ended.
         _release_matured_attestation_bonds(new_state, block.header.level)
+        _release_matured_delegation_bonds(new_state, block.header.level)
         # Governance tick: advance any in-flight proposals and apply activations.
         _apply_governance_tick(new_state, block.header.level)
         # Phase C: refresh the consensus validator snapshot at epoch boundaries.

@@ -14,6 +14,9 @@ Notation: `B` = `state["balances"]`, `A` = `state["attestations"]`,
 S == sum(B.values())
    + sum(a["bond"] for a in A.values())
    + sum(escrowed governance bonds)
+   + sum(v["stake"] for v in validators)            # bonded own stake (Phase D)
+   + sum(d["amount"] for d in delegations)          # bonded delegations (Phase D)
+   + sum(e["amount"] for e in delegation_unbonding) # unbonding delegations (Phase D)
 ```
 
 Every mukrn is in exactly one place: a balance, a locked attestation bond,
@@ -60,7 +63,7 @@ and `tests/test_phase_b_precompiles.py`.
 ## 5. One view of stake
 
 ```
-effective_stake(v) = v.stake + sum(B[d] for d, target in delegations if target == v)
+effective_stake(v) = v.stake + sum(bond.amount for bond in delegations if bond.validator == v)
 staked             = sum(effective_stake(v) for v in validators)
 ```
 
@@ -103,3 +106,13 @@ block it certifies.
 
 Pinned by `tests/test_phase_c_bft_quorum.py` and
 `tests/test_phase_c_slashing_and_validator_set.py`.
+
+## 10. Weight is collateral
+
+Every unit of consensus weight is backed by funds that are locked and
+slashable: bonded own stake and bonded delegations. Liquid balances carry
+no weight. Funds that leave a bond stay slashable for the unbonding
+period, which is never shorter than an epoch, and slashing evidence is
+accepted for that same period.
+
+Pinned by `tests/test_phase_d_bonded_stake.py`.

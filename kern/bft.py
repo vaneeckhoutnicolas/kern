@@ -62,6 +62,15 @@ from .crypto import (
 
 LOG = logging.getLogger("kern.bft")
 
+# Phase D: bounds on the consensus state an engine keeps. A signed message
+# from a validator used to create a RoundState for ANY (level, round), so a
+# faulty validator could grow memory without limit (external review,
+# November 2026). Messages outside the window are dropped before any state
+# is created.
+MAX_LEVELS_AHEAD = 2        # accept levels min_level .. min_level + 2
+MAX_ROUND_DISTANCE = 8      # accept rounds within +/- 8 of the node's round
+MAX_ROUND_STATES = 256      # hard cap on RoundState objects kept
+
 
 # ---------------------------------------------------------------------------
 # Messages
@@ -291,6 +300,11 @@ class BftEngine:
     # handed to the node for on-chain submission (see take_evidence).
     pending_evidence: List["SlashingEvidence"] = field(default_factory=list)
     _evidence_keys: Set[Tuple[str, str, int, int]] = field(default_factory=set)
+    # Phase D: acceptance window. min_level is raised by prune_below; the
+    # node sets current_round each tick (None disables the round check,
+    # for library use without a driver).
+    min_level: int = 0
+    current_round: Optional[int] = None
 
     # ---------------------------------------------------------------- helpers
 
@@ -453,9 +467,24 @@ class BftEngine:
         LOG.debug("emitted PREENDORSE for L%d R%d hash=%s", level, round_, block_hash[:12])
         return outbound + self._advance(state)
 
+    def in_window(self, level: int, round_: int) -> bool:
+        """True if (level, round) is close enough to the node's position to
+        be worth keeping state for."""
+        if level < self.min_level or level > self.min_level + MAX_LEVELS_AHEAD:
+            return False
+        if self.current_round is not None and abs(round_ - self.current_round) > MAX_ROUND_DISTANCE:
+            return False
+        if (level, round_) not in self.states and len(self.states) >= MAX_ROUND_STATES:
+            return False
+        return True
+
     def on_message(self, msg: ConsensusMessage) -> List[ConsensusMessage]:
         """Process an incoming consensus message. Returns outbound messages
         to broadcast (typically: an endorsement once preendorse quorum is met)."""
+        if not self.in_window(msg.level, msg.round):
+            LOG.debug("dropped out-of-window consensus message L%d R%d from %s",
+                      msg.level, msg.round, msg.validator)
+            return []
         if not msg.verify_signature():
             LOG.warning("rejected unsigned/invalid consensus message from %s", msg.validator)
             return []
@@ -496,6 +525,7 @@ class BftEngine:
         to_drop = [k for k in self.states if k[0] < level]
         for k in to_drop:
             del self.states[k]
+        self.min_level = max(self.min_level, level)
 
 
 # ---------------------------------------------------------------------------
