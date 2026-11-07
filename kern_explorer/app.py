@@ -370,7 +370,8 @@ async def account_detail(address: str) -> str:
                     "tx_count_sent": 0, "tx_count_recv": 0,
                     "first_seen_level": None, "last_seen_level": None,
                 }
-            except KernRpcError:
+            except (KernRpcError, ValueError):
+                # ValueError: the address failed the client's path allowlist.
                 raise HTTPException(status_code=404, detail=f"Account {address} not found")
         account = _enrich_account(a)
         txs = [_enrich_tx(t) for t in txs_for_address(conn, address, 50)]

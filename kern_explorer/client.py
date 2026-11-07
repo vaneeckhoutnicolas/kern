@@ -22,9 +22,33 @@ Design choices:
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
+
+
+# Path-segment allowlists. Every value interpolated into an RPC URL path
+# must match one of these, then is percent-encoded with no safe
+# characters. This closes CodeQL py/partial-ssrf (alert #1): before, an
+# address taken from the explorer's /account/{address} route was pasted
+# into the URL as is, so "../", "?", "#" or "%2F" sequences could steer
+# the request to another path or query on the node RPC.
+_ADDRESS_RE = re.compile(r"kn1[1-9A-HJ-NP-Za-km-z]{30,40}")
+_HASH_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _safe_segment(value: Any, pattern: "re.Pattern[str]", what: str) -> str:
+    if not isinstance(value, str) or pattern.fullmatch(value) is None:
+        raise ValueError(f"invalid {what}")
+    return quote(value, safe="")
+
+
+def _safe_level(level: Any) -> str:
+    if isinstance(level, bool) or not isinstance(level, int) or level < 0:
+        raise ValueError("invalid block level")
+    return str(level)
 
 
 class KernRpcError(Exception):
@@ -85,22 +109,22 @@ class KernRpcClient:
 
     async def block(self, level: int) -> dict:
         """Return the full block at a given level."""
-        return await self._get(f"/chain/block/{level}")
+        return await self._get(f"/chain/block/{_safe_level(level)}")
 
     async def block_by_hash(self, block_hash: str) -> dict:
-        return await self._get(f"/chain/block/by_hash/{block_hash}")
+        return await self._get(f"/chain/block/by_hash/{_safe_segment(block_hash, _HASH_RE, 'block hash')}")
 
     async def balance(self, address: str) -> dict:
         """Return {balance: int} for an address (in mukrn)."""
-        return await self._get(f"/chain/balance/{address}")
+        return await self._get(f"/chain/balance/{_safe_segment(address, _ADDRESS_RE, 'address')}")
 
     async def nonce(self, address: str) -> dict:
-        return await self._get(f"/chain/nonce/{address}")
+        return await self._get(f"/chain/nonce/{_safe_segment(address, _ADDRESS_RE, 'address')}")
 
     async def contract(self, address: str) -> Optional[dict]:
         """Return contract code + storage, or None if no contract at this address."""
         try:
-            return await self._get(f"/chain/contract/{address}")
+            return await self._get(f"/chain/contract/{_safe_segment(address, _ADDRESS_RE, 'address')}")
         except KernRpcError as e:
             if e.status == 404:
                 return None
