@@ -2,7 +2,7 @@
 
 The Kern node exposes a JSON-over-HTTP API. All responses are JSON. All `kn1`/`kpk`/`ksig` strings are base58check-encoded.
 
-The default RPC port is `8732`. Examples assume `localhost:8732`.
+The default RPC port is `8732`, and the RPC listens on `127.0.0.1` unless the node is started with `--rpc-bind` ([running-a-node.md](running-a-node.md)). Examples assume `localhost:8732`.
 
 ---
 

@@ -29,6 +29,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
+import time
 from pathlib import Path
 
 import sys
@@ -76,6 +79,13 @@ def build(out_dir: Path, n_validators: int, initial_stake: int,
     balances[treasury["address"]] = 0  # filled by issuance
 
     genesis = {
+        "chain_id": "kern-devnet",
+        "timestamp": int(time.time()),
+        # Same placeholder convention as scripts/build_genesis.py: the
+        # genesis block is accepted because it matches this file.
+        "genesis_proposer": {"address": validators[0]["address"],
+                             "pubkey": validators[0]["pubkey"]},
+        "genesis_signature": "ksig" + "0" * 95,
         "balances": balances,
         "validators": validators,
         "treasury_address": treasury["address"],
@@ -83,38 +93,42 @@ def build(out_dir: Path, n_validators: int, initial_stake: int,
     }
     (out_dir / "genesis.json").write_text(json.dumps(genesis, indent=2))
 
-    # Docker-compose
+    # Docker-compose. The image's entrypoint is `python -m kern.node`; each
+    # service runs a shell instead, to initialize its data volume on first
+    # start and then start the node (`init` refuses, harmlessly, a volume
+    # that is already initialized). Inside the container the RPC listens on
+    # every interface so that the published port reaches it; the host
+    # publishes it on its own loopback only. The peer-to-peer port stays on
+    # the compose network.
     services = {}
     base_rpc = 18732
-    base_p2p = 19732
-    peer_list = ",".join(
-        f"baker{i}:19732" for i in range(n_validators)
-    )
+    rpc_port, p2p_port = 8732, 9732
+    repo_root = Path(__file__).resolve().parent.parent
+    context = os.path.relpath(repo_root, out_dir.resolve())
+    names = [f"baker{i}" for i in range(n_validators)]
 
-    for i in range(n_validators):
-        rpc_port = base_rpc + i
-        p2p_port = base_p2p + i
-        services[f"baker{i}"] = {
-            "build": {"context": "../..", "dockerfile": "docker/Dockerfile"},
-            "command": [
-                "python", "-m", "kern.node", "start",
-                "--data-dir", "/data",
-                "--rpc-port", "19732",  # internal port; host maps differently
-                "--p2p-port", "19732",
-                "--baker-key", f"/keys/baker{i}.json",
-                "--block-time", "1.0",
-                "--peers", peer_list.replace(f"baker{i}:19732", "").strip(","),
-            ],
+    for i, name in enumerate(names):
+        start = ["python", "-m", "kern.node", "start",
+                 "--data-dir", "/data",
+                 "--rpc-port", str(rpc_port), "--rpc-bind", "0.0.0.0",
+                 "--p2p-port", str(p2p_port),
+                 "--baker-key", f"/keys/{name}.json",
+                 "--block-time", "1.0"]
+        for other in names:
+            if other != name:
+                start += ["--peer", f"{other}:{p2p_port}"]
+        init = ["python", "-m", "kern.node", "init",
+                "--genesis", "/genesis.json", "--data-dir", "/data"]
+        services[name] = {
+            "build": {"context": context, "dockerfile": "docker/Dockerfile"},
+            "entrypoint": ["sh", "-c"],
+            "command": f"{shlex.join(init)}; exec {shlex.join(start)}",
             "volumes": [
-                f"./keys:/keys:ro",
-                f"baker{i}-data:/data",
-                f"./genesis.json:/genesis.json:ro",
+                "./keys:/keys:ro",
+                f"{name}-data:/data",
+                "./genesis.json:/genesis.json:ro",
             ],
-            "ports": [f"{rpc_port}:19732"],
-            "depends_on": [],
-            "environment": {
-                "KERN_GENESIS": "/genesis.json",
-            },
+            "ports": [f"127.0.0.1:{base_rpc + i}:{rpc_port}"],
         }
 
     compose = {
@@ -150,7 +164,8 @@ cd networks/devnet
 docker-compose up --build
 ```
 
-Each validator exposes its RPC on a different host port:
+Each validator exposes its RPC on a different port of this machine
+(published on 127.0.0.1 only):
 - baker0 → http://localhost:{base_rpc + 0}
 - baker1 → http://localhost:{base_rpc + 1}
 {"".join(f"- baker{i} → http://localhost:{base_rpc + i}\n" for i in range(2, n_validators))}

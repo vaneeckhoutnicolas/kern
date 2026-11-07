@@ -108,6 +108,11 @@ def make_read_throttle(read_limiter: "RateLimiter", window_s: float, exempt: set
     return throttle_reads
 
 
+# Typed application keys (aiohttp warns on plain string keys).
+RATE_LIMITER_KEY = web.AppKey("rate_limiter", RateLimiter)
+READ_RATE_LIMITER_KEY = web.AppKey("read_rate_limiter", RateLimiter)
+
+
 def build_app(
     node: "Node",
     rate_limit_max: int = RATE_LIMIT_MAX,
@@ -117,11 +122,11 @@ def build_app(
     app = web.Application()
     # Write path (transaction injection): a strict budget — see inject_transaction.
     limiter = RateLimiter(rate_limit_max, rate_limit_window_s)
-    app["rate_limiter"] = limiter
+    app[RATE_LIMITER_KEY] = limiter
     # Read path (every GET endpoint): a separate, more generous budget applied
     # as a middleware, with the liveness endpoint exempt.
     read_limiter = RateLimiter(read_rate_limit_max, rate_limit_window_s)
-    app["read_rate_limiter"] = read_limiter
+    app[READ_RATE_LIMITER_KEY] = read_limiter
     app.middlewares.append(
         make_read_throttle(read_limiter, rate_limit_window_s, {"/chain/health"})
     )

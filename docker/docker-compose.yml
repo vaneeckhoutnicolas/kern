@@ -21,11 +21,12 @@ services:
       - start
       - --data-dir=/data
       - --rpc-port=8732
+      - --rpc-bind=0.0.0.0
       - --p2p-port=9732
       - --baker-key=/keys/baker1.json
       - --block-time=1.0
     ports:
-      - "8731:8732"
+      - "127.0.0.1:8731:8732"
       - "9731:9732"
     volumes:
       - ../data/node1:/data
@@ -40,10 +41,11 @@ services:
       - start
       - --data-dir=/data
       - --rpc-port=8732
+      - --rpc-bind=0.0.0.0
       - --p2p-port=9732
       - --peer=node1:9732
     ports:
-      - "8732:8732"
+      - "127.0.0.1:8732:8732"
       - "9732:9732"
     volumes:
       - ../data/node2:/data
@@ -58,10 +60,11 @@ services:
       - start
       - --data-dir=/data
       - --rpc-port=8732
+      - --rpc-bind=0.0.0.0
       - --p2p-port=9732
       - --peer=node1:9732
     ports:
-      - "8733:8732"
+      - "127.0.0.1:8733:8732"
       - "9733:9732"
     volumes:
       - ../data/node3:/data

@@ -43,7 +43,7 @@ pip install -e ".[dev]"
 
 ```bash
 pytest tests/ -v
-# Expected: 992 passed, none skipped (v1.1-rc) — record exact counts in your audit notes
+# Expected: 1003 passed, none skipped (v1.1-rc) — record exact counts in your audit notes
 # Record the test run time and resource usage too
 
 python -c "import kern; print(kern.__file__)"

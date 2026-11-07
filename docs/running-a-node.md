@@ -65,6 +65,8 @@ python -m kern.node start \
 
 The node now produces a block every second. Block-time can be lowered (`--block-time 0.5`) for faster local testing.
 
+**Listening addresses.** The RPC listens on `127.0.0.1` by default, so only this machine can query it; `--rpc-bind` changes that (`0.0.0.0` for every interface, which a node inside a container needs for a published port, or one specific address). The peer-to-peer layer listens on every interface by default, since other nodes must reach it; `--p2p-bind` restricts it. Both options take an IPv4 or IPv6 address, not a host name. A node whose RPC listens beyond loopback logs a warning at start: put a reverse proxy and a firewall in front of it ([setup-validator.md](setup-validator.md)).
+
 ### 5. Query the node
 
 ```bash

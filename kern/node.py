@@ -26,6 +26,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import asyncio
 import json
 import logging
@@ -159,6 +160,13 @@ def load_chain(storage: Storage) -> Chain:
 # Node
 # ---------------------------------------------------------------------------
 
+# Listening addresses. The RPC answers anyone who reaches it (including the
+# transaction submission endpoint), so it stays on this machine unless the
+# operator opens it; peers must reach the peer-to-peer layer.
+DEFAULT_RPC_BIND = "127.0.0.1"
+DEFAULT_P2P_BIND = "0.0.0.0"
+
+
 class Node:
     def __init__(
         self,
@@ -170,6 +178,8 @@ class Node:
         p2p_port: int,
         peers: List[str],
         block_time: float,
+        rpc_host: str = DEFAULT_RPC_BIND,
+        p2p_host: str = DEFAULT_P2P_BIND,
     ):
         self.data_dir = data_dir
         self.chain = chain
@@ -177,6 +187,8 @@ class Node:
         self.baker = baker
         self.rpc_port = rpc_port
         self.p2p_port = p2p_port
+        self.rpc_host = rpc_host
+        self.p2p_host = p2p_host
         self.bootstrap_peers = peers
         self.block_time = block_time
         self.network: Optional[Network] = None
@@ -234,7 +246,7 @@ class Node:
 
     async def start(self) -> None:
         self.network = Network(
-            host="0.0.0.0",
+            host=self.p2p_host,
             port=self.p2p_port,
             on_block=self._on_block_msg,
             on_tx=self._on_tx_msg,
@@ -255,9 +267,13 @@ class Node:
         app = build_app(self)
         self._app_runner = web.AppRunner(app)
         await self._app_runner.setup()
-        site = web.TCPSite(self._app_runner, "0.0.0.0", self.rpc_port)
+        site = web.TCPSite(self._app_runner, self.rpc_host, self.rpc_port)
         await site.start()
-        LOG.info("RPC listening on 0.0.0.0:%d", self.rpc_port)
+        LOG.info("RPC listening on %s:%d", self.rpc_host, self.rpc_port)
+        if not ipaddress.ip_address(self.rpc_host).is_loopback:
+            LOG.warning("RPC reachable beyond this machine (%s): put a reverse proxy "
+                        "and a firewall in front of it (docs/setup-validator.md)",
+                        self.rpc_host)
 
         # Consensus driver (proposer + endorser duties).
         if self.baker is not None:
@@ -985,6 +1001,8 @@ def cmd_start(args: argparse.Namespace) -> int:
         p2p_port=args.p2p_port,
         peers=args.peer or [],
         block_time=args.block_time,
+        rpc_host=args.rpc_bind,
+        p2p_host=args.p2p_bind,
     )
 
     async def runner() -> None:
@@ -1003,7 +1021,15 @@ def cmd_start(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def _bind_address(value: str) -> str:
+    """An IPv4 or IPv6 address to listen on (not a host name, no port)."""
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an IP address: {value!r}") from None
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kern.node")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -1016,12 +1042,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_start.add_argument("--data-dir", required=True)
     p_start.add_argument("--rpc-port", type=int, default=8732)
     p_start.add_argument("--p2p-port", type=int, default=9732)
+    p_start.add_argument("--rpc-bind", type=_bind_address, default=DEFAULT_RPC_BIND,
+                         help="address the RPC listens on (default %(default)s, this "
+                              "machine only; 0.0.0.0 for every interface)")
+    p_start.add_argument("--p2p-bind", type=_bind_address, default=DEFAULT_P2P_BIND,
+                         help="address the peer-to-peer layer listens on (default "
+                              "%(default)s, every interface)")
     p_start.add_argument("--baker-key", default=None)
     p_start.add_argument("--peer", action="append", default=[])
     p_start.add_argument("--block-time", type=float, default=DEFAULT_BLOCK_TIME_S)
     p_start.set_defaults(func=cmd_start)
+    return parser
 
-    args = parser.parse_args(argv)
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
     return args.func(args)
 
 
