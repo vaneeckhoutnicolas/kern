@@ -90,7 +90,7 @@ What Kern ships, concretely:
 6. **A ZK-claims infrastructure** built on BN254 pairing precompiles for privacy-preserving compliance attestations, with four reference circuits described.
 7. **An Optimistic Smart Rollup framework** with multi-frame EVM, bisection-based fraud proofs, and forced inclusion.
 8. **Ten reference Skald contracts** spanning compliance-by-construction STOs (3 templates), public goods funding (QF + RPGF), oracle networks (generic + DeFi prices + schema marketplace), and didactic examples (vault, counter).
-9. **A complete documentation set** of 51 markdown files, including this whitepaper, nine role-specific setup guides (see §13), the four vertical specification documents, the API stability specification, the tokenomics specification, the governance specification, and the operational roadmap to mainnet.
+9. **A complete documentation set** of 68 markdown files, including this whitepaper, nine role-specific setup guides (see §13), the four vertical specification documents, the API stability specification, the tokenomics specification, the governance specification, and the operational roadmap to mainnet.
 10. **An internal security review** documenting seven findings (two Critical, two Major, two Medium, one Minor) all fixed prior to engaging the mandatory professional audit.
 
 The deliverables are reference-implementation-grade. Production deployment requires the professional audit (Phase 2 in the post-code roadmap), the Foundation incorporation (Phase 1), and the public testnet stability validation (Phase 3). See §12 for the security path and the [post-code roadmap](post-code-roadmap.md) for the full operational timeline.
