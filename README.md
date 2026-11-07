@@ -344,7 +344,7 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | **v1.0-rc** | Genesis 100M + Liquid PoS delegation + dynamic gas wired + real BN254 + slashing tx + API freeze | ✅ |
 | **v1.1-rc** | **Slashable attestations + STO securities templates + QF/RPGF + oracle network + ZK-claims** | **✅ (this version)** |
 | **v1.1-rc Phase A** | **Hardening: consensus on the wire (verified > 2/3 quorum on every networked block), strict ingress decoding, integer-only issuance, periodic snapshots + replay, catch-up sync, mypy clean** | **✅** |
-| **v1.1-rc Phase B** | **External audit fixes: exception boundary, attestation bond unbonding, current level, single delegation truth, chain_id enforcement, genesis checks, real Groth16 verifier, executed-step rollup challenges, portable precompiles ([details](docs/phase-b-changes.md))** | **✅ (this version)** |
+| **v1.1-rc Phase B** | **Fixes from two independent external reviews (not a professional security audit): exception boundary, attestation bond unbonding, current level, single delegation truth, chain_id enforcement, genesis checks, real Groth16 verifier, executed-step rollup challenges, portable precompiles ([details](docs/phase-b-changes.md))** | **✅ (this version)** |
 | kern-go | Go client in a sibling repo — this repo remains the executable specification; kern-go becomes the operator reference after differential testing ([details](docs/roadmap.md)) | 🔵 announced |
 | v1.0 | First stable release after audit cycle 1 | 🔵 |
 | Yggdrasil testnet | Public testnet, permissionless validators | 🔵 |
