@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face{font-family:"Fraunces";src:url("fonts/Fraunces.ttf");font-weight:300 900;font-style:normal;}
+  @font-face{font-family:"Instrument Sans";src:url("fonts/InstrumentSans.ttf");font-weight:400 700;font-style:normal;}
+  @font-face{font-family:"JetBrains Mono";src:url("fonts/JetBrainsMono.ttf");font-weight:400 600;font-style:normal;}
+  @font-face{font-family:"Noto Sans Runic";src:url("fonts/NotoSansRunic.ttf");font-weight:400;font-style:normal;}
+
+  :root{
+    --paper:#FAFAF7; --deep:#0E1A2B; --deep-soft:#16243A;
+    --ink:#0E1A2B; --ink-2:#3D4A5E; --ink-muted:#7A8595; --ink-faint:#B5BDC9;
+    --rule:#E5E1D8; --rule-strong:#C9C3B5;
+    --amber:#C2885E; --amber-deep:#8E5E3A; --moss:#5C7553; --inverse:#FAFAF7;
+    --serif:"Fraunces","Iowan Old Style",Georgia,serif;
+    --body:"Instrument Sans","Helvetica Neue",Arial,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,monospace;
+  }
+  @page{size:A4; margin:0;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{font-family:var(--body); color:var(--ink); background:var(--paper);
+        font-size:9.4pt; line-height:1.44; -webkit-font-smoothing:antialiased;}
+
+  .page{position:relative; width:210mm; min-height:297mm; padding:0; page-break-after:always; overflow:hidden;}
+  .page:last-child{page-break-after:auto;}
+  .pad{padding:11mm 15mm 0 15mm;}
+
+  /* ---------- masthead ---------- */
+  .masthead{background:var(--deep); color:var(--inverse); padding:11mm 15mm 8mm 15mm;}
+  .mast-top{display:flex; align-items:baseline; justify-content:space-between;}
+  .lockup{display:flex; align-items:baseline; gap:5mm;}
+  .rune{font-family:"Noto Sans Runic",var(--serif); font-size:30pt; color:var(--amber); line-height:1;}
+  .wordmark{font-family:var(--serif); font-weight:560; font-size:30pt; letter-spacing:.5px; line-height:1;}
+  .eyebrow{font-family:var(--mono); font-size:7.2pt; letter-spacing:2.4px; text-transform:uppercase; color:var(--amber);}
+  .mast-url{font-family:var(--mono); font-size:7.6pt; letter-spacing:1px; color:var(--ink-faint);}
+  .tagline{font-family:var(--serif); font-style:italic; font-weight:340; font-size:10.5pt; color:#C9D2DE; margin:5mm 0 4.5mm 0; max-width:150mm;}
+  .lede{font-family:var(--serif); font-weight:380; font-size:12.8pt; line-height:1.38; color:var(--inverse); max-width:165mm; margin:0;}
+  .lede b{font-weight:600; color:#fff;}
+
+  /* ---------- structure ---------- */
+  h2{font-family:var(--mono); font-size:7.6pt; letter-spacing:2.6px; text-transform:uppercase;
+     color:var(--amber-deep); margin:0 0 2.4mm 0; font-weight:600;
+     padding-bottom:1.6mm; border-bottom:1px solid var(--rule);}
+  h3{font-family:var(--serif); font-weight:600; font-size:11pt; color:var(--ink); margin:0 0 1mm 0;}
+  p{margin:0 0 2.4mm 0;}
+  .block{margin:0 0 5mm 0;}
+  .muted{color:var(--ink-2);}
+
+  /* five points */
+  .points{display:grid; grid-template-columns:1fr 1fr; gap:3mm 9mm;}
+  .pt{display:flex; gap:3.5mm;}
+  .pt .n{font-family:var(--serif); font-weight:600; font-size:13pt; color:var(--amber); line-height:1; width:7mm; flex:none;}
+  .pt .t{font-size:9pt; line-height:1.42;}
+  .pt .t b{font-weight:600;}
+
+  /* value props */
+  .vp{border-left:2px solid var(--amber); padding:0 0 0 4mm; margin:0 0 2.5mm 0;}
+  .vp b{font-weight:600;}
+
+  /* callout */
+  .callout{background:#F3EFE7; border:1px solid var(--rule-strong); padding:4.2mm 6mm; margin:0;}
+  .callout h3{margin-bottom:1.6mm;}
+  .callout .small{font-size:8.2pt; color:var(--ink-2); line-height:1.42;}
+
+  /* use cases */
+  .uc{margin:0 0 2.3mm 0;}
+  .uc b{font-weight:600;}
+  .uc .why{color:var(--ink-muted); font-size:8.4pt;}
+
+  /* comparison table */
+  table.cmp{width:100%; border-collapse:collapse; font-size:8.2pt; margin:1mm 0 0 0;}
+  table.cmp th,table.cmp td{text-align:left; padding:1.7mm 2.5mm; border-bottom:1px solid var(--rule); vertical-align:top;}
+  table.cmp thead th{font-family:var(--mono); font-size:7pt; letter-spacing:.6px; text-transform:uppercase; color:var(--ink-muted); border-bottom:1px solid var(--rule-strong);}
+  table.cmp tbody th{font-weight:500; color:var(--ink-2);}
+  table.cmp .kern{background:#F3EFE7;}
+  table.cmp thead th.kern{color:var(--amber-deep);}
+  table.cmp tbody td.kern{font-weight:600; color:var(--ink);}
+
+  /* status strip */
+  .status{display:grid; grid-template-columns:1fr 1fr 1fr; gap:0; border:1px solid var(--rule-strong); margin:0 0 5mm 0;}
+  .status > div{padding:2.8mm 4mm; border-right:1px solid var(--rule);}
+  .status > div:last-child{border-right:none;}
+  .status .k{font-family:var(--mono); font-size:6.6pt; letter-spacing:1.4px; text-transform:uppercase; color:var(--ink-muted); margin-bottom:1mm;}
+  .status .v{font-family:var(--serif); font-weight:560; font-size:10pt; color:var(--ink);}
+  .status .v small{font-family:var(--body); font-weight:400; font-size:7.6pt; color:var(--ink-2); display:block; line-height:1.35; margin-top:.6mm;}
+
+  /* footer */
+  .footer{background:var(--deep); color:var(--ink-faint); padding:5.5mm 15mm; font-size:7.8pt; margin-top:6mm;}
+  .footer .row{display:flex; justify-content:space-between; align-items:flex-end; gap:8mm;}
+  .footer .links span{color:var(--inverse);}
+  .footer a{color:#C9D2DE; text-decoration:none;}
+  .footer .legal{font-size:6.8pt; color:#5C6B80; max-width:95mm; line-height:1.4;}
+  .footer .frune{font-family:"Noto Sans Runic",var(--serif); color:var(--amber); font-size:13pt;}
+
+  .disclaimer{font-size:7.4pt; color:var(--ink-muted); line-height:1.42; border-top:1px solid var(--rule); padding-top:3mm; margin-top:1mm;}
+
+  /* ---------- legal notice page ---------- */
+  .legal-head{font-family:var(--serif); font-weight:600; font-size:19pt; color:var(--ink); margin:0 0 2mm 0; line-height:1.05;}
+  .legal-intro{font-size:8.4pt; color:var(--ink-2); max-width:172mm; margin:0 0 5mm 0; line-height:1.46;}
+  .legal-list{margin:0;}
+  .li{font-size:7.85pt; line-height:1.44; color:var(--ink-2); margin:0 0 3.1mm 0; padding-left:9mm; position:relative;}
+  .li .num{position:absolute; left:0; top:0; font-family:var(--mono); font-size:6.8pt; letter-spacing:.5px; color:var(--amber-deep);}
+  .li b{color:var(--ink); font-weight:600;}
+  .li .mono{font-family:var(--mono); font-size:7.2pt;}
+</style>
+</head>
+<body>
+
+<!-- ============================ PAGE 1 ============================ -->
+<section class="page">
+  <div class="masthead">
+    <div class="mast-top">
+      <div class="lockup">
+        <span class="rune">&#5792;</span>
+        <span class="wordmark">KERN</span>
+      </div>
+      <div style="text-align:right;">
+        <div class="eyebrow">Institutional Brief</div>
+        <div class="mast-url">kern.brussels</div>
+      </div>
+    </div>
+    <div class="tagline">The noyau. The kernel. The grain of state that endures.</div>
+    <p class="lede">A Layer&#8209;1 <b>settlement and registry layer</b> engineered for institutional legibility &mdash;
+      deterministic finality, machine&#8209;checked contract invariants, and a documented on&#8209;chain evolution path,
+      with EVM compatibility delegated to rollups so the base layer stays small and auditable.</p>
+  </div>
+
+  <div class="pad">
+
+    <div class="block">
+      <h2>The structural gap</h2>
+      <p class="muted">Today's Layer&#8209;1 landscape forces a trade&#8209;off. Ethereum&#8209;family chains win on developer
+      gravity and tooling, but evolve through contentious hard forks and leave properties like solvency or supply caps as
+      claims in an audit rather than guarantees in the protocol. Rigour&#8209;first chains offer on&#8209;chain governance and
+      verifiable contracts but lack developer mass. Neither makes <b>regulatory obligations machine&#8209;verifiable</b>.
+      KERN is a deliberately narrow base layer built to close that gap: it settles, governs, attests and registers &mdash;
+      and pushes execution out to rollups.</p>
+    </div>
+
+    <div class="block">
+      <h2>What KERN is</h2>
+      <div class="points">
+        <div class="pt"><span class="n">1</span><span class="t"><b>Deterministic finality.</b> A four&#8209;phase BFT consensus in the Byzantine&#8209;fault&#8209;tolerant family with ~1&#8202;s blocks and ~2&#8202;s finality. No probabilistic reorganisations.</span></div>
+        <div class="pt"><span class="n">2</span><span class="t"><b>Bonded Proof&#8209;of&#8209;Stake.</b> Staked KRN are locked in a protocol bond, never held by the validator, and slashable. No staking derivative; released after an unbonding period.</span></div>
+        <div class="pt"><span class="n">3</span><span class="t"><b>Verifiable contracts.</b> Skald is a small, statically typed language that enforces declared invariants at runtime. A lending market <i>cannot</i> enter an insolvent state &mdash; the runtime rejects the transition.</span></div>
+        <div class="pt"><span class="n">4</span><span class="t"><b>On&#8209;chain evolution.</b> Protocol amendments &mdash; consensus parameters, fees, even Skald itself &mdash; pass through a dual&#8209;track governance cycle visible to all stakeholders. No hard forks.</span></div>
+        <div class="pt"><span class="n">5</span><span class="t"><b>EVM via rollups.</b> Existing Ethereum applications run on a KERN&#8209;anchored optimistic rollup with standard tooling unchanged, while the L1 stays narrow and auditable.</span></div>
+        <div class="pt"><span class="n">+</span><span class="t"><b>Slashable attestations.</b> Equivocation accountability generalised beyond consensus to any signed off&#8209;chain claim &mdash; KYC, oracle prices, NAV, notary or ESG attestations.</span></div>
+      </div>
+    </div>
+
+    <div class="block">
+      <h2>Why it matters to an institution</h2>
+      <div class="vp"><b>Predictable finality, not probabilistic.</b> A settlement made at second&nbsp;T is final at T+2 &mdash; no rollback to explain to a supervisor. Banking&#8209;grade auditability of state.</div>
+      <div class="vp"><b>Provable correctness, not asserted.</b> &ldquo;This pool is always solvent&rdquo; stops being an audit promise and becomes a protocol&#8209;enforced runtime guarantee.</div>
+      <div class="vp"><b>Documented evolution, not coordination crisis.</b> Every change follows a multi&#8209;week, on&#8209;chain voting path; the route an upgrade took is itself part of the record.</div>
+      <div class="vp"><b>Auditable by design.</b> The rules &mdash; who may transfer, under what conditions, with what limits &mdash; are readable at the source by regulators, auditors and counterparties, not buried in a 200&#8209;page report.</div>
+    </div>
+
+    <div class="callout">
+      <h3>Compliance by construction &mdash; tokenised securities</h3>
+      <p class="small">Three Skald templates (startup equity, institutional fund, real&#8209;estate) encode the EU <b>securities</b> regime as machine&#8209;checked invariants: the <b>Prospectus Regulation</b>, <b>MiFID&nbsp;II</b> (Art.&nbsp;16 &amp; 24), <b>AIFMD</b> (depositary independence, segregation, diversification) and <b>MAR</b> (market&#8209;abuse blackout). Security tokens are <i>financial instruments</i> and are therefore excluded from MiCA under Art.&nbsp;2(4); the applicable framework is securities law. A competent authority reads the invariants directly, supplementing rather than replacing the audit cycle.</p>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============================ PAGE 2 ============================ -->
+<section class="page">
+  <div class="pad" style="padding-top:13mm;">
+
+    <div class="block">
+      <h2>Where it fits &mdash; flagship use cases</h2>
+      <div class="uc"><b>Sovereign stablecoins &amp; CBDC pilots.</b> Issuance held by an institution&#8209;controlled multisig; per&#8209;address holding caps and reserve&#8209;attestation rules as invariants; monetary parameters amendable through governance with the issuer as sole proposer. <span class="why">~2&#8202;s finality matches payment expectations; the amendment path is friendlier to regulators than off&#8209;chain forks.</span></div>
+      <div class="uc"><b>Regulated DeFi, tokenised securities &amp; RWAs.</b> A market declares <span class="mono">invariant solvent { assets &ge; liabilities }</span>; the runtime rejects any breaching transaction, including oracle manipulation and flash&#8209;loan attacks. <span class="why">Solvency becomes an on&#8209;chain property; issuers get a settlement layer they can credibly describe to auditors.</span></div>
+      <div class="uc"><b>Public&#8209;sector registries.</b> Land titles, civil registers, licensing, procurement &mdash; transfer conditions and persistence encoded in Skald, parameter changes through governance, records queryable by light clients. <span class="why">No notary need explain probabilistic reorgs; the registry's own evolution is part of the public record.</span></div>
+      <div class="uc"><b>Settlement hub for EVM rollups.</b> Multiple rollups post state commitments to KERN; cross&#8209;rollup transfers settle through it, bridge accounting is invariant&#8209;enforced, and rollup upgrades are themselves governed. <span class="why">The chain that settles should not be the chain optimised for execution &mdash; the narrowness is the feature.</span></div>
+    </div>
+
+    <div class="block">
+      <h2>How it compares</h2>
+      <table class="cmp">
+        <thead>
+          <tr><th></th><th>Ethereum&nbsp;L1</th><th>Tezos</th><th>Solana</th><th class="kern">KERN</th></tr>
+        </thead>
+        <tbody>
+          <tr><th>Finality</th><td>Probabilistic (~12&nbsp;min)</td><td>Deterministic (~30&nbsp;s)</td><td>Deterministic (~12&nbsp;s)</td><td class="kern">Deterministic (~2&nbsp;s)</td></tr>
+          <tr><th>On&#8209;chain governance</th><td>No</td><td>Yes</td><td>No</td><td class="kern">Yes (dual&#8209;track)</td></tr>
+          <tr><th>Contract verifiability</th><td>Hard (Solidity)</td><td>Strong (Michelson)</td><td>Hard (Rust&nbsp;/&nbsp;BPF)</td><td class="kern">Strong (Skald + runtime invariants)</td></tr>
+          <tr><th>EVM compatibility</th><td>Native</td><td>Via rollup</td><td>No</td><td class="kern">Via optimistic rollup</td></tr>
+          <tr><th>Design intent</th><td>General execution</td><td>Self&#8209;amending L1</td><td>High throughput</td><td class="kern">Settlement &amp; registry</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="block">
+      <h2>Status &mdash; an honest account</h2>
+      <div class="status">
+        <div><div class="k">Maturity</div><div class="v">v1.1&#8209;rc<small>Reference implementation in Python; 984 automated tests, all green.</small></div></div>
+        <div><div class="k">Network path</div><div class="v">Devnet &rarr; Testnet<small>Yggdrasil (public testnet) &rarr; Midgard (mainnet), permissionless validators.</small></div></div>
+        <div><div class="k">Licensing</div><div class="v">Apache&#8209;2.0<small>Code Apache&#8209;2.0 (explicit patent grant); docs CC&#8209;BY&#8209;SA&#8209;4.0.</small></div></div>
+      </div>
+      <p class="muted" style="font-size:8.6pt;">KRN, the native token, pays fees, secures the validator set as bonded&#8209;PoS collateral, weights governance, meters storage and funds an on&#8209;chain treasury. The implementation is <b>pre&#8209;audit</b>: a first external security audit precedes any public testnet carrying value &mdash; it is for research, education and building rollup applications against a stable settlement abstraction, <b>not</b> for securing real value today.</p>
+      <p class="disclaimer">This brief is an engineering and design overview, not investment, legal or compliance advice, and not an offer or solicitation. References to EU regulation are informational design discussions, not assurances of compliance; no regulator has approved, endorsed or certified the software. Engage licensed counsel and your competent authority before any deployment. <b>Full terms: see &ldquo;Important information&rdquo; on the final page.</b></p>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    <div class="row">
+      <div>
+        <div class="links" style="margin-bottom:2mm;">
+          <span>kern.brussels</span> &nbsp;&middot;&nbsp; github.com/vaneeckhoutnicolas/kern &nbsp;&middot;&nbsp; linkedin.com/in/vaneeckhout
+        </div>
+        <div class="legal">An independent, open&#8209;source Layer&#8209;1 reference implementation by Nicolas&nbsp;Van&nbsp;Eeckhout &mdash; Brussels. KERN Protocol.</div>
+      </div>
+      <div style="text-align:right;"><span class="frune">&#5792;</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAGE 3 — LEGAL ============================ -->
+<section class="page">
+  <div class="masthead" style="padding:9mm 15mm 7mm 15mm;">
+    <div class="mast-top">
+      <div class="lockup">
+        <span class="rune" style="font-size:20pt;">&#5792;</span>
+        <span class="wordmark" style="font-size:20pt;">KERN</span>
+      </div>
+      <div class="eyebrow" style="align-self:center;">Important Information</div>
+    </div>
+  </div>
+
+  <div class="pad" style="padding-top:11mm;">
+    <h2 class="legal-head">Legal notice</h2>
+    <p class="legal-intro">This brief is a standing notice from the author of the KERN reference implementation. By reading or relying on it, you accept the terms below. They summarise, and are subordinate to, the full disclaimer published in the repository and on kern.brussels. Nothing here overrides the licences under which the project is released.</p>
+
+    <div class="legal-list">
+      <p class="li"><span class="num">01</span><b>No offer or solicitation.</b> This document is provided for information only. It is not, and must not be construed as, an offer, invitation, inducement or solicitation to buy, sell or subscribe to any security, financial instrument, token or investment, nor as advice to enter into any transaction. KRN is described solely as a protocol utility and governance unit; nothing here is an offer of KRN or of any instrument associated with it.</p>
+
+      <p class="li"><span class="num">02</span><b>No professional advice.</b> Nothing in this brief constitutes legal, financial, investment, tax, accounting, regulatory or fiduciary advice. Any party considering a deployment in a regulated context must engage its own licensed counsel, compliance officer, auditor and competent national supervisory authority (e.g. FSMA, AMF, BaFin, CSSF) before relying on any property described here.</p>
+
+      <p class="li"><span class="num">03</span><b>No assurance of compliance.</b> References to EU regulation (MiFID&nbsp;II, the Prospectus Regulation, AIFMD, MAR, MiCA, DORA) are informational, illustrative and forward&#8209;looking design discussions &mdash; not regulatory determinations and not assurances of compliance. No regulator has approved, endorsed or certified the software, the Skald templates, the attestation primitive or any artifact described. &ldquo;Compliance by construction&rdquo; denotes a design approach; it is not a representation that any given deployment is compliant.</p>
+
+      <p class="li"><span class="num">04</span><b>Forward&#8209;looking statements.</b> The roadmap, the network path (Devnet &rarr; Yggdrasil &rarr; Midgard) and any token&#8209;related design are statements of intent, not commitments, and may change without notice in light of audit findings, regulatory dialogue, legal advice, technical feasibility and the author&rsquo;s capacity. No party should acquire, transact in, or take any position in the expectation that a milestone will occur, on any timeline, at any price, or with any outcome.</p>
+
+      <p class="li"><span class="num">05</span><b>Pre&#8209;audit software; no warranty.</b> The reference implementation has not undergone an independent professional security audit; such an audit is a gating item before any public testnet carrying value. It is published &ldquo;AS&nbsp;IS&rdquo; under the Apache&#8209;2.0 licence, without warranty of any kind &mdash; including merchantability, fitness for a particular purpose, non&#8209;infringement, security, accuracy or regulatory compliance &mdash; and is unsuitable for production use with material value at stake.</p>
+
+      <p class="li"><span class="num">06</span><b>Limitation of liability.</b> To the maximum extent permitted by applicable law, Nicolas&nbsp;Van&nbsp;Eeckhout and any KERN contributor shall not be liable for any direct, indirect, incidental, special, consequential or punitive damages &mdash; including loss of profits, revenue, data or goodwill, regulatory penalties, or third&#8209;party claims &mdash; arising from or in connection with the use of, reliance on, or inability to use the software or this brief, regardless of the form of action and even if advised of the possibility of such damages.</p>
+
+      <p class="li"><span class="num">07</span><b>No endorsement; no agency.</b> The author does not control, operate or endorse any third&#8209;party network, deployment or representation, nor any token sale, listing, airdrop or derivative purporting to be associated with KERN. Use of the project creates no agency, partnership, joint venture, fiduciary duty or other relationship beyond the applicable licences (Apache&#8209;2.0 for code; CC&#8209;BY&#8209;SA&#8209;4.0 for documentation). KERN is an open&#8209;source project, not an incorporated entity; until a foundation is incorporated, the author makes no representations on behalf of any third party.</p>
+
+      <p class="li"><span class="num">08</span><b>Trademarks.</b> &ldquo;KERN&rdquo;, &ldquo;Skald&rdquo;, &ldquo;Heimdall&rdquo;, &ldquo;Yggdrasil&rdquo; and &ldquo;Midgard&rdquo; are reserved as marks of the KERN project. Third&#8209;party names (Ethereum, Tezos, Solana and others) are the trademarks of their respective owners, used here under nominative fair use / comparative reference solely to identify the subjects of factual comparison. No affiliation, sponsorship or endorsement is asserted or implied, and no third&#8209;party logo or trade dress is reproduced.</p>
+
+      <p class="li"><span class="num">09</span><b>Governing terms &amp; distribution.</b> The licence terms govern any dispute relating to the software; the author is based in Belgium. This brief is not directed at any person in any jurisdiction where its publication or distribution would be unlawful, and recipients are responsible for observing any applicable restrictions. The full disclaimer in the repository prevails over this summary in case of any inconsistency.</p>
+    </div>
+  </div>
+
+  <div class="footer" style="margin-top:6mm;">
+    <div class="row">
+      <div>
+        <div class="links" style="margin-bottom:2mm;"><span>&copy; 2026 Nicolas&nbsp;Van&nbsp;Eeckhout &mdash; KERN Protocol</span></div>
+        <div class="legal">Full disclaimer: github.com/vaneeckhoutnicolas/kern/blob/main/docs/disclaimer.md &nbsp;&middot;&nbsp; kern.brussels &nbsp;&middot;&nbsp; This notice: CC&#8209;BY&#8209;SA&#8209;4.0.</div>
+      </div>
+      <div style="text-align:right;"><span class="frune">&#5792;</span></div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>
