@@ -253,7 +253,9 @@ class RoundState:
     # Has this validator already pre-endorsed / endorsed this round?
     preendorsed: bool = False
     endorsed: bool = False
-    # Cached locally-derived QCs.
+    # Cached locally-derived QCs. Phase C: only ever set to a certificate
+    # that (a) contains votes for `proposed_block_hash` exclusively and
+    # (b) passed QuorumCertificate.verify against the validator set.
     preendorse_qc: Optional[QuorumCertificate] = None
     endorse_qc: Optional[QuorumCertificate] = None
 
@@ -285,6 +287,10 @@ class BftEngine:
     validator_set: List[dict]  # mutable; updated each cycle
     # Window of recent states, keyed by (level, round).
     states: Dict[Tuple[int, int], RoundState] = field(default_factory=dict)
+    # Phase C: equivocation evidence observed by this engine, not yet
+    # handed to the node for on-chain submission (see take_evidence).
+    pending_evidence: List["SlashingEvidence"] = field(default_factory=list)
+    _evidence_keys: Set[Tuple[str, str, int, int]] = field(default_factory=set)
 
     # ---------------------------------------------------------------- helpers
 
@@ -309,11 +315,103 @@ class BftEngine:
     def _total_stake(self) -> int:
         return sum(v["stake"] for v in self.validator_set)
 
-    def _has_quorum(self, sigs: Dict[str, "ConsensusMessage"]) -> bool:
+    def _has_quorum(self, sigs: Dict[str, "ConsensusMessage"],
+                    block_hash: Optional[str] = None) -> bool:
+        """> 2/3 of stake voted. When `block_hash` is given, only votes for
+        that exact hash count (Phase C: a vote for another block is never
+        weight towards this one)."""
         if self._total_stake() == 0:
             return False
-        signed = sum(self._stake_of(addr) for addr in sigs.keys())
+        signed = sum(
+            self._stake_of(addr) for addr, m in sigs.items()
+            if block_hash is None or m.block_hash == block_hash
+        )
         return signed * 3 > self._total_stake() * 2
+
+    def _build_qc(self, kind: MsgKind, state: RoundState) -> Optional[QuorumCertificate]:
+        """Build a quorum certificate for the round's PROPOSED block from the
+        votes of `kind` that are for that exact hash, and return it only if
+        it verifies against the validator set. Pure; never stores."""
+        target = state.proposed_block_hash
+        if target is None:
+            return None
+        votes = state.preendorsements if kind == MsgKind.PREENDORSE else state.endorsements
+        if not self._has_quorum(votes, target):
+            return None
+        qc = QuorumCertificate(
+            kind=kind, level=state.level, round=state.round, block_hash=target,
+            signatures={a: m.signature for a, m in votes.items()
+                        if m.block_hash == target and m.signature is not None},
+        )
+        ok, reason = qc.verify(self.validator_set)
+        if not ok:
+            LOG.warning("discarded %s QC at L%d R%d: %s",
+                        kind.value, state.level, state.round, reason)
+            return None
+        return qc
+
+    def _record_vote(self, store: Dict[str, "ConsensusMessage"],
+                     msg: "ConsensusMessage") -> bool:
+        """Store the first vote of a validator for this (level, round, kind).
+        A second vote for a DIFFERENT hash is equivocation: it is not
+        stored (the first vote stands) and becomes slashing evidence.
+        Returns True if the vote was newly stored."""
+        existing = store.get(msg.validator)
+        if existing is None:
+            store[msg.validator] = msg
+            return True
+        if existing.block_hash != msg.block_hash:
+            LOG.error("EQUIVOCATION: %s %s both %s and %s at L%d R%d",
+                      msg.validator, msg.kind.value, existing.block_hash[:12],
+                      msg.block_hash[:12], msg.level, msg.round)
+            key = (msg.validator, msg.kind.value, msg.level, msg.round)
+            if key not in self._evidence_keys:
+                ev = SlashingEvidence(offender=msg.validator, msg_a=existing, msg_b=msg)
+                if ev.verify()[0]:
+                    self._evidence_keys.add(key)
+                    self.pending_evidence.append(ev)
+        return False
+
+    def take_evidence(self) -> List["SlashingEvidence"]:
+        """Hand over (and clear) the equivocation evidence gathered so far."""
+        out, self.pending_evidence = self.pending_evidence, []
+        return out
+
+    def _advance(self, state: RoundState) -> List[ConsensusMessage]:
+        """Re-evaluate a round after any new vote or the proposal itself:
+        form the pre-endorsement QC, endorse once it exists, form the
+        endorsement QC. Certificates are only built for the proposed block,
+        and a round keeps trying until a VALID certificate exists, so a
+        stray or hostile vote can delay nothing (Phase C, review point A)."""
+        outbound: List[ConsensusMessage] = []
+        if state.proposed_block_hash is None:
+            return outbound
+        if state.preendorse_qc is None:
+            state.preendorse_qc = self._build_qc(MsgKind.PREENDORSE, state)
+        if state.preendorse_qc is not None:
+            own = self._own_address()
+            if own is not None and self._is_validator(own) and not state.endorsed:
+                assert self.own_keypair is not None
+                endorse = ConsensusMessage(
+                    kind=MsgKind.ENDORSE,
+                    level=state.level,
+                    round=state.round,
+                    block_hash=state.proposed_block_hash,
+                    validator=own,
+                    validator_pubkey=self.own_pubkey_b58 or "",
+                )
+                endorse.sign(self.own_keypair)
+                state.endorsements[own] = endorse
+                state.endorsed = True
+                outbound.append(endorse)
+                LOG.debug("emitted ENDORSE for L%d R%d hash=%s",
+                          state.level, state.round, state.proposed_block_hash[:12])
+        if state.endorse_qc is None:
+            state.endorse_qc = self._build_qc(MsgKind.ENDORSE, state)
+            if state.endorse_qc is not None:
+                LOG.info("ENDORSEMENT QUORUM reached at L%d R%d hash=%s",
+                         state.level, state.round, state.endorse_qc.block_hash[:12])
+        return outbound
 
     # ---------------------------------------------------------------- inbound
 
@@ -334,7 +432,9 @@ class BftEngine:
         outbound: List[ConsensusMessage] = []
         own = self._own_address()
         if own is None or not self._is_validator(own) or state.preendorsed:
-            return outbound
+            # Votes that arrived before the proposal may already form a
+            # certificate for it.
+            return outbound + self._advance(state)
 
         # Emit pre-endorsement.
         assert self.own_keypair is not None  # guarded by _own_address above
@@ -351,7 +451,7 @@ class BftEngine:
         state.preendorsed = True
         outbound.append(msg)
         LOG.debug("emitted PREENDORSE for L%d R%d hash=%s", level, round_, block_hash[:12])
-        return outbound
+        return outbound + self._advance(state)
 
     def on_message(self, msg: ConsensusMessage) -> List[ConsensusMessage]:
         """Process an incoming consensus message. Returns outbound messages
@@ -372,79 +472,12 @@ class BftEngine:
             return self.on_proposal(msg.level, msg.round, msg.block_hash)
 
         if msg.kind == MsgKind.PREENDORSE:
-            # Detect equivocation: same validator pre-endorsing a different block.
-            existing = state.preendorsements.get(msg.validator)
-            if existing and existing.block_hash != msg.block_hash:
-                LOG.error(
-                    "EQUIVOCATION: %s pre-endorsed both %s and %s at L%d R%d",
-                    msg.validator, existing.block_hash[:12], msg.block_hash[:12],
-                    msg.level, msg.round,
-                )
-                # In production, emit a slashing report.
-                return outbound
-            state.preendorsements[msg.validator] = msg
-
-            # Have we reached pre-endorsement quorum? If so and we haven't
-            # endorsed yet, emit our endorsement.
-            if self._has_quorum(state.preendorsements):
-                # Materialize the pre-endorsement QC.
-                if state.preendorse_qc is None:
-                    state.preendorse_qc = QuorumCertificate(
-                        kind=MsgKind.PREENDORSE,
-                        level=msg.level,
-                        round=msg.round,
-                        block_hash=state.proposed_block_hash or msg.block_hash,
-                        signatures={
-                            a: m.signature for a, m in state.preendorsements.items()
-                            if m.signature is not None
-                        },
-                    )
-
-                own = self._own_address()
-                if (own is not None and self._is_validator(own)
-                        and not state.endorsed and state.proposed_block_hash):
-                    assert self.own_keypair is not None
-                    endorse = ConsensusMessage(
-                        kind=MsgKind.ENDORSE,
-                        level=msg.level,
-                        round=msg.round,
-                        block_hash=state.proposed_block_hash,
-                        validator=own,
-                        validator_pubkey=self.own_pubkey_b58 or "",
-                    )
-                    endorse.sign(self.own_keypair)
-                    state.endorsements[own] = endorse
-                    state.endorsed = True
-                    outbound.append(endorse)
-                    LOG.debug("emitted ENDORSE for L%d R%d hash=%s",
-                              msg.level, msg.round, state.proposed_block_hash[:12])
-            return outbound
+            self._record_vote(state.preendorsements, msg)
+            return outbound + self._advance(state)
 
         if msg.kind == MsgKind.ENDORSE:
-            existing = state.endorsements.get(msg.validator)
-            if existing and existing.block_hash != msg.block_hash:
-                LOG.error(
-                    "EQUIVOCATION: %s endorsed both %s and %s at L%d R%d",
-                    msg.validator, existing.block_hash[:12], msg.block_hash[:12],
-                    msg.level, msg.round,
-                )
-                return outbound
-            state.endorsements[msg.validator] = msg
-
-            if self._has_quorum(state.endorsements) and state.endorse_qc is None:
-                state.endorse_qc = QuorumCertificate(
-                    kind=MsgKind.ENDORSE,
-                    level=msg.level,
-                    round=msg.round,
-                    block_hash=state.proposed_block_hash or msg.block_hash,
-                    signatures={
-                        a: m.signature for a, m in state.endorsements.items()
-                        if m.signature is not None
-                    },
-                )
-                LOG.info("ENDORSEMENT QUORUM reached at L%d R%d hash=%s",
-                         msg.level, msg.round, state.endorse_qc.block_hash[:12])
-            return outbound
+            self._record_vote(state.endorsements, msg)
+            return outbound + self._advance(state)
 
         return outbound
 

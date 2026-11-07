@@ -191,7 +191,7 @@ class Node:
         # Advisory dedup sets (see MAX_SEEN_ENTRIES note above).
         self._seen_blocks: Set[str] = set()
         self._seen_txs: Set[str] = set()
-        self._seen_cons: Set[Tuple[str, int, int, str]] = set()
+        self._seen_cons: Set[Tuple[str, int, int, str, str]] = set()
         # Round management for the level currently being decided.
         self._round: int = chain.head.header.round + 1
         self._round_deadline: float = 0.0
@@ -369,17 +369,48 @@ class Node:
         # bare PROPOSE messages from the wire.
         if from_wire and msg.kind == MsgKind.PROPOSE:
             return
-        key = (msg.kind.value, msg.level, msg.round, msg.validator)
+        # Phase C (external review, point C): the dedup key includes the
+        # block hash. It used to be (kind, level, round, validator), so a
+        # second, CONFLICTING vote from the same validator was dropped here
+        # and the equivocation never reached the engine or the network.
+        key = (msg.kind.value, msg.level, msg.round, msg.validator, msg.block_hash)
         if key in self._seen_cons:
             return
         self._seen_cons.add(key)
         self._trim(self._seen_cons)
         out = self.bft.on_message(msg)
         if from_wire and self.network:
-            # Re-gossip newly seen consensus messages for mesh propagation.
+            # Re-gossip newly seen consensus messages for mesh propagation
+            # (conflicting votes included, so every node sees the evidence).
             asyncio.create_task(self.network.broadcast_consensus(msg.to_dict()))
+        self._submit_evidence()
         await self._emit_consensus(out)
         await self._try_finalize()
+
+    def _submit_evidence(self) -> None:
+        """Turn equivocation evidence gathered by the engine into a signed
+        SLASH_CONSENSUS_EQUIVOCATION transaction from this validator, added
+        to the local mempool and gossiped. The chain re-verifies the
+        evidence and slashes each offence once, so duplicate reports from
+        several validators are harmless (they fail and pay their fee)."""
+        if self.bft is None or self.baker is None:
+            return
+        from .transaction import make_slash_consensus_equivocation
+        for ev in self.bft.take_evidence():
+            try:
+                kp = self.baker.keypair
+                nonce = self.chain.state.get("nonces", {}).get(kp.address, 0)
+                tx = make_slash_consensus_equivocation(
+                    kp, ev.msg_a.to_dict(), ev.msg_b.to_dict(), nonce=nonce,
+                    chain_id=self.chain.state.get("chain_id"),
+                )
+                if self.storage.add_to_mempool(tx):
+                    LOG.warning("submitted slashing evidence against %s (tx %s)",
+                                ev.offender, tx.hash_hex()[:12])
+                    if self.network:
+                        asyncio.create_task(self.network.broadcast_tx(tx.to_dict()))
+            except Exception:
+                LOG.exception("could not submit slashing evidence against %s", ev.offender)
 
     async def _try_finalize(self) -> None:
         """Append any pending proposal whose endorsement quorum certificate

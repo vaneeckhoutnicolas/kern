@@ -157,6 +157,8 @@ def propose_block(
     from .chain import _apply_governance_tick, _release_matured_attestation_bonds
     _release_matured_attestation_bonds(working_state, draft_block.header.level)
     _apply_governance_tick(working_state, draft_block.header.level)
+    from .chain import _epoch_tick
+    _epoch_tick(working_state, draft_block.header.level)
 
     # Now compute the final state_root over the post-reward state.
     draft_header.state_root = state_root_hex(working_state)

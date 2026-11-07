@@ -147,6 +147,10 @@ def initial_state_from_genesis(genesis: dict) -> dict:
     if chain_id is not None and not isinstance(chain_id, str):
         raise ValueError("genesis chain_id must be a string")
     state["chain_id"] = chain_id
+    # Phase C: optional epoch length, then the first consensus snapshot.
+    if genesis.get("epoch_blocks") is not None:
+        state["epoch_blocks"] = int(genesis["epoch_blocks"])
+    state["consensus_set"] = compute_consensus_set(state)
     state["treasury_address"] = genesis.get("treasury_address")
     state["issuance_params"] = genesis.get("issuance_params")
     return state
@@ -325,6 +329,9 @@ def apply_transaction(state: dict, tx: Transaction, baker: str) -> ApplyResult:
         if tx.kind == OpKind.SLASH_ATTESTATION_EQUIVOCATION:
             return _apply_slash_attestation_equivocation(state, tx)
 
+        if tx.kind == OpKind.SLASH_CONSENSUS_EQUIVOCATION:
+            return _apply_slash_consensus_equivocation(state, tx)
+
     except Exception as e:
         # Roll back to the post-fee/post-nonce snapshot: the operation is
         # undone but the fee stays debited and the nonce stays bumped.
@@ -353,6 +360,7 @@ _DICT_PARAM_KINDS = frozenset({
     OpKind.GOVERNANCE_PROPOSE, OpKind.GOVERNANCE_VOTE, OpKind.SLASH_EQUIVOCATION,
     OpKind.DELEGATE_STAKE, OpKind.UNDELEGATE_STAKE, OpKind.ATTEST,
     OpKind.REVOKE_ATTESTATION, OpKind.SLASH_ATTESTATION_EQUIVOCATION,
+    OpKind.SLASH_CONSENSUS_EQUIVOCATION,
 })
 
 
@@ -501,6 +509,55 @@ def _apply_block_rewards(state: dict, block: Block) -> None:
 
 
 # --- Governance transaction handlers --------------------------------------
+
+# --- Consensus validator set (Phase C) -------------------------------------
+
+# Length of a consensus epoch, in blocks. The validator set the consensus
+# uses (proposer selection, vote weights, quorum and block validation) is a
+# snapshot of EFFECTIVE stake (own stake after slashing + delegated liquid
+# balances) taken at each epoch boundary. Delegation changes therefore move
+# consensus weight only at the next boundary, so nobody can shift weight
+# into a validator just before a vote. Slashing lowers weight at once.
+# A chain may override it at genesis through state["epoch_blocks"].
+DEFAULT_EPOCH_BLOCKS = 120
+
+
+def epoch_blocks(state: dict) -> int:
+    v = state.get("epoch_blocks")
+    if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+        return v
+    return DEFAULT_EPOCH_BLOCKS
+
+
+def compute_consensus_set(state: dict) -> List[dict]:
+    """Effective validator set from the current state: same order as
+    state["validators"], each with address, pubkey and `stake` replaced by
+    effective_stake. Pure."""
+    return [
+        {"address": v["address"], "pubkey": v.get("pubkey", ""),
+         "stake": effective_stake(state, v["address"])}
+        for v in state.get("validators", [])
+    ]
+
+
+def consensus_validator_set(state: dict) -> List[dict]:
+    """THE validator set for consensus on top of `state` (Phase C, review
+    point B). Uses the epoch snapshot state["consensus_set"]; a state built
+    without one (older test fixtures) falls back to the plain validator
+    records. Returns copies."""
+    snap = state.get("consensus_set")
+    if snap is not None:
+        return [dict(v) for v in snap]
+    return [dict(v) for v in state.get("validators", [])]
+
+
+def _epoch_tick(state: dict, level: int) -> None:
+    """At an epoch boundary (level % epoch_blocks == 0), refresh the
+    consensus snapshot. Called once per block, last, by apply_block and
+    propose_block."""
+    if level > 0 and level % epoch_blocks(state) == 0 and state.get("validators"):
+        state["consensus_set"] = compute_consensus_set(state)
+
 
 def _load_treasury(gov_state: dict, state: dict, balance: int):
     """Load the treasury track with the canonical delegation view. Any
@@ -672,47 +729,9 @@ def _apply_slash_equivocation(state: dict, tx: Transaction) -> ApplyResult:
     if evidence is None:
         return ApplyResult(ok=False, error="no unconsumed equivocation for this voter")
 
-    # Find the equivocator in the validator set and slash.
-    validators = state.get("validators", [])
-    val = next((v for v in validators if v["address"] == equivocator), None)
-    if val is None:
-        return ApplyResult(ok=False, error="equivocator not a current validator")
-
-    stake = val.get("stake", 0)
-    slash_amount = stake * SLASHING_PERCENTAGE // 100
-    if slash_amount == 0:
-        return ApplyResult(ok=False, error="no stake to slash")
-
-    reward = slash_amount * WHISTLEBLOWER_REWARD_PCT // 100
-    burn = slash_amount - reward
-
-    # Apply effects.
-    val["stake"] -= slash_amount
-    _credit(state, tx.sender, reward)
-    state["total_supply"] = max(0, state.get("total_supply", 0) - burn)
-
-    # v1.0-rc: proportional slashing of delegators. If the equivocator has
-    # delegators, they share the slash penalty in proportion to their
-    # delegated balance. This enforces the "skin in the game" property —
-    # delegators can't earn baking yield without exposure to the
-    # validator's misconduct.
-    delegator_slashes = {}
-    dels = delegators_of(state, equivocator)
-    if dels:
-        # The validator's own slash was applied above. Apply proportional
-        # slash to each delegator. Use the same SLASHING_PERCENTAGE on
-        # their snapshot balance — this is the simplest defensible model.
-        for del_addr, del_balance in dels:
-            del_slash = del_balance * SLASHING_PERCENTAGE // 100
-            if del_slash > 0:
-                # Reduce delegator's balance; the slashed amount is burned
-                # (no whistleblower reward on the delegator slice — that's
-                # the validator's penalty, not the delegators').
-                actual_slash = min(del_slash, state["balances"].get(del_addr, 0))
-                state["balances"][del_addr] = state["balances"].get(del_addr, 0) - actual_slash
-                state["total_supply"] = max(0, state["total_supply"] - actual_slash)
-                if actual_slash > 0:
-                    delegator_slashes[del_addr] = actual_slash
+    err = _slash_validator(state, equivocator, reporter=tx.sender)
+    if err is not None:
+        return ApplyResult(ok=False, error=err)
 
     # Mark evidence as consumed.
     idx = evidence[0]
@@ -721,6 +740,104 @@ def _apply_slash_equivocation(state: dict, tx: Transaction) -> ApplyResult:
     prop["equivocations"][idx]["reporter"] = tx.sender
 
     return ApplyResult(ok=True, gas_used=tx.gas_limit)
+
+
+def _slash_validator(state: dict, offender: str, reporter: str) -> Optional[str]:
+    """Apply the validator slashing rule to `offender`: SLASHING_PERCENTAGE
+    of its own stake is removed, WHISTLEBLOWER_REWARD_PCT of that goes to
+    `reporter`, the rest is burned, and each delegator loses the same
+    percentage of its balance (burned). Returns an error string if nothing
+    can be slashed, else None. Shared by governance-vote equivocation and
+    consensus-vote equivocation."""
+    validators = state.get("validators", [])
+    val = next((v for v in validators if v["address"] == offender), None)
+    if val is None:
+        return "equivocator not a current validator"
+
+    stake = val.get("stake", 0)
+    slash_amount = stake * SLASHING_PERCENTAGE // 100
+    if slash_amount == 0:
+        return "no stake to slash"
+
+    reward = slash_amount * WHISTLEBLOWER_REWARD_PCT // 100
+    burn = slash_amount - reward
+
+    # Validator stake is bonded outside balances, so the slashed amount
+    # leaves total_supply except for the whistleblower reward, which
+    # becomes a liquid balance.
+    val["stake"] -= slash_amount
+    _credit(state, reporter, reward)
+    state["total_supply"] = max(0, state.get("total_supply", 0) - burn)
+
+    # Proportional slashing of delegators (skin in the game).
+    for del_addr, del_balance in delegators_of(state, offender):
+        del_slash = del_balance * SLASHING_PERCENTAGE // 100
+        if del_slash > 0:
+            actual = min(del_slash, state["balances"].get(del_addr, 0))
+            state["balances"][del_addr] = state["balances"].get(del_addr, 0) - actual
+            state["total_supply"] = max(0, state["total_supply"] - actual)
+
+    # Phase C: the offender's CONSENSUS weight drops at once, without
+    # waiting for the epoch boundary (it can only go down here).
+    snap = state.get("consensus_set")
+    if snap is not None:
+        now = effective_stake(state, offender)
+        for entry in snap:
+            if entry["address"] == offender:
+                entry["stake"] = min(entry["stake"], now)
+    return None
+
+
+def _apply_slash_consensus_equivocation(state: dict, tx: Transaction) -> ApplyResult:
+    """Slash a validator that signed two conflicting consensus votes.
+
+    Phase C (external review, point C): the BFT engine used to log
+    equivocations only, and SLASH_EQUIVOCATION only knows governance-vote
+    equivocations. This operation takes the two signed ConsensusMessages
+    themselves as evidence:
+
+    - both decode strictly and carry valid signatures;
+    - same validator, same kind (PREENDORSE or ENDORSE), same (level,
+      round), different block_hash;
+    - the validator is in the current set and the signing key is its
+      registered key;
+    - the vote level is not in the future;
+    - the same offence (validator, kind, level, round) is slashed once.
+
+    The reporter (tx.sender) receives the whistleblower reward."""
+    from .bft import ConsensusMessage, MsgKind, SlashingEvidence
+
+    params = tx.params or {}
+    raw_a, raw_b = params.get("msg_a"), params.get("msg_b")
+    if not isinstance(raw_a, dict) or not isinstance(raw_b, dict):
+        return ApplyResult(ok=False, error="msg_a and msg_b must be consensus message objects")
+    msg_a = ConsensusMessage.from_dict(raw_a)  # strict; raises -> rejection
+    msg_b = ConsensusMessage.from_dict(raw_b)
+    if msg_a.kind not in (MsgKind.PREENDORSE, MsgKind.ENDORSE):
+        return ApplyResult(ok=False, error="only PREENDORSE and ENDORSE votes are slashable")
+    ok, reason = SlashingEvidence(offender=msg_a.validator, msg_a=msg_a, msg_b=msg_b).verify()
+    if not ok:
+        return ApplyResult(ok=False, error=f"invalid evidence: {reason}")
+    offender = msg_a.validator
+    registered = next((v for v in state.get("validators", []) if v["address"] == offender), None)
+    if registered is None:
+        return ApplyResult(ok=False, error="equivocator not a current validator")
+    if registered.get("pubkey") != msg_a.validator_pubkey or registered.get("pubkey") != msg_b.validator_pubkey:
+        return ApplyResult(ok=False, error="votes not signed with the validator's registered key")
+    if msg_a.level > _current_level(state):
+        return ApplyResult(ok=False, error="evidence from a future level")
+
+    key = f"{offender}|{msg_a.kind.value}|{msg_a.level}|{msg_a.round}"
+    done = state.setdefault("consensus_slashes", {})
+    if key in done:
+        return ApplyResult(ok=False, error="offence already slashed")
+
+    err = _slash_validator(state, offender, reporter=tx.sender)
+    if err is not None:
+        return ApplyResult(ok=False, error=err)
+    done[key] = {"reporter": tx.sender, "slashed_at_level": _current_level(state)}
+    return ApplyResult(ok=True, gas_used=tx.gas_limit,
+                       extra={"offender": offender, "offence": key})
 
 
 # --- Stake delegation (v1.0-rc, Liquid PoS) ------------------------------
@@ -1175,6 +1292,8 @@ def apply_block(state: dict, block: Block) -> Tuple[dict, List[ApplyResult]]:
         _release_matured_attestation_bonds(new_state, block.header.level)
         # Governance tick: advance any in-flight proposals and apply activations.
         _apply_governance_tick(new_state, block.header.level)
+        # Phase C: refresh the consensus validator snapshot at epoch boundaries.
+        _epoch_tick(new_state, block.header.level)
 
     # Update gauges.
     g_height = REGISTRY._metrics.get("kern_chain_height")
@@ -1386,7 +1505,18 @@ class Chain:
             self.state["validators"] = list(validators)
             new_state, _ = apply_block(self.state, genesis)
             self.state = new_state
-        self.validators = validators
+        self._fallback_validators = list(validators)
+
+    @property
+    def validators(self) -> List[dict]:
+        """The consensus validator set on top of the current head state
+        (Phase C, review point B). It used to be the list passed to the
+        constructor, frozen forever: slashing and delegation, which live in
+        the state, never reached proposer selection, vote weights or block
+        validation."""
+        if self.state.get("validators") or self.state.get("consensus_set") is not None:
+            return consensus_validator_set(self.state)
+        return [dict(v) for v in self._fallback_validators]
 
     @property
     def head(self) -> Block:

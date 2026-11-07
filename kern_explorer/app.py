@@ -333,6 +333,7 @@ async def txs_list(kind: Optional[str] = None,
         "delegate_stake", "undelegate_stake",
         "governance_propose", "governance_vote", "slash_equivocation",
         "attest", "revoke_attestation", "slash_attestation_equivocation",
+        "slash_consensus_equivocation",
     ]
     return render("txs.html", txs=txs, known_kinds=known_kinds, kind_filter=kind,
                   pagination=pagination)

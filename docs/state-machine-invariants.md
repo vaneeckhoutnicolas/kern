@@ -92,3 +92,14 @@ Rewards never depend on unverified signature lists.
 
 Pinned by `tests/test_consensus_wire.py` and
 `tests/test_phase_b_exception_boundary.py::test_extra_commit_entries_do_not_change_rewards`.
+
+## 9. One consensus validator set
+
+The validator set used for block N (proposer selection, vote weights,
+quorum, validation) is `consensus_validator_set(state after N-1)`. It
+changes only at epoch boundaries or, downwards only, when a validator is
+slashed. A quorum certificate only ever contains verified votes for the
+block it certifies.
+
+Pinned by `tests/test_phase_c_bft_quorum.py` and
+`tests/test_phase_c_slashing_and_validator_set.py`.

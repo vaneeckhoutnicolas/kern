@@ -84,6 +84,9 @@ class OpKind(str, Enum):
     ATTEST = "attest"
     REVOKE_ATTESTATION = "revoke_attestation"
     SLASH_ATTESTATION_EQUIVOCATION = "slash_attestation_equivocation"
+    # Phase C: slash a validator that signed two conflicting consensus
+    # votes (PREENDORSE or ENDORSE) at the same (level, round).
+    SLASH_CONSENSUS_EQUIVOCATION = "slash_consensus_equivocation"
 
 
 @dataclass
@@ -415,6 +418,33 @@ def make_slash_equivocation(
         fee=fee,
         gas_limit=gas_limit,
         params={"proposal_id": proposal_id, "equivocator": equivocator},
+    )
+    tx.sign(sender_kp)
+    return tx
+
+
+def make_slash_consensus_equivocation(
+    sender_kp: KernKeypair,
+    msg_a: dict,
+    msg_b: dict,
+    nonce: int,
+    fee: int = 1_000,
+    gas_limit: int = 30_000,
+    chain_id: Optional[str] = None,
+) -> Transaction:
+    """Submit proof that a validator signed two conflicting consensus votes
+    of the same kind at the same (level, round). `msg_a` and `msg_b` are
+    ConsensusMessage.to_dict() payloads; the chain re-verifies both
+    signatures against the offender's registered key. Phase C."""
+    tx = Transaction(
+        kind=OpKind.SLASH_CONSENSUS_EQUIVOCATION,
+        sender=sender_kp.address,
+        sender_pubkey=sender_kp.public_key_b58,
+        nonce=nonce,
+        fee=fee,
+        gas_limit=gas_limit,
+        params={"msg_a": msg_a, "msg_b": msg_b},
+        chain_id=chain_id,
     )
     tx.sign(sender_kp)
     return tx

@@ -161,3 +161,40 @@ forged-commit hard rejection, non-validator rejection, 3-validator
 engine round trip to an accepted QC, 2-of-3 equal-stake insufficiency,
 duplicate-entry dedup, network consensus relay + catch-up sync over
 localhost sockets, and snapshot + replay state equality.
+
+
+## Phase C: certificate binding, equivocation slashing, one validator set
+
+These rules close the three consensus findings of the November 2026
+external review. They are consensus rules; kern-go must port them
+(see [go-port-breakpoints.md](go-port-breakpoints.md) §8).
+
+**Certificates are bound to the proposed block.** A validator's first
+vote per (kind, level, round) is stored with its block hash. A quorum is
+weighed only over votes whose hash equals the round's proposed block, the
+certificate contains only those votes, and it is stored only after
+`QuorumCertificate.verify` succeeds against the validator set. Until a
+valid certificate exists, every new vote or the late arrival of the
+proposal re-evaluates the round. A vote for another block can therefore
+neither poison a certificate nor freeze a round.
+
+**Equivocation is visible and punishable.** The node's message
+deduplication key includes the block hash, so a second, conflicting vote
+reaches the engine and is re-gossiped. The engine turns it into
+`SlashingEvidence` once per offence; the validator's node files a
+`SLASH_CONSENSUS_EQUIVOCATION` transaction carrying both signed votes.
+The chain accepts it when both votes decode strictly, are signed with the
+offender's registered key, share kind (PREENDORSE or ENDORSE), level and
+round, differ in block hash, are not from a future level, and the
+offence (validator, kind, level, round) was not slashed before. The slash
+is the same as for governance equivocation: 30% of own stake, 10% of that
+to the reporter, the rest burned, delegators slashed proportionally. The
+offender's consensus weight drops in the same block.
+
+**One validator set.** `Chain.validators` is no longer the list given at
+start-up. It is `consensus_validator_set(state)`: the snapshot
+`state["consensus_set"]` of effective stake, written at genesis and
+refreshed at the end of every block whose level is a multiple of
+`epoch_blocks` (default 120, genesis override). Proposer selection, BFT
+vote weights, quorum verification and block validation all read it from
+the parent state, so every node uses the same set for the same height.
