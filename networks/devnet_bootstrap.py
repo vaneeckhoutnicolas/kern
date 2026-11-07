@@ -139,7 +139,10 @@ def build(out_dir: Path, n_validators: int, initial_stake: int,
         json.dumps(compose, indent=2), encoding="utf-8"
     )
 
-    # README
+    # README. The list is built outside the f-string: Python 3.11 refuses a
+    # backslash inside an f-string expression.
+    more_rpc = "".join(f"- baker{i} → http://localhost:{base_rpc + i}\n"
+                       for i in range(2, n_validators))
     readme = f"""# Kern Devnet — {n_validators} validators
 
 This is a local devnet bootstrap with {n_validators} validators that
@@ -168,7 +171,7 @@ Each validator exposes its RPC on a different port of this machine
 (published on 127.0.0.1 only):
 - baker0 → http://localhost:{base_rpc + 0}
 - baker1 → http://localhost:{base_rpc + 1}
-{"".join(f"- baker{i} → http://localhost:{base_rpc + i}\n" for i in range(2, n_validators))}
+{more_rpc}
 
 ## Query
 
