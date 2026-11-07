@@ -2,7 +2,7 @@
 
 This document describes how Kern hosts Ethereum-compatible execution layers as **Optimistic Smart Rollups** — and why this architecture is the right way to give EVM applications access to Kern without compromising Kern's own properties.
 
-The reference implementation lives in [`kern/rollup.py`](../kern/rollup.py).
+The reference implementation lives in [`kern/rollup.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/rollup.py).
 
 ---
 
@@ -76,7 +76,7 @@ Optimistic rollups have lower latency (batches post immediately, finality lags b
 
 ## Bridge contract
 
-The bridge is a Skald contract on L1 with declared invariants. The reference template ([`kern/rollup.py`](../kern/rollup.py), `BRIDGE_SKALD`) declares:
+The bridge is a Skald contract on L1 with declared invariants. The reference template ([`kern/rollup.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/rollup.py), `BRIDGE_SKALD`) declares:
 
 ```skald
 invariant solvent {
@@ -130,7 +130,7 @@ The closest comparison is Etherlink on Tezos — same architectural pattern, sam
 
 ## Reference implementation status
 
-The reference module [`kern/rollup.py`](../kern/rollup.py) implements:
+The reference module [`kern/rollup.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/rollup.py) implements:
 
 - ✅ `Rollup` descriptor and registration
 - ✅ `Batch` posting with sequencer signatures

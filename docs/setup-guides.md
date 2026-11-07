@@ -110,4 +110,4 @@ Commands are shown in bash blocks unless otherwise noted. File paths are absolut
 
 ## Maintainer
 
-These guides are maintained by **Nicolas Van Eeckhout** (founder) and accept pull requests through the standard contributor process. See [AUTHORS](../AUTHORS) and [contributors-program.md](contributors-program.md).
+These guides are maintained by **Nicolas Van Eeckhout** (founder) and accept pull requests through the standard contributor process. See [AUTHORS](https://github.com/vaneeckhoutnicolas/kern/blob/main/AUTHORS) and [contributors-program.md](contributors-program.md).

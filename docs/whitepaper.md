@@ -163,7 +163,7 @@ Before describing the protocol architecture, we describe **who we are building f
 
 **Current state**: they cannot do this because (a) the Prospectus Regulation requires a registered prospectus, (b) MiFID II Art. 16(9) requires custody segregation, and (c) MAR requires market-abuse controls. To address all three in Solidity would require a custom contract whose audit alone costs €80-150k and whose regulatory approval (from FSMA) is unpredictable because there is no template the regulator has previously approved.
 
-**With Kern**: they deploy [`sto-startup-equity.skald`](../kern/skald/examples/sto-startup-equity.skald), the canonical template encoding the EU securities regime (Prospectus Regulation, MiFID II, MAR) as Skald invariants — note security tokens are excluded from MiCA by Art. 2(4). The FSMA approval cycle may compress materially because the regulator reads the invariants directly. The audit perimeter shrinks (auditor only verifies that the deployment matches the template, not that the template itself is correct). Total cost to launch: ~€25-40k vs ~€150-300k via custom Solidity.
+**With Kern**: they deploy [`sto-startup-equity.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-startup-equity.skald), the canonical template encoding the EU securities regime (Prospectus Regulation, MiFID II, MAR) as Skald invariants — note security tokens are excluded from MiCA by Art. 2(4). The FSMA approval cycle may compress materially because the regulator reads the invariants directly. The audit perimeter shrinks (auditor only verifies that the deployment matches the template, not that the template itself is correct). Total cost to launch: ~€25-40k vs ~€150-300k via custom Solidity.
 
 **Why this is unique to Kern**: no other production L1 has runtime-enforced invariants + a regulator-readable contract language + a community of templates a regulator can accumulate familiarity with over time.
 
@@ -173,7 +173,7 @@ Before describing the protocol architecture, we describe **who we are building f
 
 **Current state**: AIFMD compliance has them publishing NAV quarterly via reports, with depositary co-signing. Token holders cannot redeem outside the quarterly NAV window. The operational cycle is heavy: NAV calculation, depositary validation, distribution document, regulator notice.
 
-**With Kern**: they deploy [`sto-institutional-fund.skald`](../kern/skald/examples/sto-institutional-fund.skald). The contract encodes:
+**With Kern**: they deploy [`sto-institutional-fund.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-institutional-fund.skald). The contract encodes:
 - AIFMD Art. 21 (depositary independence) as the invariant `aifm != depositary` — single-line, regulator-checkable
 - AIFMD Art. 22 (NAV staleness) as `current_level - nav_published_at_level <= nav_max_staleness_levels`, runtime-enforced
 - AIFMD Art. 18 (concentration limits) as `largest_position_pct <= concentration_cap_pct`
@@ -189,7 +189,7 @@ The depositary publishes signed NAV attestations on-chain; the AIFM cannot publi
 
 **Current state**: secondary liquidity is bad. Investors who need to exit before the quarterly window take significant haircuts. Acquisitions are slow (notary-attested title transfers take weeks). Tax distributions require manual reconciliation per investor jurisdiction.
 
-**With Kern**: they deploy [`sto-real-estate.skald`](../kern/skald/examples/sto-real-estate.skald). Key features:
+**With Kern**: they deploy [`sto-real-estate.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-real-estate.skald). Key features:
 - Notary attestations (`schema_id = "realestate.title-registered"`) — the notary signs once, the SPV's title is provable on-chain forever
 - The invariant `rental_income_distributed <= rental_income_received` prevents any Ponzi-style behavior (a distribution can only happen if rent was actually collected); read directly by the AMF
 - Secondary market with floor price set by the compliance oracle, auto-paused if valuation staleness exceeds threshold
@@ -203,7 +203,7 @@ The depositary publishes signed NAV attestations on-chain; the AIFM cannot publi
 
 **Current state**: the committee process is slow (6+ months from application to disbursement), opaque (no community signal on which projects matter most), and the administrative cost is significant relative to small grants (€10-50k size).
 
-**With Kern**: they deploy quarterly Quadratic Funding rounds ([`quadratic-funding.skald`](../kern/skald/examples/quadratic-funding.skald)) for small grants and an annual Retroactive Public Goods Funding round ([`retroactive-pgf.skald`](../kern/skald/examples/retroactive-pgf.skald)) for proven-impact larger grants. Contributors include: affected communities, individual academics, partner foundations. Sybil resistance comes from `identity.proof-of-personhood` attestations (the UNESCO office signs these for verified individuals, with slashing). Administrative cost drops to ~2% (server infrastructure + badge-holder honoraria for RPGF).
+**With Kern**: they deploy quarterly Quadratic Funding rounds ([`quadratic-funding.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/quadratic-funding.skald)) for small grants and an annual Retroactive Public Goods Funding round ([`retroactive-pgf.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/retroactive-pgf.skald)) for proven-impact larger grants. Contributors include: affected communities, individual academics, partner foundations. Sybil resistance comes from `identity.proof-of-personhood` attestations (the UNESCO office signs these for verified individuals, with slashing). Administrative cost drops to ~2% (server infrastructure + badge-holder honoraria for RPGF).
 
 **Why this is unique to Kern**: Gitcoin demonstrates QF works at small scale, but suffers persistent Sybil attacks; Optimism demonstrates RPGF works but is a closed-ecosystem distribution. Kern provides both as native primitives with cryptoeconomic Sybil resistance (via slashable personhood attestations) as a first-class capability.
 
@@ -788,7 +788,7 @@ If you are a regulator (FSMA, AMF, BaFin, CSSF, CONSOB, equivalent) asked to ass
 
 1. Read this whitepaper §3 (use cases) and §4 (thesis)
 2. Read [`sto-mica.md`](sto-mica.md) section "The compliance gap that Skald closes"
-3. Read one of the STO templates ([`kern/skald/examples/sto-startup-equity.skald`](../kern/skald/examples/sto-startup-equity.skald) is the smallest; ~225 lines) noting the `invariant` blocks
+3. Read one of the STO templates ([`kern/skald/examples/sto-startup-equity.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-startup-equity.skald) is the smallest; ~225 lines) noting the `invariant` blocks
 4. Read [`security-review-v11rc.md`](security-review-v11rc.md) to see the security posture honestly stated
 
 This should give you, in roughly 4 hours of reading, a defensible position on whether Kern's compliance model is sound for your jurisdiction.
@@ -797,7 +797,7 @@ If you are a foundation or institution evaluating Kern for a public-goods fundin
 
 1. This whitepaper §1 (ambition) and §3 (use case D — UNESCO heritage preservation)
 2. [`public-goods-funding.md`](public-goods-funding.md) end-to-end
-3. The two PGF templates ([`quadratic-funding.skald`](../kern/skald/examples/quadratic-funding.skald), [`retroactive-pgf.skald`](../kern/skald/examples/retroactive-pgf.skald))
+3. The two PGF templates ([`quadratic-funding.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/quadratic-funding.skald), [`retroactive-pgf.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/retroactive-pgf.skald))
 4. [`setup-foundation.md`](setup-foundation.md) for the operational pattern of running a Foundation that operates Kern-based rounds
 
 If you are an institutional investor or compliance officer at a financial institution evaluating Kern for asset tokenization:
@@ -812,7 +812,7 @@ If you are a software engineer about to write code on Kern:
 1. [`setup-developer.md`](setup-developer.md) → get the chain running locally
 2. [`setup-dapp-developer.md`](setup-dapp-developer.md) → deploy your first contract
 3. [`skald-language.md`](skald-language.md) → language reference (or [`setup-rollup-operator.md`](setup-rollup-operator.md) if you're staying in EVM)
-4. The example contracts in [`kern/skald/examples/`](../kern/skald/examples/) as templates
+4. The example contracts in [`kern/skald/examples/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/kern/skald/examples) as templates
 
 ### 13.4 The reference implementation
 
@@ -927,7 +927,7 @@ Kern's block-production and finality mechanism is adapted from the Tenderbake fa
 
 This document is published under **CC-BY-SA-4.0** (Creative Commons Attribution-ShareAlike 4.0 International). Derivative documents must credit Nicolas Van Eeckhout and Kern contributors as authors.
 
-The reference implementation is published under **Apache-2.0** (the Apache License, Version 2.0). See [`LICENSE`](../LICENSE) for the full terms.
+The reference implementation is published under **Apache-2.0** (the Apache License, Version 2.0). See [`LICENSE`](https://github.com/vaneeckhoutnicolas/kern/blob/main/LICENSE) for the full terms.
 
 The Kern name, the "kn1" address prefix, and the Skald language name are reserved as marks of authenticity by the project; they are not transferable to forks. Forks must use distinct names. See [`originality-and-attribution.md`](originality-and-attribution.md) for the full attribution and forking policy.
 

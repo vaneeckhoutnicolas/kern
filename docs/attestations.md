@@ -314,9 +314,9 @@ This is a v1.3 milestone; for v1.1-rc the claim is plain JSON.
 
 ## 11. Reference
 
-- **Implementation**: [`kern/attestation.py`](../kern/attestation.py) (primitives), [`kern/chain.py`](../kern/chain.py) (handlers `_apply_attest`, `_apply_revoke_attestation`, `_apply_slash_attestation_equivocation`)
-- **Transactions**: [`kern/transaction.py`](../kern/transaction.py) (builders `make_attest`, `make_revoke_attestation`, `make_slash_attestation_equivocation`)
-- **Tests**: [`tests/test_attestations.py`](../tests/test_attestations.py) (25 tests covering math, state, slashing edge cases)
+- **Implementation**: [`kern/attestation.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/attestation.py) (primitives), [`kern/chain.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/chain.py) (handlers `_apply_attest`, `_apply_revoke_attestation`, `_apply_slash_attestation_equivocation`)
+- **Transactions**: [`kern/transaction.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/transaction.py) (builders `make_attest`, `make_revoke_attestation`, `make_slash_attestation_equivocation`)
+- **Tests**: [`tests/test_attestations.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_attestations.py) (25 tests covering math, state, slashing edge cases)
 - **API stability**: [`api-stability.md`](api-stability.md) §2.1 — three new Frozen OpKinds
 - **Oracle use case**: [`oracle-network.md`](oracle-network.md)
 - **STO compliance use case**: [`sto-mica.md`](sto-mica.md)

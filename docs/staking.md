@@ -1,6 +1,6 @@
 # Staking and Delegation
 
-This document is the reference for how staking works in Kern as the code stands in v1.1-rc. It complements [`tokenomics.md`](tokenomics.md) §6. Every rule below can be checked in [`kern/chain.py`](../kern/chain.py).
+This document is the reference for how staking works in Kern as the code stands in v1.1-rc. It complements [`tokenomics.md`](tokenomics.md) §6. Every rule below can be checked in [`kern/chain.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/chain.py).
 
 ## Definition
 
@@ -209,7 +209,7 @@ At the target staking ratio of about 50%, adaptive issuance gives roughly 0.25% 
 
 ## Reference
 
-- Code: [`kern/chain.py`](../kern/chain.py) (`_apply_delegate_stake`, `_apply_undelegate_stake`, `_slash_validator`, `effective_stake`, `delegators_of`, `commission_rate_of`, `_epoch_tick`)
-- Reward math: [`kern/issuance.py`](../kern/issuance.py) (`split_validator_reward`)
-- Transactions: [`kern/transaction.py`](../kern/transaction.py) (`make_delegate_stake`, `make_undelegate_stake`)
-- Tests: [`tests/test_delegation.py`](../tests/test_delegation.py), [`tests/test_phase_d_bonded_stake.py`](../tests/test_phase_d_bonded_stake.py), [`tests/test_phase_e_bond_timing.py`](../tests/test_phase_e_bond_timing.py)
+- Code: [`kern/chain.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/chain.py) (`_apply_delegate_stake`, `_apply_undelegate_stake`, `_slash_validator`, `effective_stake`, `delegators_of`, `commission_rate_of`, `_epoch_tick`)
+- Reward math: [`kern/issuance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/issuance.py) (`split_validator_reward`)
+- Transactions: [`kern/transaction.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/transaction.py) (`make_delegate_stake`, `make_undelegate_stake`)
+- Tests: [`tests/test_delegation.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_delegation.py), [`tests/test_phase_d_bonded_stake.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_phase_d_bonded_stake.py), [`tests/test_phase_e_bond_timing.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_phase_e_bond_timing.py)

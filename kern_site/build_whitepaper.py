@@ -79,6 +79,44 @@ def convert_markdown(text: str) -> tuple[str, list[dict]]:
 # Post-processing the body HTML
 # ============================================================================
 
+REPO_URL = "https://github.com/vaneeckhoutnicolas/kern"
+REPO_ROOT = (HERE / "..").resolve()
+
+
+def link_repo_files_to_github(body: str, source: Path) -> str:
+    """Point relative links to repository files at their page on GitHub.
+
+    The white paper links to sibling documents (`staking.md`) and to code
+    (`../kern/bft.py`). Those paths resolve inside the repository, where the
+    markdown lives, but not on the site, where only whitepaper.html is
+    published: on the site they were 404s. A relative link that resolves to
+    a file or folder of the repository becomes a GitHub link (blob for a
+    file, tree for a folder), fragment kept. Links that are already absolute,
+    in-page anchors, or that do not resolve inside the repository are left
+    alone."""
+    base = source.resolve().parent
+
+    def repl(m: re.Match) -> str:
+        href = m.group(1)
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", href) or href.startswith(("#", "/")):
+            return m.group(0)
+        path, sep, frag = href.partition("#")
+        if not path:
+            return m.group(0)
+        target = (base / path).resolve()
+        try:
+            rel = target.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            return m.group(0)
+        if not target.exists():
+            return m.group(0)
+        kind = "tree" if target.is_dir() else "blob"
+        url = f"{REPO_URL}/{kind}/main/{rel}" + (sep + frag if sep else "")
+        return f'href="{url}" target="_blank" rel="noopener"'
+
+    return re.sub(r'href="([^"]+)"', repl, body)
+
+
 def add_drop_cap_to_sections(body: str) -> str:
     """Wrap the first letter of each section's first paragraph in a drop-cap span.
 
@@ -1140,6 +1178,7 @@ def main() -> int:
     reading_time = compute_reading_time(md_text)
 
     body, toc_items = convert_markdown(md_text)
+    body = link_repo_files_to_github(body, source)
 
     # Strip the H1 + leading byline lines (we render them in the cover)
     body, title, byline = strip_first_h1_and_meta(body)

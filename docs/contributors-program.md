@@ -155,4 +155,4 @@ This is the same multi-channel structure most successful L1s have converged on. 
 - Genesis distribution: [`tokenomics.md`](tokenomics.md) §4
 - Treasury cycle implementation: [`governance.md`](governance.md)
 - Staking and delegation: [`staking.md`](staking.md)
-- Code: [`kern/governance.py`](../kern/governance.py) (treasury state machine)
+- Code: [`kern/governance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/governance.py) (treasury state machine)

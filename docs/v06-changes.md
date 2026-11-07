@@ -167,7 +167,7 @@ The not-yet-implemented BN254 ops (point addition, scalar multiplication, pairin
 
 ## End-to-end demonstration
 
-The integration test [`tests/test_governance_integration.py::test_e2e_state_root_function_swap_via_tx`](../tests/test_governance_integration.py) drives the full v0.6 flow:
+The integration test [`tests/test_governance_integration.py::test_e2e_state_root_function_swap_via_tx`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_governance_integration.py) drives the full v0.6 flow:
 
 1. A validator injects a `GOVERNANCE_PROPOSE` transaction with payload `{"swap": "state_root_function", "to": "trie"}`.
 2. The next block includes the transaction; the proposal appears in `state["governance"]["protocol"]["proposals"]`. The submitter's bond is escrowed.

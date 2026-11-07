@@ -23,9 +23,9 @@ The thesis: **the regulator (FSMA, AMF, CSSF, BaFin, CONSOB, etc.) can read the 
 
 This document is the design rationale and integration guide for the three Skald templates shipped in `kern/skald/examples/`:
 
-- [`sto-startup-equity.skald`](../kern/skald/examples/sto-startup-equity.skald) — startup equity tokenization (€5M-50M raises)
-- [`sto-institutional-fund.skald`](../kern/skald/examples/sto-institutional-fund.skald) — institutional fund tokenization (€50M-500M AUM)
-- [`sto-real-estate.skald`](../kern/skald/examples/sto-real-estate.skald) — real estate fund tokenization (€10M-100M deals)
+- [`sto-startup-equity.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-startup-equity.skald) — startup equity tokenization (€5M-50M raises)
+- [`sto-institutional-fund.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-institutional-fund.skald) — institutional fund tokenization (€50M-500M AUM)
+- [`sto-real-estate.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-real-estate.skald) — real estate fund tokenization (€10M-100M deals)
 
 ---
 
@@ -397,7 +397,7 @@ These templates are deployable today on Kern devnet and demonstrate the complian
 
 ## 9. Reference
 
-- **Templates**: [`kern/skald/examples/sto-startup-equity.skald`](../kern/skald/examples/sto-startup-equity.skald), [`sto-institutional-fund.skald`](../kern/skald/examples/sto-institutional-fund.skald), [`sto-real-estate.skald`](../kern/skald/examples/sto-real-estate.skald)
+- **Templates**: [`kern/skald/examples/sto-startup-equity.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-startup-equity.skald), [`sto-institutional-fund.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-institutional-fund.skald), [`sto-real-estate.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-real-estate.skald)
 - **Slashable attestations**: [`attestations.md`](attestations.md)
 - **Skald language**: [`skald-language.md`](skald-language.md), [`typecheck.md`](typecheck.md)
 - **MiCA full text**: Regulation (EU) 2023/1114 — <https://eur-lex.europa.eu/eli/reg/2023/1114>

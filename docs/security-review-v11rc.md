@@ -319,6 +319,6 @@ The fact that an internal review surfaced two CRITICAL vulnerabilities reinforce
 ## 9. Reference
 
 - Fix commits: see git history for files `kern/transaction.py`, `kern/chain.py`, `kern/attestation.py`, `kern/zk_claims.py`
-- Regression tests: [`tests/test_security_v11rc.py`](../tests/test_security_v11rc.py)
+- Regression tests: [`tests/test_security_v11rc.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_security_v11rc.py)
 - Audit checklist: [`pre-mainnet-checklist.md`](pre-mainnet-checklist.md)
 - Audit setup guide: [`setup-auditor.md`](setup-auditor.md)

@@ -1,6 +1,6 @@
 # Consensus
 
-Kern uses a simplified BFT consensus algorithm in the four-phase family (propose, prevote, precommit, commit). This document describes the protocol as designed. The reference implementation runs the vote exchange over the network ([`bft.py`](../kern/bft.py), [`consensus-wire.md`](consensus-wire.md)); it has not yet run on a network of independent machines.
+Kern uses a simplified BFT consensus algorithm in the four-phase family (propose, prevote, precommit, commit). This document describes the protocol as designed. The reference implementation runs the vote exchange over the network ([`bft.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/bft.py), [`consensus-wire.md`](consensus-wire.md)); it has not yet run on a network of independent machines.
 
 > **Safety status (Phase E).** Before Phase E the engine had no lock: under message delay alone, with every validator honest, two rounds of the same level could finalize two different blocks. Phase E adds a Tendermint-style lock and valid round, signed proposals and a persistent signing journal ([consensus-locking.md](consensus-locking.md), [consensus-wire.md](consensus-wire.md)). Validated on the network simulator and on four node processes on one machine; not yet run on several machines with independent operators, not audited.
 
@@ -38,7 +38,7 @@ A block becomes **endorsed** once > 2/3 of stake has endorsed it. The block's le
 
 ## Proposer selection
 
-For each `(level, round)`, the proposer is chosen deterministically and verifiably from the active validator set, weighted by stake. The selection function in [`consensus.py`](../kern/consensus.py) is:
+For each `(level, round)`, the proposer is chosen deterministically and verifiably from the active validator set, weighted by stake. The selection function in [`consensus.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/consensus.py) is:
 
 ```python
 seed = blake2b(parent_hash || round_le_bytes)
@@ -79,4 +79,4 @@ The slashable consensus offence is **double voting**: signing two PREENDORSE or 
 
 ## Single-validator mode
 
-With a single validator, proposer selection always returns that validator and its own votes form the quorum, so each block is final as soon as it is produced (about 1 second by default; about 500 ms with `--block-time 0.5`). The multi-validator path exchanges pre-endorsements and endorsements over the network ([`network.py`](../kern/network.py), [`bft.py`](../kern/bft.py)) and is subject to the status above.
+With a single validator, proposer selection always returns that validator and its own votes form the quorum, so each block is final as soon as it is produced (about 1 second by default; about 500 ms with `--block-time 0.5`). The multi-validator path exchanges pre-endorsements and endorsements over the network ([`network.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/network.py), [`bft.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/bft.py)) and is subject to the status above.

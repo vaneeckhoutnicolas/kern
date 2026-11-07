@@ -41,7 +41,7 @@ Networks are what you connect to. They progress more slowly than code because ea
 
 Yggdrasil and Midgard are intentionally named: anyone working on a Kern DApp will spin up on Yggdrasil, the same way Ethereum devs use Sepolia. Midgard is the home where real value lives.
 
-Bootstrapping scripts for each network ship alongside the code release that launches it — see [`networks/`](../networks/) for the genesis files, seed-peer lists, and faucet credentials.
+Bootstrapping scripts for each network ship alongside the code release that launches it — see [`networks/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/networks) for the genesis files, seed-peer lists, and faucet credentials.
 
 ## Track 3 — Operational milestones (not code)
 

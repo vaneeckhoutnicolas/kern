@@ -106,7 +106,7 @@ Return the originated contract at the given address (Skald source + current stor
 
 Inject a signed transaction into the node's mempool. The transaction will be gossiped to peers and (if valid) included in the next block by the active baker.
 
-**Request body** — a `Transaction` dict (see [`transaction.py`](../kern/transaction.py)):
+**Request body** — a `Transaction` dict (see [`transaction.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/transaction.py)):
 
 ```json
 {

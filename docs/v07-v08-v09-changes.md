@@ -18,11 +18,11 @@ The three BN254 (alt_bn128) curve operations are the prerequisites for on-chain 
 - **0x07 BN_MUL**: G1 scalar multiplication
 - **0x08 BN_PAIRING**: bilinear pairing check (multi-pair input)
 
-Implementation is in [`kern/evm/bn254.py`](../kern/evm/bn254.py): pure-Python arithmetic over the BN254 base field, with proper modular inverse, point doubling, projective-to-affine conversion, scalar multiplication via double-and-add.
+Implementation is in [`kern/evm/bn254.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/bn254.py): pure-Python arithmetic over the BN254 base field, with proper modular inverse, point doubling, projective-to-affine conversion, scalar multiplication via double-and-add.
 
 The pairing implementation is a **placeholder** that correctly handles the most common case (empty product → identity = 1) and gets calldata parsing / gas accounting right. A full pairing (Miller loop + final exponentiation in F_p^12) is ~1000 lines of careful math; a production node links against a compiled BN254 pairing library (mcl or arkworks bindings — note `blst` implements BLS12-381, not BN254) or uses `py_ecc`. This is documented clearly in the module — the protocol integration is correct, the math is honest about its limits.
 
-### Dynamic gas costs ([`kern/evm/dynamic_gas.py`](../kern/evm/dynamic_gas.py))
+### Dynamic gas costs ([`kern/evm/dynamic_gas.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/dynamic_gas.py))
 
 Static per-opcode gas (as in v0.3-v0.6) was a starting approximation. v0.7 introduces dynamic costs matching the Ethereum Yellow Paper:
 
@@ -77,7 +77,7 @@ The slashing transaction itself (`OpKind.SLASH_EQUIVOCATION`) is a v1.0 item: th
 
 ## v0.9 — Production hardening
 
-### Structured logging ([`kern/observability.py`](../kern/observability.py))
+### Structured logging ([`kern/observability.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/observability.py))
 
 Replaces Python's default logging text with JSON-line output. Every log record is one self-contained JSON object:
 
@@ -127,7 +127,7 @@ with observe_latency("kern_block_apply_seconds"):
 
 Already wired into `chain.apply_block`: every block updates the height gauge, the supply gauge, the validator-count gauge, and observes the apply latency.
 
-### Fuzzing harness ([`kern/fuzzing.py`](../kern/fuzzing.py))
+### Fuzzing harness ([`kern/fuzzing.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/fuzzing.py))
 
 Three property-based fuzzers, each with a seeded RNG (reproducible failures):
 
@@ -144,7 +144,7 @@ Three property-based fuzzers, each with a seeded RNG (reproducible failures):
 
 The default iteration count is 100 per fuzzer (sub-second). Bumping to 10 000 is opt-in via the `slow` pytest marker — designed for nightly CI runs.
 
-### Devnet bootstrap ([`networks/devnet_bootstrap.py`](../networks/devnet_bootstrap.py))
+### Devnet bootstrap ([`networks/devnet_bootstrap.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/networks/devnet_bootstrap.py))
 
 A script that generates a complete local-network setup: N validator keypairs + a shared genesis pre-funding them + a docker-compose file with one container per validator + a README explaining how to use it.
 

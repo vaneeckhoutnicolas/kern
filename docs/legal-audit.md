@@ -362,4 +362,4 @@ This audit was conducted as a transparent internal diligence exercise, published
 
 *Document prepared: May 2026.*
 *Author: Nicolas Van Eeckhout (founder).*
-*License of this document: [CC-BY-SA-4.0](../LICENSE-DOCS.md).*
+*License of this document: [CC-BY-SA-4.0](https://github.com/vaneeckhoutnicolas/kern/blob/main/LICENSE-DOCS.md).*
