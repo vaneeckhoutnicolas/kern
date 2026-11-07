@@ -73,7 +73,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 984 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 992 tests passing.**
 
 ```
 kern/
@@ -125,7 +125,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 984 tests, none skipped
+├── tests/                      # 992 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -186,7 +186,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 984 passed in about 2 minutes (the multi-process consensus tests start real nodes)
+# 992 passed in about 2 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### Open the block explorer (Heimdall)

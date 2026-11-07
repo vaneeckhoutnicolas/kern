@@ -67,9 +67,13 @@ pre-endorsement, after these checks, in this order (`Node._on_proposal_msg`):
    `select_proposer(parent_hash, validators, payload_round)`, txs root,
    fee rules and state root.
 
-Only the first proposal seen for a (level, round), after steps 1 to 3,
-goes through step 4. The node remembers that first signed PROPOSE whether
-or not its block passes step 4. A different block for the same (level,
+The first signed PROPOSE seen for a (level, round), once its signature
+and its proposer are checked (step 2), occupies that (level, round)
+before step 3, and only it can go through step 4. The node remembers it
+whether or not it passes steps 3 and 4. One exception: a proof that does
+not verify is not signed by the proposer and a relay may have damaged it,
+so the same signed PROPOSE arriving later with a valid proof still goes
+on. A different block for the same (level,
 round) is never validated, kept or voted on, even when the first block
 was invalid: the two signed PROPOSE messages are recorded as proposal
 equivocation evidence, and both proposals are relayed once. A block that
