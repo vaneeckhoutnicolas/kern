@@ -61,8 +61,8 @@ A round "fails" when its proposer's block does not collect > 2/3 endorsements wi
 Stake delegation in Kern follows the Liquid PoS model:
 
 1. A holder funds an address and either self-stakes (becoming a baker) or delegates to an existing baker.
-2. Delegated balances count toward the baker's stake for proposer-selection and endorsement weight.
-3. Rewards are credited to the baker, which is expected to forward a share to its delegators. (This is enforced socially, not protocol-level — typical for Liquid PoS designs.)
+2. Delegated balances count toward the baker's stake for proposer selection, vote weight and quorum, through the consensus validator set: a snapshot of effective stake (own stake after slashing plus delegated liquid balances) taken at every epoch boundary (`epoch_blocks`, default 120). A delegation change therefore moves consensus weight at the next boundary, never mid-epoch; a slash lowers the offender's weight immediately. See [consensus-wire.md](consensus-wire.md).
+3. Rewards are split by the protocol: the baker keeps its commission and the share of its own stake, and each delegator is credited its share in proportion to its delegated balance (`issuance.split_validator_reward`).
 4. Delegation can be re-pointed at any time without any lock-up. Withdrawal of self-staked funds is subject to a planned ~14-day unbonding period.
 
 ## Adaptive issuance

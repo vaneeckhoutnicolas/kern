@@ -149,3 +149,14 @@ The source of truth is the code and the named tests; see
 | Genesis: declared `total_supply` must equal the sum of balances; `chain_id` is copied into state. | `chain.initial_state_from_genesis` | same |
 | Attestation revoke starts an unbonding period (`attestation_unbonding_blocks`, default 86 400); bonds are released at the end of the block, after rewards and before the governance tick, in ascending release level then insertion order. A slash resolves both bonds. | `chain._apply_revoke_attestation`, `chain._release_matured_attestation_bonds`, `chain._apply_slash_attestation_equivocation` | `tests/test_phase_b_bond_lifecycle.py` |
 | RIPEMD-160 precompile always returns the real digest; ECRECOVER is an Ed25519 verifier. | `evm.frames` | `tests/test_phase_b_precompiles.py` |
+
+
+## 8. Phase C consensus rule changes
+
+| Rule | Python reference | Pinned by |
+|---|---|---|
+| A QC counts and contains only votes for the round's proposed hash; it is stored only after verification; rounds re-evaluate until a valid QC exists | `bft.BftEngine._build_qc`, `_advance`, `_record_vote` | `tests/test_phase_c_bft_quorum.py` |
+| Consensus message dedup key = (kind, level, round, validator, block_hash) | `node.Node._ingest_consensus` | `tests/test_phase_c_slashing_and_validator_set.py` |
+| New operation `slash_consensus_equivocation` with params `{msg_a, msg_b}` (ConsensusMessage dicts); offence key `"<addr>|<kind>|<level>|<round>"` in `state["consensus_slashes"]` | `chain._apply_slash_consensus_equivocation`, `chain._slash_validator` | same |
+| `state["consensus_set"]` written at genesis and at the end of each block with `level % epoch_blocks == 0` (after the governance tick); a slash lowers the offender's entry to `min(entry, effective_stake)` immediately | `chain.compute_consensus_set`, `chain._epoch_tick`, `chain._slash_validator` | same |
+| The consensus set for block N is the one in the state after block N-1 | `chain.Chain.validators` | same |

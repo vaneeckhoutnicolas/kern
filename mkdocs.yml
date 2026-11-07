@@ -146,6 +146,7 @@ nav:
   - Authorship & attribution:
       - Originality & attribution: originality-and-attribution.md
   - Change history:
+      - v1.1-rc Phase C: phase-c-changes.md
       - v1.1-rc Phase B: phase-b-changes.md
       - v1.1-rc: v11rc-changes.md
       - v1.0-rc: v10rc-changes.md
