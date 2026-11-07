@@ -1,6 +1,6 @@
 # Consensus locking: design for review (Phase E, E1)
 
-Status: **design, not implemented.** This document must be reviewed before any code is written. Section 8 lists the decisions the reviewer is asked to make.
+Status: **design reviewed on 7 November 2026, not implemented.** The reviewer's answers and additions are in section 9; where they change sections 4 to 7, section 9 prevails.
 
 ## 1. The defect
 
@@ -95,7 +95,7 @@ Why this closes the fork: if X is finalized in round r, more than two thirds of 
 
 - `verify_commits` checks endorsements over `(block_hash, level, cert_round)` instead of `header.round`.
 - `validate_and_apply` additionally checks `header.proposer == select_proposer(parent_hash, validator_set, header.payload_round)`. Today only the node checks the proposer of a proposal; a block arriving by gossip or sync is only checked for proposer membership. This is a separate gap found while preparing this design.
-- The node's rule "a proposal's round must be at least the parent's round plus one" applies to `payload_round` against the parent's `cert_round` (question Q4).
+- Every level restarts at round 0; the node's rule "a proposal's round must be at least the parent's round plus one" is removed (decided in section 9.1).
 
 ## 5. Files affected
 
@@ -106,6 +106,7 @@ Why this closes the fork: if X is finalized in round r, more than two thirds of 
 | `kern/consensus.py` | `propose_block` sets `payload_round`; growing timeout |
 | `kern/node.py` | `_propose` re-proposes the valid block; `_on_proposal_msg` checks the proposal message and its proof; `_try_finalize` writes `cert_round`; round driver passes the current round to the engine |
 | `kern/chain.py` | `validate_and_apply` proposer check and `cert_round` in quorum verification |
+| `kern/storage.py` (or a new module) | persistent signing journal, flushed before each signature is released (section 9.2) |
 | `docs/consensus-wire.md` | new message, new field, voting rules |
 | `docs/go-port-breakpoints.md` | new section with the exact rules |
 | `tests/bft_sim.py` | the simulated proposer follows rule 5; block hash from `payload_round` |
@@ -130,3 +131,55 @@ The block format changes, so a devnet must be reset, as after Phases C and D.
 - **Q3.** Should the validator that re-proposes a payload earn anything, given that fees and rewards follow the payload producer?
 - **Q4.** Round numbering: Kern starts a level at the parent's round plus one instead of round 0. Keep it (based on `cert_round`), or restart each level at round 0?
 - **Q5.** Make proposal equivocation slashable now, or log it only?
+
+## 9. Review decisions (7 November 2026)
+
+| Question | Decision |
+|---|---|
+| Q1 Block identity | `payload_round` in the hashed header, `cert_round` in the body, as in section 4.1. |
+| Q2 Nil votes | Later, after E1 is validated. |
+| Q3 Re-proposer reward | None in E1: fees and rewards follow the payload producer only. |
+| Q4 Round numbering | **Every level restarts at round 0.** |
+| Q5 Proposal equivocation | Detect it and keep both signed messages as evidence in E1; make it slashable in a later step. |
+
+### 9.1 Rounds restart at 0 at every level
+
+Two honest nodes can finalize the same payload with certificates from different rounds (one sees the round 0 certificate, the other only the round 1 certificate), so they can store different `cert_round` values for the same block. If the next level started at the parent's `cert_round + 1`, the two nodes would start the next level at different rounds and could disagree on the proposer, which `select_proposer` derives from the parent hash and the round. Continuous numbering would also keep timeouts (`base + r * step`) high after one slow level. Restarting at 0 removes both problems.
+
+Consequences: the node's rule "a proposal's round must be at least the parent's round plus one" is removed; `Node._round` starts at 0 after each finalized block (today `chain.head.header.round + 1`); `cert_round` is never used to derive anything for the next level.
+
+### 9.2 Persistent signing journal
+
+Today `Node.__init__` builds a fresh `BftEngine` at start, with all consensus state in memory. A validator that endorses B, crashes before B is final, and restarts has lost its lock and its record of what it signed: it could sign a conflicting vote, which reintroduces what the lock prevents (and, for two votes in one round, gets it slashed).
+
+E1 therefore adds an append-only signing journal in the node's data directory:
+
+- One record per message the node is about to sign: `chain_id`, `kind`, `level`, `round`, `block_hash`, and the engine's `locked_round`, `locked_hash`, `valid_round`, `valid_hash` after the step.
+- The record is written and flushed to disk (`fsync`) **before** the signature is released to the network.
+- At start, the node replays the journal before signing anything: it restores the lock and valid state of the current level, and refuses to sign any (kind, level, round) already in the journal for a different block.
+- Records below the finalized height can be compacted away.
+- A validator whose journal is missing or unreadable does not sign until it has seen the level it was working on finalized by others (the operator documentation says so).
+
+### 9.3 Proposal equivocation
+
+Two PROPOSAL messages signed by the same proposer for the same (level, round) and different blocks are detected by the engine and kept, both messages, as verifiable evidence, in the same way as vote equivocation evidence. Slashing them is a later step. Safety never depends on this: the two-thirds threshold and the lock rules are enough.
+
+### 9.4 Acceptance criteria
+
+The five tests now marked `xfail(strict=True)` become normal regression tests. In addition:
+
+| Test | Expected result |
+|---|---|
+| Endorsement delay at a round change | No fork |
+| Messages reordered | No fork |
+| Messages lost before stabilization | Every node finalizes after stabilization |
+| One quarter of the stake Byzantine (equivocating, withholding) | Safety holds |
+| Unequal stakes | Safety holds |
+| Re-proposal with a valid round | The level finalizes |
+| Proposal equivocation | Evidence detected and kept |
+| Crash after endorsing, then restart | No conflicting vote after restart |
+| Several consecutive levels | No fork, no divergence of rounds or proposers |
+| New node syncing from scratch | Verifies finality of every block independently |
+
+`tests/bft_sim.py` drives real `BftEngine` instances but models the node and the network itself. The simulated results must be confirmed by a multi-process integration test that runs complete `Node` processes over the real network layer.
+
