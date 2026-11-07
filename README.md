@@ -73,7 +73,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~50 markdown specifications, 974 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 974 tests passing.**
 
 ```
 kern/
@@ -117,7 +117,7 @@ kern/
 │   └── monitoring/             # 7 Grafana dashboards JSON + AlertManager rules +
 │                               #   docker-compose for the full Heimdall + Prometheus +
 │                               #   AlertManager + Grafana stack
-├── docs/                       # ~50 markdown specs and guides
+├── docs/                       # ~70 markdown specs and guides
 ├── networks/
 │   └── devnet_bootstrap.py
 ├── scripts/
