@@ -42,7 +42,7 @@ grep '^version' pyproject.toml
 
 # 3. Run the full test suite
 pytest tests/
-# Expected: 992 passed, none skipped (v1.1-rc)
+# Expected: 1004 passed, none skipped (v1.1-rc)
 
 # 4. Run the originality audit
 grep -rni "copied from\|adapted from\|fork of" --include="*.py" . | \

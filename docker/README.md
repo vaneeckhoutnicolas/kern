@@ -44,6 +44,12 @@ This launches three nodes:
 | node2   | Peer (gossip) | 8732            | 9732            |
 | node3   | Peer (gossip) | 8733            | 9733            |
 
+The RPC ports are published on this machine's loopback address only
+(`127.0.0.1`): inside each container the node listens with
+`--rpc-bind=0.0.0.0` so that the published port reaches it, but nothing
+outside this machine can query it. The peer-to-peer ports are published on
+every interface.
+
 ## Verify the network is live
 
 ```bash
