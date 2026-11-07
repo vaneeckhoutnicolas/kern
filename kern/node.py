@@ -41,6 +41,7 @@ from .bft import (BftEngine, ConsensusMessage, MAX_ROUND_DISTANCE, MsgKind,
                   QuorumCertificate)
 from .block import Block, BlockHeader, txs_merkle_root_hex
 from .chain import Chain, apply_block, state_root_hex, validate_and_apply
+from . import failpoints
 from .consensus import (BakerConfig, propose_block, round_timeout, select_proposer,
                         DEFAULT_BLOCK_TIME_S)
 from .crypto import KernKeypair
@@ -195,7 +196,6 @@ class Node:
                 own_pubkey_b58=baker.pubkey_b58,
                 validator_set=list(chain.validators),
             )
-            self._open_signing_journal()
 
         # Validated (pre-quorum) proposals, keyed by (level, block_hash).
         # Phase E: a payload keeps its hash across rounds, so one entry
@@ -214,6 +214,10 @@ class Node:
         self._proposed_this_round: bool = False
         self._last_block_at: float = time.monotonic()
         self._last_sync_request: float = 0.0
+        # Phase E: the signing journal is opened last, once every structure
+        # it restores into (the pending blocks) exists.
+        if self.bft is not None:
+            self._open_signing_journal()
 
     # ------------------------------------------------------------ lifecycle
 
@@ -302,6 +306,52 @@ class Node:
         self._round = max(0, rec.max_round)
         self.bft.journal = journal
         self.journal = journal
+        self._restore_kept_blocks(level, rec.locked_hash)
+
+    def _restore_kept_blocks(self, level: int, locked_hash: Optional[str]) -> None:
+        """Review of f24564b, P1: bring back the blocks this validator kept
+        on disk before signing for them. A kept block is validated again
+        before use. If this validator holds the quorum alone and is locked
+        on one of its own blocks, its self-commit is counted again: that
+        block is final, and the node finalizes it instead of staying locked
+        on a hash it could no longer propose."""
+        assert self.bft is not None and self.journal is not None
+        parent = self.chain.head
+        for d in self.journal.blocks(level):
+            try:
+                block = Block.from_dict(d)
+            except (ValueError, KeyError, TypeError):
+                continue
+            err, _ = validate_and_apply(block, parent.header, self.chain.state,
+                                        self.chain.validators, require_quorum=False)
+            if err is not None:
+                LOG.warning("kept block at level %d no longer valid: %s", level, err)
+                continue
+            h = block.hash_hex()
+            block.endorsements, block.cert_round = [], None
+            self._pending[(level, h)] = block
+            LOG.info("restored kept block %d (hash %s) from the signing journal", level, h[:12])
+            if block.commits and h == locked_hash:
+                self._refresh_engine()
+                if self._adopt_self_commit(block):
+                    LOG.info("own self-commit for block %d counted again after restart", level)
+
+    def _keep_block(self, block: Block) -> bool:
+        """Write a block body to the signing journal's block file (synced)
+        before anything is signed over it. False if it cannot be written:
+        the caller then signs nothing."""
+        if self.journal is None:
+            return True
+        d = block.to_dict()
+        d["endorsements"] = []
+        d.pop("cert_round", None)
+        try:
+            self.journal.record_block(block.header.level, block.hash_hex(), d)
+        except OSError:
+            LOG.exception("could not keep block %d on disk; not signing for it",
+                          block.header.level)
+            return False
+        return True
 
     def _base_timeout(self) -> float:
         return max(2.0, self.block_time * 4)
@@ -371,6 +421,7 @@ class Node:
         LOG.info("consensus driver started for %s", self.baker.keypair.address)
         tick = min(0.2, self.block_time / 5) if self.block_time > 0 else 0.2
         self._round_deadline = time.monotonic() + self._round_timeout()
+        await self._recover()
         while not self._stop_event.is_set():
             try:
                 await asyncio.sleep(tick)
@@ -406,6 +457,14 @@ class Node:
             except Exception:
                 LOG.exception("consensus loop error")
 
+    async def _recover(self) -> None:
+        """First step after start: let the engine act on the round restored
+        from the journal, and finalize a block whose certificate is already
+        complete (a restored self-commit of a validator holding the quorum
+        alone)."""
+        await self._sync_engine_round()
+        await self._try_finalize()
+
     async def _propose(self, parent: Block) -> None:
         """Propose at the current round (consensus-locking.md, rule 5): the
         block of the engine's valid round when there is one, with its
@@ -437,16 +496,21 @@ class Node:
                 # Transactions that can never become valid (bad signature,
                 # consumed nonce) are dropped so they are not re-tried forever.
                 self.storage.remove_from_mempool(evicted)
-            if block.commits and not self._adopt_self_commit(block):
-                LOG.warning("not proposing at level %d round %d: own endorsement "
-                            "refused by the lock or the signing journal", level, r)
+            if not self._keep_block(block):
                 return
+            if block.commits:
+                if not self._adopt_self_commit(block):
+                    LOG.warning("not proposing at level %d round %d: own endorsement "
+                                "refused by the lock or the signing journal", level, r)
+                    return
+                failpoints.hit("after_self_commit")
         h = block.hash_hex()
         proposal = self.bft.make_proposal(level, r, h, valid_round)
         if proposal is None:
             LOG.warning("not proposing at level %d round %d: refused by the signing "
                         "journal", level, r)
             return
+        failpoints.hit("after_proposal_signed")
         self._pending[(level, h)] = block
         self._seen_proposals.add((level, r, h, proposal.validator, valid_round))
         LOG.info("proposed block %d round %d (payload round %d, valid round %d, "
@@ -454,6 +518,7 @@ class Node:
                  valid_round, h[:12], len(block.transactions))
         if self.network:
             await self.network.broadcast_proposal(self._envelope(block, proposal, proof))
+            failpoints.hit("after_proposal_broadcast")
         # Self-deliver the proposal to our own engine: emits our
         # pre-endorsement, which loops back through _ingest_consensus and,
         # in single-validator operation, drives the full pre-endorse →
@@ -653,11 +718,34 @@ class Node:
         if r > self._round and r <= self._round + MAX_ROUND_DISTANCE:
             await self._set_round(r)
         if self.bft is not None:
+            if not self._keep_block(self._pending[(level, h)]):
+                return
             self._refresh_engine()
             out = self.bft.on_proposal(level, r, h, valid_round=vr, proof=proof,
                                        proposal_msg=pmsg)
             await self._emit_consensus(out)
+            await self._ingest_commits(self._pending[(level, h)])
         await self._try_finalize()
+
+    async def _ingest_commits(self, block: Block) -> None:
+        """Review of f24564b, P1: the endorsements a proposal carries in
+        `commits` (the self-commit of a proposer holding the quorum alone)
+        are ENDORSE votes for the payload round like any other. Counting
+        them lets the other validators finalize the block even if its
+        proposer dies before gossiping the finalized block. Each entry is
+        checked by the engine (signature, validator, window)."""
+        if self.bft is None:
+            return
+        keys = {v["address"]: v["pubkey"] for v in self.chain.validators}
+        for entry in block.commits:
+            addr, sep, sig = entry.partition(":")
+            if not sep or addr not in keys:
+                continue
+            msg = ConsensusMessage(kind=MsgKind.ENDORSE, level=block.header.level,
+                                   round=block.header.payload_round,
+                                   block_hash=block.hash_hex(), validator=addr,
+                                   validator_pubkey=keys[addr], signature=sig)
+            await self._ingest_consensus(msg, from_wire=False)
 
     async def _on_consensus_msg(self, msg_dict: dict) -> None:
         try:

@@ -16,11 +16,13 @@ lock prevents.
 The journal is an append-only file of JSON lines, one record per
 consensus message the node is ABOUT to sign:
 
-    {"chain_id", "kind", "level", "round", "block_hash",
+    {"chain_id", "kind", "level", "round", "block_hash", "signed_valid_round",
      "locked_round", "locked_hash", "valid_round", "valid_hash"}
 
 The lock and valid fields are the engine's state for that level after the
-step. Rules:
+step. `signed_valid_round` is the valid_round a PROPOSE message signs (-1
+for votes): two proposals for one (level, round) that differ only there
+are still two different signed messages. Rules:
 
 - The record is written, flushed and synced to disk (fsync) BEFORE the
   signature is produced, so no signature can exist without its record.
@@ -32,6 +34,16 @@ step. Rules:
   crash; its signature was never produced, so the line is ignored. Any
   other unreadable line makes the whole journal unreadable.
 - Records below the finalized height can be compacted away.
+
+Block bodies (review of f24564b, P1). A lock names a block hash; after a
+crash the node must still have that block, or a validator holding more
+than two thirds of the stake would stay locked on a block it can neither
+propose nor finalize. Every block the node is about to sign for (its own
+proposal, or a validated proposal from another validator) is therefore
+appended to a second file, `signing_journal.blocks.jsonl`, and synced to
+disk BEFORE any signature over it. The node restores these blocks at
+start. The block file only helps liveness: a missing or damaged line is
+skipped, never trusted.
 
 The journal only protects against a crash. It is not a substitute for
 running one signing process per validator key.
@@ -48,6 +60,7 @@ from typing import Dict, List, Optional, Tuple
 LOG = logging.getLogger("kern.signing_journal")
 
 JOURNAL_FILE = "signing_journal.jsonl"
+BLOCKS_FILE = "signing_journal.blocks.jsonl"
 
 _FIELDS = ("kind", "level", "round", "block_hash",
            "locked_round", "locked_hash", "valid_round", "valid_hash")
@@ -73,9 +86,12 @@ class SigningJournal:
         self.path = path
         self.chain_id = chain_id
         self.records: List[dict] = []
-        # (kind, level, round) -> block_hash already signed
-        self._signed: Dict[Tuple[str, int, int], str] = {}
+        # (kind, level, round) -> (block_hash, signed_valid_round) already signed
+        self._signed: Dict[Tuple[str, int, int], Tuple[str, int]] = {}
         self._load()
+        self.blocks_path = os.path.join(os.path.dirname(path) or ".", BLOCKS_FILE)
+        self.block_records: List[dict] = []
+        self._load_blocks()
 
     # ------------------------------------------------------------- loading
 
@@ -131,16 +147,20 @@ class SigningJournal:
 
     def _index(self, rec: dict) -> None:
         self.records.append(rec)
-        self._signed[(rec["kind"], rec["level"], rec["round"])] = rec["block_hash"]
+        svr = rec.get("signed_valid_round", -1)
+        if not isinstance(svr, int) or isinstance(svr, bool):
+            svr = -1
+        self._signed[(rec["kind"], rec["level"], rec["round"])] = (rec["block_hash"], svr)
 
     # ------------------------------------------------------------- queries
 
-    def conflicts(self, kind: str, level: int, round_: int, block_hash: str) -> bool:
+    def conflicts(self, kind: str, level: int, round_: int, block_hash: str,
+                  signed_valid_round: int = -1) -> bool:
         """True if this node already signed (kind, level, round) for another
-        block. Signing the same message again is allowed: it reproduces the
-        same signature."""
+        block, or (for PROPOSE) with another valid_round. Signing the same
+        message again is allowed: it reproduces the same signature."""
         prev = self._signed.get((kind, level, round_))
-        return prev is not None and prev != block_hash
+        return prev is not None and prev != (block_hash, signed_valid_round)
 
     def restore(self, level: int) -> LockRecord:
         """Lock and valid state of `level` after the last recorded step."""
@@ -159,12 +179,14 @@ class SigningJournal:
 
     def append(self, kind: str, level: int, round_: int, block_hash: str, *,
                locked_round: int, locked_hash: Optional[str],
-               valid_round: int, valid_hash: Optional[str]) -> None:
+               valid_round: int, valid_hash: Optional[str],
+               signed_valid_round: int = -1) -> None:
         """Write one record and sync it to disk. Raises OSError on failure;
         the caller must then not sign."""
         rec = {
             "chain_id": self.chain_id,
             "kind": kind, "level": level, "round": round_, "block_hash": block_hash,
+            "signed_valid_round": signed_valid_round,
             "locked_round": locked_round, "locked_hash": locked_hash,
             "valid_round": valid_round, "valid_hash": valid_hash,
         }
@@ -175,9 +197,61 @@ class SigningJournal:
             os.fsync(f.fileno())
         self._index(rec)
 
+    # ------------------------------------------------------------- blocks
+
+    def _load_blocks(self) -> None:
+        if not os.path.exists(self.blocks_path):
+            return
+        try:
+            with open(self.blocks_path, "rb") as f:
+                lines = f.read().split(b"\n")
+        except OSError as e:
+            LOG.warning("signing journal: cannot read kept blocks (%s)", e)
+            return
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                LOG.warning("signing journal: skipping a damaged kept block")
+                continue
+            if (isinstance(rec, dict) and isinstance(rec.get("level"), int)
+                    and isinstance(rec.get("block_hash"), str)
+                    and isinstance(rec.get("block"), dict)):
+                self.block_records.append(rec)
+
+    def has_block(self, level: int, block_hash: str) -> bool:
+        return any(r["level"] == level and r["block_hash"] == block_hash
+                   for r in self.block_records)
+
+    def record_block(self, level: int, block_hash: str, block: dict) -> None:
+        """Keep a block body on disk (synced) before any signature over it.
+        Raises OSError on failure; the caller must then not sign."""
+        if self.has_block(level, block_hash):
+            return
+        rec = {"level": level, "block_hash": block_hash, "block": block}
+        line = json.dumps(rec, sort_keys=True, separators=(",", ":")) + "\n"
+        with open(self.blocks_path, "a", encoding="utf-8", newline="\n") as f:
+            f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
+        self.block_records.append(rec)
+
+    def blocks(self, level: int) -> List[dict]:
+        """Kept block bodies of `level` (dicts, still to be validated)."""
+        return [r["block"] for r in self.block_records if r["level"] == level]
+
+    # ------------------------------------------------------------- compaction
+
     def compact(self, below_level: int) -> None:
-        """Drop the records of levels strictly below `below_level` (already
-        finalized). The new file replaces the old one atomically."""
+        """Drop the records and kept blocks of levels strictly below
+        `below_level` (already finalized). Each new file replaces the old
+        one atomically."""
+        keep_blocks = [r for r in self.block_records if r["level"] >= below_level]
+        if len(keep_blocks) != len(self.block_records):
+            self._rewrite(keep_blocks, self.blocks_path)
+            self.block_records = keep_blocks
         keep = [r for r in self.records if r["level"] >= below_level]
         if len(keep) == len(self.records):
             return
@@ -187,11 +261,12 @@ class SigningJournal:
         for r in keep:
             self._index(r)
 
-    def _rewrite(self, records: List[dict]) -> None:
-        tmp = self.path + ".tmp"
+    def _rewrite(self, records: List[dict], path: Optional[str] = None) -> None:
+        path = path or self.path
+        tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             for r in records:
                 f.write(json.dumps(r, sort_keys=True, separators=(",", ":")) + "\n")
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, self.path)
+        os.replace(tmp, path)

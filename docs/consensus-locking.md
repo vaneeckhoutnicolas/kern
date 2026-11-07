@@ -222,3 +222,20 @@ Each rule was checked to matter: allowing votes in any round brings back forks i
 
 What this does not establish: behaviour on several machines with independent operators and real network conditions, and an external audit of the implementation. Nil votes (Q2) and slashing of proposal equivocation (Q5) remain later steps.
 
+### 10.5 Review of the implementation (f24564b)
+
+A review of the merged code found three points, all confirmed in the code and fixed with tests that fail on f24564b.
+
+**P1, self-commit recovery after a crash (liveness).** The block a validator prepared lived only in memory, while its lock was synced to the journal. A validator holding more than two thirds of the stake that crashed after its self-commit restarted locked on a hash whose block it no longer had: it rebuilt another block (different timestamp, different hash), the lock refused it, and the other validators could not finalize without it. The level stayed stuck. Validators that had received the proposal ignored the self-commit it carried in `commits`, so they could not finalize it either.
+
+Fix:
+- Every block the node is about to sign for (its own proposal, or a validated proposal from another validator) is written to `signing_journal.blocks.jsonl` and synced before any signature over it. The lock and the block it names are therefore always on disk together.
+- At start, the node restores these blocks, validates them again, and, when it is locked on its own block and holds the quorum alone, counts its self-commit again: the block is final, and the node finalizes it.
+- A validator that receives a proposal counts the endorsements in `commits` as ENDORSE votes of the payload round (checked by the engine like any vote). If the proposer dies after broadcasting, the others finalize from its self-commit.
+
+**P2, the journal did not cover every signed field of PROPOSE.** It indexed (kind, level, round) to the block hash only, while a PROPOSE also signs `valid_round`. It now records and compares `signed_valid_round`; a second proposal for one (level, round) with another valid round is refused.
+
+**P2, defence in depth.** `BftEngine.adopt_self_commit` now checks the signature with the validator's own key and that the validator holds strictly more than two thirds of the stake, instead of relying on `propose_block`.
+
+Tests: `tests/test_phase_e_self_commit_recovery.py` (crash after the journal sync, crash during the broadcast, receiver finalizing from the self-commit, journal and engine checks). `tests/test_phase_e_multiprocess.py` adds two weighted (90/10) tests with real processes: four outright kills of the dominant validator at varied moments, and crashes placed exactly through failpoints (`kern/failpoints.py`, off unless a test sets `KERN_FAILPOINT`): after the self-commit is synced, after the PROPOSE is signed, after the proposal is broadcast and before finalization. With the restore and the commit counting disabled, the three failpoint tests stay stuck; with them, the crashed level is finalized with the payload named by the lock, on both nodes.
+
