@@ -42,12 +42,33 @@ DEFAULT_BLOCK_TIME_S = 1.0
 DEFAULT_MAX_TXS_PER_BLOCK = 5_000
 
 
+def round_timeout(base: float, round_: int) -> float:
+    """Phase E (consensus-locking.md, rule 7): the duration of round r grows
+    linearly, base + r * base / 2, so that after the network stabilizes a
+    round eventually lasts long enough for a full exchange. Every level
+    restarts at round 0, so a slow level does not slow down the next."""
+    return base + round_ * base / 2
+
+
+def holds_quorum_alone(address: str, validators: List[dict]) -> bool:
+    """True when `address` holds strictly more than two thirds of the
+    consensus stake on its own (single-validator operation)."""
+    total = sum(v["stake"] for v in validators)
+    own = sum(v["stake"] for v in validators if v["address"] == address)
+    return total > 0 and own * 3 > total * 2
+
+
 def select_proposer(
     parent_hash_hex: str,
     validators: List[dict],
     round_: int,
 ) -> dict:
     """Deterministically select the proposer for a given round.
+
+    Phase E: every level restarts at round 0, and the round is the round
+    of the PROPOSAL. A block proposed again in a later round keeps the
+    header proposer of its payload round; the PROPOSE message is signed by
+    the proposer of the current round.
 
     Stake-weighted: each validator's chance of being selected is
     proportional to its stake. The selection is seeded by
@@ -84,6 +105,14 @@ def propose_block(
     """Construct, fill, and sign a new block proposing it as the next
     head. Transactions are taken in mempool order; ones that fail to
     apply are skipped (kept in the mempool for next round).
+
+    `round_` becomes the header's payload_round. Phase E: the proposer's
+    self-commit (an ENDORSE signature over the block) is only produced
+    when the proposer holds more than two thirds of the consensus stake on
+    its own, so that the signature is a complete quorum and no lock rule
+    is bypassed. With several validators, an endorsement signed before a
+    pre-endorsement certificate exists would let a large proposer plus a
+    byzantine minority finalize a block no honest validator is locked on.
 
     Block rewards are applied to working_state BEFORE computing the
     state_root, so that the published state_root commits to the
@@ -129,7 +158,7 @@ def propose_block(
     # block (it uses block.header.level and block.header.proposer + commits).
     draft_header = BlockHeader(
         level=parent.header.level + 1,
-        round=round_,
+        payload_round=round_,
         timestamp=int(time.time()),
         parent_hash=parent.hash_hex(),
         state_root="",   # placeholder, filled after reward application
@@ -169,11 +198,17 @@ def propose_block(
     # ENDORSE message schema that wire endorsements use, so that a solo
     # proposer's block passes strict quorum verification identically to a
     # multi-validator block (one schema, one verifier: bft.verify_commits).
+    # Phase E: only when the proposer alone holds the quorum (see above).
     from .bft import ConsensusMessage, MsgKind, commit_entry
+    from .chain import consensus_validator_set
+    vs = consensus_validator_set(state_before)
+    if vs and not holds_quorum_alone(proposer_keypair.address, vs):
+        draft_block.commits = []
+        return draft_block
     self_endorse = ConsensusMessage(
         kind=MsgKind.ENDORSE,
         level=draft_header.level,
-        round=draft_header.round,
+        round=draft_header.payload_round,
         block_hash=draft_header.hash_hex(),
         validator=proposer_keypair.address,
         validator_pubkey=proposer_pubkey_b58,

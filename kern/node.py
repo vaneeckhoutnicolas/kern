@@ -37,13 +37,16 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from aiohttp import web
 
-from .bft import BftEngine, ConsensusMessage, MsgKind
+from .bft import (BftEngine, ConsensusMessage, MAX_ROUND_DISTANCE, MsgKind,
+                  QuorumCertificate)
 from .block import Block, BlockHeader, txs_merkle_root_hex
 from .chain import Chain, apply_block, state_root_hex, validate_and_apply
-from .consensus import BakerConfig, propose_block, select_proposer, DEFAULT_BLOCK_TIME_S
+from .consensus import (BakerConfig, propose_block, round_timeout, select_proposer,
+                        DEFAULT_BLOCK_TIME_S)
 from .crypto import KernKeypair
 from .network import Network
 from .rpc import build_app
+from .signing_journal import JOURNAL_FILE, JournalError, SigningJournal
 from .storage import Storage
 from .transaction import Transaction
 
@@ -54,6 +57,9 @@ LOG = logging.getLogger("kern.node")
 # and repeated consensus messages are idempotent in the engine), so a
 # blunt clear-on-overflow bound is sufficient.
 MAX_SEEN_ENTRIES = 50_000
+
+# The signing journal is compacted every this many finalized levels.
+JOURNAL_COMPACT_EVERY = 64
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +110,7 @@ def build_genesis_block(genesis: dict) -> Block:
     }
     header = BlockHeader(
         level=0,
-        round=0,
+        payload_round=0,
         timestamp=int(genesis.get("timestamp", time.time())),
         parent_hash="0" * 64,
         state_root=state_root_hex(state),
@@ -179,23 +185,31 @@ class Node:
 
         # Consensus engine — present iff this node holds a validator key.
         self.bft: Optional[BftEngine] = None
+        self.journal: Optional[SigningJournal] = None
+        # Round management for the level currently being decided. Phase E:
+        # every level starts at round 0 (consensus-locking.md 9.1).
+        self._round: int = 0
         if baker is not None:
             self.bft = BftEngine(
                 own_keypair=baker.keypair,
                 own_pubkey_b58=baker.pubkey_b58,
                 validator_set=list(chain.validators),
             )
+            self._open_signing_journal()
 
-        # Pending (pre-quorum) proposals, keyed by (level, block_hash).
+        # Validated (pre-quorum) proposals, keyed by (level, block_hash).
+        # Phase E: a payload keeps its hash across rounds, so one entry
+        # serves every round in which it is proposed.
         self._pending: Dict[Tuple[int, str], Block] = {}
+        self._seen_proposals: Set[Tuple[int, int, str, str, int]] = set()
+        # (level, round) the engine was last told about.
+        self._engine_pos: Tuple[int, int] = (-1, -1)
         # Advisory dedup sets (see MAX_SEEN_ENTRIES note above).
         self._seen_blocks: Set[str] = set()
         self._seen_txs: Set[str] = set()
         self._seen_cons: Set[Tuple[str, int, int, str, str]] = set()
         # Next nonce for this validator's own slashing reports (Phase D).
         self._next_report_nonce: int = 0
-        # Round management for the level currently being decided.
-        self._round: int = chain.head.header.round + 1
         self._round_deadline: float = 0.0
         self._proposed_this_round: bool = False
         self._last_block_at: float = time.monotonic()
@@ -252,14 +266,72 @@ class Node:
 
     # ------------------------------------------------------------ helpers
 
-    def _round_timeout(self) -> float:
+    def _open_signing_journal(self) -> None:
+        """Phase E (consensus-locking.md 9.2): open the signing journal and
+        restore the lock, valid round and round of the level in progress.
+
+        A journal that cannot be read is moved aside and a new one is
+        started, and so is a missing journal on a chain already past
+        genesis: in both cases this validator does not sign at the level in
+        progress, and resumes once that level has been finalized by others.
+        """
+        assert self.bft is not None
+        level = self.chain.height + 1
+        chain_id = self.chain.state.get("chain_id")
+        path = os.path.join(self.data_dir, JOURNAL_FILE)
+        suspend = False
+        try:
+            journal = SigningJournal(path, chain_id)
+            if not journal.existed and self.chain.height > 0:
+                LOG.warning("no signing journal in %s at height %d: not signing until "
+                            "level %d is finalized by others", self.data_dir,
+                            self.chain.height, level)
+                suspend = True
+        except JournalError as e:
+            aside = f"{path}.unreadable-{int(time.time())}"
+            LOG.error("signing journal unreadable (%s); moved to %s. Not signing until "
+                      "level %d is finalized by others", e, aside, level)
+            os.replace(path, aside)
+            journal = SigningJournal(path, chain_id)
+            suspend = True
+        if suspend:
+            self.bft.no_signing_through_level = level
+        rec = journal.restore(level)
+        self.bft.restore_lock(level, rec.locked_round, rec.locked_hash,
+                              rec.valid_round, rec.valid_hash)
+        self._round = max(0, rec.max_round)
+        self.bft.journal = journal
+        self.journal = journal
+
+    def _base_timeout(self) -> float:
         return max(2.0, self.block_time * 4)
+
+    def _round_timeout(self) -> float:
+        return round_timeout(self._base_timeout(), self._round)
 
     def _refresh_engine(self) -> None:
         if self.bft is not None:
             self.bft.validator_set = self.chain.validators
             self.bft.current_round = self._round
             self.bft.min_level = max(self.bft.min_level, self.chain.height + 1)
+
+    async def _set_round(self, round_: int) -> None:
+        """Move to `round_` at the level in progress and let the engine vote
+        in it if its proposal and votes are already there."""
+        self._round = round_
+        self._proposed_this_round = False
+        self._round_deadline = time.monotonic() + self._round_timeout()
+        await self._sync_engine_round()
+
+    async def _sync_engine_round(self) -> None:
+        if self.bft is None:
+            return
+        pos = (self.chain.height + 1, self._round)
+        if pos == self._engine_pos:
+            return
+        self._engine_pos = pos
+        self._refresh_engine()
+        await self._emit_consensus(self.bft.enter_round(*pos))
 
     @staticmethod
     def _trim(seen: set) -> None:
@@ -279,7 +351,10 @@ class Node:
         self._pending = {k: v for k, v in self._pending.items() if k[0] > level}
         if self.bft is not None:
             self.bft.prune_below(level + 1)
-        self._round = block.header.round + 1
+        if self.journal is not None and level % JOURNAL_COMPACT_EVERY == 0:
+            self.journal.compact(level + 1)
+        self._seen_proposals = {k for k in self._seen_proposals if k[0] > level}
+        self._round = 0
         self._proposed_this_round = False
         self._round_deadline = time.monotonic() + self._round_timeout()
         self._last_block_at = time.monotonic()
@@ -303,11 +378,16 @@ class Node:
                 self._refresh_engine()
 
                 if now > self._round_deadline:
-                    self._round += 1
-                    self._proposed_this_round = False
-                    self._round_deadline = now + self._round_timeout()
                     LOG.info("round timeout at level %d — advancing to round %d",
-                             self.chain.height + 1, self._round)
+                             self.chain.height + 1, self._round + 1)
+                    await self._set_round(self._round + 1)
+                else:
+                    skip = self.bft.round_to_skip_to(self.chain.height + 1)
+                    if skip is not None:
+                        LOG.info("more than a third of the stake is at round %d — "
+                                 "moving there", skip)
+                        await self._set_round(skip)
+                await self._sync_engine_round()
 
                 parent = self.chain.head
                 proposer = select_proposer(
@@ -327,36 +407,82 @@ class Node:
                 LOG.exception("consensus loop error")
 
     async def _propose(self, parent: Block) -> None:
+        """Propose at the current round (consensus-locking.md, rule 5): the
+        block of the engine's valid round when there is one, with its
+        pre-endorsement certificate as proof; otherwise a new payload."""
         assert self.baker is not None and self.bft is not None
-        txs = self.storage.drain_mempool(max_n=self.baker.max_txs_per_block)
-        evicted: list = []
-        block = propose_block(
-            parent=parent,
-            mempool=txs,
-            proposer_keypair=self.baker.keypair,
-            proposer_pubkey_b58=self.baker.pubkey_b58,
-            state_before=self.chain.state,
-            round_=self._round,
-            evict_out=evicted,
-        )
-        if evicted:
-            # Transactions that can never become valid (bad signature,
-            # consumed nonce) are dropped so they are not re-tried forever.
-            self.storage.remove_from_mempool(evicted)
-        h = block.hash_hex()
-        self._pending[(block.header.level, h)] = block
+        level, r = parent.header.level + 1, self._round
         self._proposed_this_round = True
-        LOG.info("proposed block %d round %d (hash %s, %d txs)",
-                 block.header.level, block.header.round, h[:12],
-                 len(block.transactions))
+        lv = self.bft.level_state(level)
+        block: Optional[Block] = None
+        valid_round, proof = -1, None
+        if lv.valid_round >= 0 and lv.valid_hash is not None:
+            cand = self._pending.get((level, lv.valid_hash))
+            qc = self.bft.find_preendorse_qc(level, lv.valid_round, lv.valid_hash)
+            if cand is not None and qc is not None:
+                block, valid_round, proof = cand, lv.valid_round, qc
+        if block is None:
+            txs = self.storage.drain_mempool(max_n=self.baker.max_txs_per_block)
+            evicted: list = []
+            block = propose_block(
+                parent=parent,
+                mempool=txs,
+                proposer_keypair=self.baker.keypair,
+                proposer_pubkey_b58=self.baker.pubkey_b58,
+                state_before=self.chain.state,
+                round_=r,
+                evict_out=evicted,
+            )
+            if evicted:
+                # Transactions that can never become valid (bad signature,
+                # consumed nonce) are dropped so they are not re-tried forever.
+                self.storage.remove_from_mempool(evicted)
+            if block.commits and not self._adopt_self_commit(block):
+                LOG.warning("not proposing at level %d round %d: own endorsement "
+                            "refused by the lock or the signing journal", level, r)
+                return
+        h = block.hash_hex()
+        proposal = self.bft.make_proposal(level, r, h, valid_round)
+        if proposal is None:
+            LOG.warning("not proposing at level %d round %d: refused by the signing "
+                        "journal", level, r)
+            return
+        self._pending[(level, h)] = block
+        self._seen_proposals.add((level, r, h, proposal.validator, valid_round))
+        LOG.info("proposed block %d round %d (payload round %d, valid round %d, "
+                 "hash %s, %d txs)", level, r, block.header.payload_round,
+                 valid_round, h[:12], len(block.transactions))
         if self.network:
-            await self.network.broadcast_proposal(block.to_dict())
+            await self.network.broadcast_proposal(self._envelope(block, proposal, proof))
         # Self-deliver the proposal to our own engine: emits our
         # pre-endorsement, which loops back through _ingest_consensus and,
         # in single-validator operation, drives the full pre-endorse →
         # endorse → quorum-certificate sequence within this tick.
-        out = self.bft.on_proposal(block.header.level, block.header.round, h)
+        out = self.bft.on_proposal(level, r, h, valid_round=valid_round, proof=proof,
+                                   proposal_msg=proposal)
         await self._emit_consensus(out)
+
+    def _adopt_self_commit(self, block: Block) -> bool:
+        """The self-commit of a proposer holding the quorum alone goes
+        through the engine (journal and lock) before the block is shown."""
+        assert self.bft is not None and self.baker is not None
+        addr, _, sig = block.commits[0].partition(":")
+        msg = ConsensusMessage(kind=MsgKind.ENDORSE, level=block.header.level,
+                               round=block.header.payload_round,
+                               block_hash=block.hash_hex(), validator=addr,
+                               validator_pubkey=self.baker.pubkey_b58, signature=sig)
+        return self.bft.adopt_self_commit(msg)
+
+    @staticmethod
+    def _envelope(block: Block, proposal: ConsensusMessage,
+                  proof: Optional[QuorumCertificate]) -> dict:
+        b = block.to_dict()
+        # A proposal carries no quorum yet: the endorsements of the round
+        # that finalizes it are added by each node.
+        b["endorsements"] = []
+        b.pop("cert_round", None)
+        return {"block": b, "proposal": proposal.to_dict(),
+                "proof": proof.to_dict() if proof is not None else None}
 
     async def _emit_consensus(self, msgs: List[ConsensusMessage]) -> None:
         for m in msgs:
@@ -432,9 +558,12 @@ class Node:
         for (lvl, h), block in list(self._pending.items()):
             if lvl != level:
                 continue
-            qc = self.bft.get_endorse_qc(lvl, block.header.round)
-            if qc is None or qc.block_hash != h:
+            # Phase E: an endorsement certificate at ANY round finalizes
+            # the payload; its round is stored as cert_round.
+            qc = self.bft.find_endorse_qc(lvl, h)
+            if qc is None:
                 continue
+            block.cert_round = qc.round
             block.endorsements = sorted(
                 f"{addr}:{sig}" for addr, sig in qc.signatures.items()
             )
@@ -448,51 +577,85 @@ class Node:
 
     # ------------------------------------------------------------ network in
 
-    async def _on_proposal_msg(self, block_dict: dict) -> None:
+    async def _on_proposal_msg(self, envelope: dict) -> None:
+        """A proposal: {"block", "proposal" (signed PROPOSE), "proof"}.
+
+        Checks, in order (docs/consensus-wire.md): decoding; level; the
+        PROPOSE signature and its signer being the proposer selected for
+        the proposal round; the valid round (-1 for a new payload, whose
+        payload round is then the proposal round; otherwise a verified
+        pre-endorsement certificate for the block at valid_round, with
+        payload_round <= valid_round < round); full validation of the block,
+        including the header proposer of the payload round. Only then the
+        engine sees it."""
         try:
-            block = Block.from_dict(block_dict)
-        except (ValueError, KeyError) as e:
+            if not isinstance(envelope, dict):
+                raise ValueError("proposal: expected an object")
+            block = Block.from_dict(envelope.get("block"))  # type: ignore[arg-type]
+            pmsg = ConsensusMessage.from_dict(envelope.get("proposal"))  # type: ignore[arg-type]
+            raw_proof = envelope.get("proof")
+            proof = QuorumCertificate.from_dict(raw_proof) if raw_proof is not None else None
+        except (ValueError, KeyError, TypeError) as e:
             LOG.warning("rejected proposal: %s", e)
             return
         h = block.hash_hex()
         level = self.chain.height + 1
-        if block.header.level != level or (level, h) in self._pending:
+        r, vr = pmsg.round, pmsg.valid_round
+        if (block.header.level != level or pmsg.kind != MsgKind.PROPOSE
+                or pmsg.level != level or pmsg.block_hash != h):
             return
-        if h in self._seen_blocks:
+        key = (level, r, h, pmsg.validator, vr)
+        if key in self._seen_proposals or h in self._seen_blocks:
+            return
+        if self.bft is not None and not self.bft.in_window(level, r):
+            return
+        if not pmsg.verify_signature():
             return
         parent = self.chain.head
-        # The proposal must come from the legitimate proposer of the round
-        # it claims, and rounds only move forward.
-        if block.header.round < parent.header.round + 1:
-            return
-        expected = select_proposer(
-            parent_hash_hex=parent.hash_hex(),
-            validators=self.chain.validators,
-            round_=block.header.round,
-        )
-        if expected["address"] != block.header.proposer:
+        validators = self.chain.validators
+        expected = select_proposer(parent_hash_hex=parent.hash_hex(),
+                                   validators=validators, round_=r)
+        if expected["address"] != pmsg.validator:
             LOG.warning("proposal at level %d round %d from illegitimate "
-                        "proposer %s", level, block.header.round,
-                        block.header.proposer)
+                        "proposer %s", level, r, pmsg.validator)
             return
-        # Full validation BEFORE pre-endorsing (quorum not required on a
-        # proposal — the quorum is what we are about to help build).
-        err, _ = validate_and_apply(
-            block, parent.header, self.chain.state, self.chain.validators,
-            require_quorum=False,
-        )
-        if err is not None:
-            LOG.warning("invalid proposal at level %d: %s", level, err)
-            return
-        self._pending[(level, h)] = block
-        if block.header.round > self._round:
-            self._round = block.header.round
-            self._proposed_this_round = False
-        self._round_deadline = time.monotonic() + self._round_timeout()
+        if vr < 0:
+            if block.header.payload_round != r:
+                LOG.warning("new proposal at level %d round %d with payload round %d",
+                            level, r, block.header.payload_round)
+                return
+        else:
+            if not block.header.payload_round <= vr < r:
+                LOG.warning("re-proposal at level %d round %d: payload round %d, "
+                            "valid round %d", level, r, block.header.payload_round, vr)
+                return
+            if (proof is None or proof.kind != MsgKind.PREENDORSE or proof.level != level
+                    or proof.round != vr or proof.block_hash != h
+                    or not proof.verify(validators)[0]):
+                LOG.warning("re-proposal at level %d round %d without a valid proof "
+                            "for valid round %d", level, r, vr)
+                return
+        self._seen_proposals.add(key)
+        self._trim(self._seen_proposals)
+        if (level, h) not in self._pending:
+            # Full validation BEFORE pre-endorsing (quorum not required on a
+            # proposal — the quorum is what we are about to help build).
+            err, _ = validate_and_apply(block, parent.header, self.chain.state,
+                                        validators, require_quorum=False)
+            if err is not None:
+                LOG.warning("invalid proposal at level %d: %s", level, err)
+                return
+            block.endorsements = []
+            block.cert_round = None
+            self._pending[(level, h)] = block
         if self.network:
-            asyncio.create_task(self.network.broadcast_proposal(block.to_dict()))
+            asyncio.create_task(self.network.broadcast_proposal(envelope))
+        if r > self._round and r <= self._round + MAX_ROUND_DISTANCE:
+            await self._set_round(r)
         if self.bft is not None:
-            out = self.bft.on_proposal(block.header.level, block.header.round, h)
+            self._refresh_engine()
+            out = self.bft.on_proposal(level, r, h, valid_round=vr, proof=proof,
+                                       proposal_msg=pmsg)
             await self._emit_consensus(out)
         await self._try_finalize()
 

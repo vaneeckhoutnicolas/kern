@@ -349,7 +349,7 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | **v1.1-rc Phase B** | **Fixes from two independent external reviews (not a professional security audit): exception boundary, attestation bond unbonding, current level, single delegation truth, chain_id enforcement, genesis checks, real Groth16 verifier, executed-step rollup challenges, portable precompiles ([details](docs/phase-b-changes.md))** | **✅** |
 | **v1.1-rc Phase C** | **Consensus hardening from a third external review: quorum certificates bound to the proposed block, on-chain slashing of consensus equivocation, one effective validator set per epoch ([details](docs/phase-c-changes.md))** | **✅** |
 | **v1.1-rc Phase D** | **Consensus weight backed by slashable collateral: bonded own stake and delegations with an unbonding period, evidence window, bounded BFT state ([details](docs/phase-d-changes.md))** | **✅** |
-| **v1.1-rc Phase E** | **Undelegation lowers weight at once, slashing limited to exposed stake (done); consensus fork reproduced in a network harness, locking design reviewed, implementation pending ([details](docs/phase-e-changes.md), [design](docs/consensus-locking.md))** | **🟡 in progress (this version)** |
+| **v1.1-rc Phase E** | **Undelegation lowers weight at once, slashing limited to exposed stake; consensus fork reproduced in a network harness and closed by a Tendermint-style lock and valid round with a persistent signing journal, validated on the simulator and on four node processes on one machine ([details](docs/phase-e-changes.md), [design](docs/consensus-locking.md))** | **🟡 in progress (this version): review of the implementation, multi-machine devnet** |
 | kern-go | Go client in a sibling repo — this repo remains the executable specification; kern-go becomes the operator reference after differential testing ([details](docs/roadmap.md)) | 🔵 announced |
 | v1.0 | First stable release after audit cycle 1 | 🔵 |
 | Yggdrasil testnet | Public testnet, permissionless validators | 🔵 |
@@ -361,7 +361,7 @@ This is a **reference implementation and protocol specification**, not yet a pro
 
 ## After v1.1-rc — what's next
 
-**The consensus engine is not finished.** With several validators, the current engine can finalize two blocks at the same level under message delay alone; Phase E reproduces this in an automated harness and the fix ([consensus-locking.md](docs/consensus-locking.md)) is not implemented yet. Until it is, multi-validator safety is not established and no testnet should start. Beyond that, what remains is mostly execution work that cannot be solved by writing more code. See [`docs/post-code-roadmap.md`](docs/post-code-roadmap.md) for the detailed plan. In summary:
+**Multi-validator consensus is not yet proven in the field.** Phase E found that the engine could finalize two blocks at the same level under message delay alone, and fixed it with a Tendermint-style lock and valid round ([consensus-locking.md](docs/consensus-locking.md)). The fix passes every scenario of the network simulator, including one quarter of the stake byzantine, and runs on four node processes on one machine. It has not run on several machines with independent operators and has not been audited; no public testnet should start before both. Beyond that, what remains is mostly execution work that cannot be solved by writing more code. See [`docs/post-code-roadmap.md`](docs/post-code-roadmap.md) for the detailed plan. In summary:
 
 | Phase | What | Indicative time | Indicative cost |
 |---|---|---|---:|

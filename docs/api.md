@@ -34,7 +34,7 @@ Return the block at the given level. Returns `404` if no such block exists.
 {
   "header": {
     "level": 4,
-    "round": 4,
+    "payload_round": 0,
     "timestamp": 1779393607,
     "parent_hash": "d9e9dfd05f02...",
     "state_root": "8c1f829c74df...",
@@ -44,7 +44,9 @@ Return the block at the given level. Returns `404` if no such block exists.
     "signature": "ksig..."
   },
   "transactions": [ ... ],
-  "commits": [ "kn1QzHmgDwWi...:ksig..." ]
+  "commits": [],
+  "endorsements": [ "kn1QzHmgDwWi...:ksig...", "..." ],
+  "cert_round": 0
 }
 ```
 

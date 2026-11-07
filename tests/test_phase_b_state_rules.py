@@ -39,7 +39,7 @@ def test_transactions_see_the_level_of_their_block():
     state["total_supply"] = 10_000_000
     state["_current_level"] = 6          # left by the previous block
     tx = make_attest(issuer, "s", "x", {"v": 1}, nonce=0, bond=0)
-    header = BlockHeader(level=7, round=0, timestamp=0, parent_hash="0" * 64, state_root="",
+    header = BlockHeader(level=7, payload_round=0, timestamp=0, parent_hash="0" * 64, state_root="",
                          txs_root=txs_merkle_root_hex([tx]), proposer=baker.address,
                          proposer_pubkey=baker.public_key_b58)
     new_state, results = apply_block(state, Block(header=header, transactions=[tx], commits=[]))

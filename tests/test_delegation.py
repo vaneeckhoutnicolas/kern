@@ -310,7 +310,7 @@ def test_delegator_receives_share_of_block_rewards():
 
     # Bake a block. propose_block computes the state_root and gets rewards.
     parent_header = BlockHeader(
-        level=0, round=0, timestamp=0, parent_hash="0" * 64,
+        level=0, payload_round=0, timestamp=0, parent_hash="0" * 64,
         state_root="dummy", txs_root="0" * 64,
         proposer=baker_kp.address, proposer_pubkey=baker_kp.public_key_b58,
     )

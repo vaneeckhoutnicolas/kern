@@ -26,19 +26,26 @@ from .crypto import (
 )
 from .transaction import Transaction
 
+# Rounds are encoded on 4 bytes in proposer selection
+# (kern.consensus.select_proposer); larger values are refused at decoding.
+MAX_ROUND = 2**32 - 1
+
 
 @dataclass
 class BlockHeader:
     """Block header — signed by the proposer.
 
     `level` is the block height (genesis = 0).
-    `round` is the consensus round at which this block was finalized
-    (used by the Tenderbake-lite logic in `consensus.py`).
+    `payload_round` is the round at which this payload was FIRST proposed
+    (Phase E, docs/consensus-locking.md section 4.1). The header's
+    `proposer` is the proposer selected for that round. A payload keeps
+    its hash when it is proposed again in a later round; the round whose
+    certificate finalized it is `Block.cert_round`, outside the hash.
     `state_root` commits to the post-block ledger state.
     """
 
     level: int
-    round: int
+    payload_round: int
     timestamp: int                 # unix epoch seconds
     parent_hash: str               # hex
     state_root: str                # hex
@@ -50,7 +57,7 @@ class BlockHeader:
     def _signed_payload(self) -> bytes:
         d = {
             "level": self.level,
-            "round": self.round,
+            "payload_round": self.payload_round,
             "timestamp": self.timestamp,
             "parent_hash": self.parent_hash,
             "state_root": self.state_root,
@@ -86,7 +93,7 @@ class BlockHeader:
     def to_dict(self) -> dict:
         return {
             "level": self.level,
-            "round": self.round,
+            "payload_round": self.payload_round,
             "timestamp": self.timestamp,
             "parent_hash": self.parent_hash,
             "state_root": self.state_root,
@@ -111,6 +118,12 @@ class BlockHeader:
                 raise ValueError(f"header.{key}: expected a non-negative integer")
             return v
 
+        def _round(key: str) -> int:
+            v = _uint(key)
+            if v > MAX_ROUND:
+                raise ValueError(f"header.{key}: above the maximum round {MAX_ROUND}")
+            return v
+
         def _hex32(key: str) -> str:
             v = d.get(key)
             if not isinstance(v, str) or len(v) != 64:
@@ -132,7 +145,7 @@ class BlockHeader:
             raise ValueError("header.signature: expected a string or null")
         return cls(
             level=_uint("level"),
-            round=_uint("round"),
+            payload_round=_round("payload_round"),
             timestamp=_uint("timestamp"),
             parent_hash=_hex32("parent_hash"),
             state_root=_hex32("state_root"),
@@ -160,9 +173,20 @@ class Block:
     # by validate_block's quorum check. Empty in single-validator blocks,
     # whose self-commit already satisfies the quorum on its own.
     endorsements: List[str] = field(default_factory=list)
+    # Phase E: the round of the endorsement certificate carried in
+    # `endorsements`. Not hashed (like `endorsements`); never lower than
+    # header.payload_round. None means "same as payload_round" (blocks
+    # built before finalization, and single-validator blocks whose quorum
+    # is the proposer's self-commit). Two honest nodes may store different
+    # cert_round values for the same block; nothing is derived from it.
+    cert_round: Optional[int] = None
 
     def hash_hex(self) -> str:
         return self.header.hash_hex()
+
+    def quorum_round(self) -> int:
+        """The round the endorsement entries are signed for."""
+        return self.header.payload_round if self.cert_round is None else self.cert_round
 
     def to_dict(self) -> dict:
         return {
@@ -170,6 +194,7 @@ class Block:
             "transactions": [tx.to_dict() for tx in self.transactions],
             "commits": self.commits,
             "endorsements": self.endorsements,
+            "cert_round": self.quorum_round(),
         }
 
     @classmethod
@@ -184,11 +209,16 @@ class Block:
         for name, lst in (("commits", commits), ("endorsements", endorsements)):
             if not isinstance(lst, list) or not all(isinstance(c, str) for c in lst):
                 raise ValueError(f"block.{name}: expected a list of strings")
+        cert_round = d.get("cert_round")
+        if cert_round is not None and (not isinstance(cert_round, int) or isinstance(cert_round, bool)
+                                       or cert_round < 0 or cert_round > MAX_ROUND):
+            raise ValueError("block.cert_round: expected an integer between 0 and 2**32 - 1")
         return cls(
             header=BlockHeader.from_dict(d["header"]),
             transactions=[Transaction.from_dict(t) for t in txs],
             commits=list(commits),
             endorsements=list(endorsements),
+            cert_round=cert_round,
         )
 
 

@@ -218,7 +218,7 @@ def test_several_reports_get_consecutive_nonces(tmp_path):
     keys = _keys(4, base=0x60)
     me = keys[0]
     st = _genesis([(k, STAKE) for k in keys], {k.address: 2 * STAKE for k in keys})
-    header = BlockHeader(level=0, round=0, timestamp=int(time.time()), parent_hash="0" * 64,
+    header = BlockHeader(level=0, payload_round=0, timestamp=int(time.time()), parent_hash="0" * 64,
                          state_root=state_root_hex(st), txs_root=txs_merkle_root_hex([]),
                          proposer=me.address, proposer_pubkey=me.public_key_b58)
     header.sign(me)

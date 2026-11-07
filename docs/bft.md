@@ -4,6 +4,8 @@ This document specifies Kern's multi-validator consensus protocol — the full t
 
 The single-validator view (where the lone baker self-commits) lives in [`consensus.md`](consensus.md). This document picks up where that one stops.
 
+> **Phase E.** This page describes the three phases of one round. Safety across rounds rests on the lock and valid round added in Phase E, specified in [consensus-locking.md](consensus-locking.md) and [consensus-wire.md](consensus-wire.md); where this page differs from those two, they prevail.
+
 ---
 
 ## The three phases
@@ -49,7 +51,7 @@ Every round of the consensus protocol exchanges three message types between vali
    └───────────────────────┘
 ```
 
-**The two-phase commit pattern is what gives BFT consensus its safety property.** In the pre-endorsement phase, validators commit to a particular block at a particular (level, round) — they cannot pre-endorse a different block at the same (level, round) without being slashed. Only after seeing > 2/3 of stake committed in the pre-endorsement phase do validators endorse. This guarantees that two contradicting blocks cannot both gather endorsement quorums, because that would require > 2/3 stake to have pre-endorsed both — but pre-endorsing two different blocks at the same (level, round) is a slashable offense.
+**The two-phase commit pattern is what gives BFT consensus its safety property.** In the pre-endorsement phase, validators commit to a particular block at a particular (level, round) — they cannot pre-endorse a different block at the same (level, round) without being slashed. Only after seeing > 2/3 of stake committed in the pre-endorsement phase do validators endorse. This guarantees that two contradicting blocks cannot both gather endorsement quorums **in the same round**, because that would require > 2/3 stake to have pre-endorsed both, and pre-endorsing two different blocks at the same (level, round) is a slashable offense. It says nothing about two different rounds of the same level: before Phase E, round 0 could finalize B on one node and round 1 finalize C on the others, with every validator honest. The lock closes that gap: a validator that endorsed B in round r pre-endorses no other block afterwards, unless it sees a pre-endorsement certificate for that block from a round after r ([consensus-locking.md](consensus-locking.md), section 4.4).
 
 ## Message format
 
@@ -100,7 +102,7 @@ The QC carries enough signatures for any verifier — including a light client �
 | Round buffer    | 250 ms           | Gossip propagation slack                     |
 | **Round total** | **1 second**     | Target block time                            |
 
-If a round elapses without an endorsement quorum, the next round begins with an incremented round number. The proposer for round R+1 is selected via the same VRF-style function as round R, but with `round=R+1` mixed into the seed. Round duration is exponentially padded: round 1 takes 2s, round 2 takes 4s, and so on, to allow recovery from network partitions without thrashing.
+If a round elapses without an endorsement quorum, the next round begins with an incremented round number. The proposer for round R+1 is selected via the same VRF-style function as round R, but with `round=R+1` mixed into the seed. Round duration grows linearly in the implementation: round r lasts `base + r * base / 2`, with `base = max(2 s, 4 × block_time)`, and every level starts again at round 0 (Phase E).
 
 ## Equivocation and slashing
 

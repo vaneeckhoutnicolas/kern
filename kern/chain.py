@@ -1544,7 +1544,8 @@ def validate_and_apply(
     1. Header signature is valid.
     2. parent_hash matches the parent's hash (or is "0"*64 at genesis).
     3. level increments by 1.
-    4. Proposer is in the validator set.
+    4. Proposer is in the validator set and is the proposer selected for
+       the header's payload_round (Phase E); cert_round >= payload_round.
     5. txs_root matches the merkle of the included transactions.
     6. Applying the block yields the declared state_root.
     7. (optional) Commit quorum is met: > 2/3 of validator stake has
@@ -1571,6 +1572,19 @@ def validate_and_apply(
     if not any(v["address"] == block.header.proposer for v in validator_set):
         return "proposer is not in validator set", None
 
+    # Phase E: the header proposer must be THE proposer selected for the
+    # payload round. Before, only the node checked this on live proposals;
+    # a block arriving by gossip or sync was only checked for membership.
+    if parent_header is not None:
+        from .consensus import select_proposer
+        expected = select_proposer(block.header.parent_hash, validator_set,
+                                   block.header.payload_round)
+        if expected["address"] != block.header.proposer:
+            return (f"proposer {block.header.proposer} is not the selected proposer "
+                    f"of round {block.header.payload_round}"), None
+    if block.quorum_round() < block.header.payload_round:
+        return "cert_round below the payload round", None
+
     expected_txs_root = txs_merkle_root_hex(block.transactions)
     if block.header.txs_root != expected_txs_root:
         return "txs_root mismatch", None
@@ -1588,11 +1602,25 @@ def validate_and_apply(
     if require_quorum and block.header.level > 0:
         from .bft import verify_commits
         total_stake = sum(v["stake"] for v in validator_set)
-        entries = list(block.commits) + list(block.endorsements)
-        committed_stake, err = verify_commits(
-            block.hash_hex(), block.header.level, block.header.round,
-            entries, validator_set,
-        )
+        payload_round, cert_round = block.header.payload_round, block.quorum_round()
+        # Phase E: `endorsements` are signed for cert_round, `commits` (the
+        # self-commit of a proposer holding the quorum alone) for the
+        # payload round. Both must verify; they are counted together only
+        # when the two rounds are the same, since a quorum certificate is
+        # made of endorsements of ONE round.
+        if cert_round == payload_round:
+            committed_stake, err = verify_commits(
+                block.hash_hex(), block.header.level, cert_round,
+                list(block.commits) + list(block.endorsements), validator_set,
+            )
+        else:
+            _, err = verify_commits(block.hash_hex(), block.header.level,
+                                    payload_round, list(block.commits), validator_set)
+            if err is None:
+                committed_stake, err = verify_commits(
+                    block.hash_hex(), block.header.level, cert_round,
+                    list(block.endorsements), validator_set,
+                )
         if err is not None:
             return err, None
         if committed_stake * 3 <= total_stake * 2:

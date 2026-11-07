@@ -86,7 +86,7 @@ def test_poisoned_tx_never_reaches_mempool_shape():
 def _valid_header_dict():
     kp = KernKeypair.generate()
     h = BlockHeader(
-        level=1, round=0, timestamp=1_700_000_000,
+        level=1, payload_round=0, timestamp=1_700_000_000,
         parent_hash="ab" * 32, state_root="cd" * 32, txs_root="ef" * 32,
         proposer=kp.address, proposer_pubkey=kp.public_key_b58,
     )
@@ -101,7 +101,7 @@ def test_valid_header_roundtrips():
 
 @pytest.mark.parametrize("field,bad", [
     ("level", "1"), ("level", -1), ("level", True),
-    ("round", 1.0), ("timestamp", -5),
+    ("payload_round", 1.0), ("payload_round", 2**32), ("timestamp", -5),
     ("parent_hash", "zz" * 32), ("parent_hash", "ab" * 31), ("parent_hash", 12),
     ("state_root", None), ("txs_root", "ab"),
     ("proposer", ""), ("proposer_pubkey", 7),

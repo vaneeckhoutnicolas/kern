@@ -40,6 +40,25 @@ Design notes
   conflicting pre-endorsement is a slashable offense.
 - Same for endorsement.
 - The round timer advances rounds when a quorum is not reached in time.
+
+Phase E (E1, docs/consensus-locking.md): locking and valid round.
+
+- A validator votes only in the round its node is in (`current_round`).
+  Votes for other rounds are still recorded and count toward
+  certificates and evidence, but the engine never signs for them.
+- On a pre-endorsement certificate for X in the current round, the
+  validator endorses X and LOCKS on (round, X).
+- A locked validator pre-endorses only its locked block, or a block X
+  proposed with `valid_round > locked_round` and a pre-endorsement
+  certificate for X at `valid_round` (this releases the lock).
+- The engine tracks the most recent pre-endorsement certificate it has
+  seen (`valid_round`, `valid_hash`); the proposer of a later round
+  proposes that block again instead of a new one.
+- Proposals are signed PROPOSE messages carrying `valid_round`. Two
+  different proposals signed for one (level, round) are kept as evidence
+  (not slashable yet).
+- Every signature is first recorded in the persistent signing journal
+  when the node has one (kern.signing_journal).
 """
 
 from __future__ import annotations
@@ -52,6 +71,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 
+from .block import MAX_ROUND
 from .crypto import (
     KernKeypair,
     address_from_pubkey,
@@ -92,6 +112,12 @@ class ConsensusMessage:
 
     For PREENDORSE and ENDORSE, the signature covers (kind, level, round,
     block_hash, validator_pubkey).
+
+    Phase E: a PROPOSE message is signed by the proposer of `round` and
+    also covers `valid_round`: -1 for a new payload, or the round of the
+    pre-endorsement certificate that justifies proposing this block again.
+    Votes have no valid_round (it is -1 and not part of their signature,
+    so vote signatures are unchanged since Phase D).
     """
 
     kind: MsgKind
@@ -101,9 +127,10 @@ class ConsensusMessage:
     validator: str           # kn1... address
     validator_pubkey: str    # kpk... base58
     signature: Optional[str] = None
+    valid_round: int = -1
 
     def _signed_payload(self) -> bytes:
-        d = {
+        d: Dict[str, object] = {
             "kind": self.kind.value,
             "level": self.level,
             "round": self.round,
@@ -111,6 +138,8 @@ class ConsensusMessage:
             "validator": self.validator,
             "validator_pubkey": self.validator_pubkey,
         }
+        if self.kind == MsgKind.PROPOSE:
+            d["valid_round"] = self.valid_round
         return json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     def sign(self, kp: KernKeypair) -> None:
@@ -131,7 +160,7 @@ class ConsensusMessage:
             return False
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "kind": self.kind.value,
             "level": self.level,
             "round": self.round,
@@ -140,6 +169,9 @@ class ConsensusMessage:
             "validator_pubkey": self.validator_pubkey,
             "signature": self.signature,
         }
+        if self.kind == MsgKind.PROPOSE:
+            d["valid_round"] = self.valid_round
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "ConsensusMessage":
@@ -162,14 +194,27 @@ class ConsensusMessage:
         sig = d.get("signature")
         if sig is not None and not isinstance(sig, str):
             raise ValueError("consensus.signature: expected a string or null")
+        kind = MsgKind(_str("kind"))
+        round_ = _uint("round")
+        if round_ > MAX_ROUND:
+            raise ValueError("consensus.round: above the maximum round")
+        vr = d.get("valid_round", -1)
+        if not isinstance(vr, int) or isinstance(vr, bool) or vr < -1:
+            raise ValueError("consensus.valid_round: expected an integer >= -1")
+        if kind == MsgKind.PROPOSE:
+            if vr >= round_:
+                raise ValueError("consensus.valid_round: must be lower than round")
+        elif vr != -1:
+            raise ValueError("consensus.valid_round: only a PROPOSE message carries one")
         return cls(
-            kind=MsgKind(_str("kind")),
+            kind=kind,
             level=_uint("level"),
-            round=_uint("round"),
+            round=round_,
             block_hash=_str("block_hash"),
             validator=_str("validator"),
             validator_pubkey=_str("validator_pubkey"),
             signature=sig,
+            valid_round=vr,
         )
 
 
@@ -202,12 +247,30 @@ class QuorumCertificate:
 
     @classmethod
     def from_dict(cls, d: dict) -> "QuorumCertificate":
+        """Strictly typed decode (Phase E: certificates now travel on the
+        wire as proofs of a valid round); raises ValueError."""
+        if not isinstance(d, dict):
+            raise ValueError("qc: expected an object")
+        for k in ("level", "round"):
+            v = d.get(k)
+            if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v > MAX_ROUND:
+                raise ValueError(f"qc.{k}: expected a non-negative integer")
+        bh = d.get("block_hash")
+        if not isinstance(bh, str) or not bh:
+            raise ValueError("qc.block_hash: expected a non-empty string")
+        sigs = d.get("signatures")
+        if not isinstance(sigs, dict) or not all(
+                isinstance(a, str) and isinstance(v, str) for a, v in sigs.items()):
+            raise ValueError("qc.signatures: expected an object of strings")
+        kind = d.get("kind")
+        if not isinstance(kind, str):
+            raise ValueError("qc.kind: expected a string")
         return cls(
-            kind=MsgKind(d["kind"]),
+            kind=MsgKind(kind),
             level=d["level"],
             round=d["round"],
-            block_hash=d["block_hash"],
-            signatures=dict(d["signatures"]),
+            block_hash=bh,
+            signatures=dict(sigs),
         )
 
     def verify(self, validator_set: List[dict]) -> Tuple[bool, str]:
@@ -257,6 +320,13 @@ class RoundState:
     level: int
     round: int
     proposed_block_hash: Optional[str] = None
+    # Phase E: the signed PROPOSE message (None when the proposal was
+    # handed to the engine without one, as in library use), its
+    # valid_round, and whether the valid round is proven (a verified
+    # pre-endorsement certificate for the block at valid_round).
+    proposal_msg: Optional[ConsensusMessage] = None
+    proposal_valid_round: int = -1
+    proposal_proof_ok: bool = False
     preendorsements: Dict[str, ConsensusMessage] = field(default_factory=dict)
     endorsements: Dict[str, ConsensusMessage] = field(default_factory=dict)
     # Has this validator already pre-endorsed / endorsed this round?
@@ -267,6 +337,42 @@ class RoundState:
     # (b) passed QuorumCertificate.verify against the validator set.
     preendorse_qc: Optional[QuorumCertificate] = None
     endorse_qc: Optional[QuorumCertificate] = None
+
+
+@dataclass
+class LevelState:
+    """Phase E: lock and valid round of one level (Tendermint's
+    lockedRound/lockedValue and validRound/validValue)."""
+
+    locked_round: int = -1
+    locked_hash: Optional[str] = None
+    valid_round: int = -1
+    valid_hash: Optional[str] = None
+
+
+@dataclass
+class ProposalEquivocation:
+    """Two different PROPOSE messages signed by the same proposer for the
+    same (level, round). Phase E keeps them as verifiable evidence; making
+    them slashable is a later step (consensus-locking.md section 9.3)."""
+
+    offender: str
+    msg_a: ConsensusMessage
+    msg_b: ConsensusMessage
+
+    def verify(self) -> Tuple[bool, str]:
+        a, b = self.msg_a, self.msg_b
+        if a.kind != MsgKind.PROPOSE or b.kind != MsgKind.PROPOSE:
+            return False, "not two proposals"
+        if a.validator != self.offender or b.validator != self.offender:
+            return False, "messages do not come from the named offender"
+        if (a.level, a.round) != (b.level, b.round):
+            return False, "proposals are not for the same (level, round)"
+        if a.block_hash == b.block_hash and a.valid_round == b.valid_round:
+            return False, "proposals are not in conflict"
+        if not a.verify_signature() or not b.verify_signature():
+            return False, "one or both signatures invalid"
+        return True, "valid proposal equivocation evidence"
 
 
 # ---------------------------------------------------------------------------
@@ -284,11 +390,17 @@ class BftEngine:
     Wiring:
     - `on_message(msg)` is called when a ConsensusMessage arrives from the
       network. Returns a list of outbound ConsensusMessages to broadcast.
-    - `on_proposal(block)` is called when the local node observes (or
-      itself proposes) a block. Returns outbound messages.
-    - `try_finalize(level, round)` checks whether a block at that
-      (level, round) has reached the endorsement quorum and returns the
-      QC if so.
+    - `on_proposal(level, round, hash, ...)` is called when the local node
+      has validated a proposal (received, or its own). Returns outbound
+      messages.
+    - `enter_round(level, round)` is called by the node when its round
+      changes (timeout, or a proposal for a later round).
+    - `find_endorse_qc(level, hash)` returns an endorsement certificate
+      for a block at any round, once one exists.
+
+    `current_round` is the node's round. When it is None (library use
+    without a driver), the engine votes in the round of each event, as
+    before Phase E; the node and the simulator always set it.
     """
 
     own_keypair: Optional[KernKeypair]
@@ -296,15 +408,24 @@ class BftEngine:
     validator_set: List[dict]  # mutable; updated each cycle
     # Window of recent states, keyed by (level, round).
     states: Dict[Tuple[int, int], RoundState] = field(default_factory=dict)
+    # Phase E: lock and valid state, per level.
+    levels: Dict[int, LevelState] = field(default_factory=dict)
     # Phase C: equivocation evidence observed by this engine, not yet
     # handed to the node for on-chain submission (see take_evidence).
     pending_evidence: List["SlashingEvidence"] = field(default_factory=list)
     _evidence_keys: Set[Tuple[str, str, int, int]] = field(default_factory=set)
+    # Phase E: proposal equivocations, kept (not slashable yet).
+    proposal_evidence: List[ProposalEquivocation] = field(default_factory=list)
     # Phase D: acceptance window. min_level is raised by prune_below; the
     # node sets current_round each tick (None disables the round check,
     # for library use without a driver).
     min_level: int = 0
     current_round: Optional[int] = None
+    # Phase E: persistent signing journal (kern.signing_journal), and a
+    # level up to which this validator must not sign (journal missing or
+    # unreadable after a restart).
+    journal: Optional[object] = None
+    no_signing_through_level: int = -1
 
     # ---------------------------------------------------------------- helpers
 
@@ -314,6 +435,11 @@ class BftEngine:
             self.states[key] = RoundState(level=level, round=round_)
         return self.states[key]
 
+    def level_state(self, level: int) -> LevelState:
+        if level not in self.levels:
+            self.levels[level] = LevelState()
+        return self.levels[level]
+
     def _is_validator(self, addr: str) -> bool:
         return any(v["address"] == addr for v in self.validator_set)
 
@@ -321,6 +447,13 @@ class BftEngine:
         if self.own_keypair is None:
             return None
         return self.own_keypair.address
+
+    def _can_vote(self) -> bool:
+        own = self._own_address()
+        return own is not None and self._is_validator(own)
+
+    def _is_current(self, round_: int) -> bool:
+        return self.current_round is None or round_ == self.current_round
 
     def _stake_of(self, addr: str) -> int:
         v = next((v for v in self.validator_set if v["address"] == addr), None)
@@ -342,11 +475,11 @@ class BftEngine:
         )
         return signed * 3 > self._total_stake() * 2
 
-    def _build_qc(self, kind: MsgKind, state: RoundState) -> Optional[QuorumCertificate]:
-        """Build a quorum certificate for the round's PROPOSED block from the
-        votes of `kind` that are for that exact hash, and return it only if
-        it verifies against the validator set. Pure; never stores."""
-        target = state.proposed_block_hash
+    def _qc_for(self, kind: MsgKind, state: RoundState,
+                target: Optional[str]) -> Optional[QuorumCertificate]:
+        """Build a quorum certificate for `target` from the votes of `kind`
+        that are for that exact hash, and return it only if it verifies
+        against the validator set. Pure; never stores."""
         if target is None:
             return None
         votes = state.preendorsements if kind == MsgKind.PREENDORSE else state.endorsements
@@ -363,6 +496,18 @@ class BftEngine:
                         kind.value, state.level, state.round, reason)
             return None
         return qc
+
+    def _build_qc(self, kind: MsgKind, state: RoundState) -> Optional[QuorumCertificate]:
+        """Certificate for the round's PROPOSED block (Phase C)."""
+        return self._qc_for(kind, state, state.proposed_block_hash)
+
+    def _polka(self, state: RoundState) -> Optional[QuorumCertificate]:
+        """A pre-endorsement certificate for any block in this round."""
+        for h in sorted({m.block_hash for m in state.preendorsements.values()}):
+            qc = self._qc_for(MsgKind.PREENDORSE, state, h)
+            if qc is not None:
+                return qc
+        return None
 
     def _record_vote(self, store: Dict[str, "ConsensusMessage"],
                      msg: "ConsensusMessage") -> bool:
@@ -391,35 +536,134 @@ class BftEngine:
         out, self.pending_evidence = self.pending_evidence, []
         return out
 
+    # ---------------------------------------------------------------- signing
+
+    def _sign(self, msg: ConsensusMessage, after: LevelState) -> bool:
+        """Sign `msg` with the node's key, after recording it in the signing
+        journal together with the level's lock and valid state `after` the
+        step. Returns False (and leaves `msg` unsigned) when the journal
+        refuses: same (kind, level, round) already signed for another
+        block, journal not writable, or signing suspended after a restart
+        without a readable journal."""
+        assert self.own_keypair is not None
+        if msg.level <= self.no_signing_through_level:
+            LOG.warning("not signing %s at L%d R%d: waiting for the level to be "
+                        "finalized by others (signing journal missing or unreadable)",
+                        msg.kind.value, msg.level, msg.round)
+            return False
+        j = self.journal
+        if j is not None:
+            if j.conflicts(msg.kind.value, msg.level, msg.round, msg.block_hash):  # type: ignore[attr-defined]
+                LOG.error("signing journal: refusing %s at L%d R%d for %s, another "
+                          "block was signed there before", msg.kind.value, msg.level,
+                          msg.round, msg.block_hash[:12])
+                return False
+            try:
+                j.append(msg.kind.value, msg.level, msg.round, msg.block_hash,  # type: ignore[attr-defined]
+                         locked_round=after.locked_round, locked_hash=after.locked_hash,
+                         valid_round=after.valid_round, valid_hash=after.valid_hash)
+            except OSError:
+                LOG.exception("signing journal: write failed, not signing")
+                return False
+        msg.sign(self.own_keypair)
+        return True
+
+    def _vote(self, kind: MsgKind, state: RoundState, after: LevelState) -> Optional[ConsensusMessage]:
+        own = self._own_address()
+        assert own is not None and state.proposed_block_hash is not None
+        msg = ConsensusMessage(
+            kind=kind, level=state.level, round=state.round,
+            block_hash=state.proposed_block_hash, validator=own,
+            validator_pubkey=self.own_pubkey_b58 or "",
+        )
+        return msg if self._sign(msg, after) else None
+
+    def restore_lock(self, level: int, locked_round: int, locked_hash: Optional[str],
+                     valid_round: int, valid_hash: Optional[str]) -> None:
+        """Restore a level's lock and valid state from the signing journal."""
+        lv = self.level_state(level)
+        lv.locked_round, lv.locked_hash = locked_round, locked_hash
+        lv.valid_round, lv.valid_hash = valid_round, valid_hash
+
+    # ---------------------------------------------------------------- rules
+
+    def _proof_ok(self, state: RoundState) -> bool:
+        """The proposal's valid_round is proven: by the certificate that
+        came with it (checked in on_proposal), or by a pre-endorsement
+        certificate for the block that this engine has itself seen."""
+        vr = state.proposal_valid_round
+        if vr < 0 or vr >= state.round:
+            return False
+        if state.proposal_proof_ok:
+            return True
+        seen = self.states.get((state.level, vr))
+        return seen is not None and self._qc_for(
+            MsgKind.PREENDORSE, seen, state.proposed_block_hash) is not None
+
+    def _may_preendorse(self, state: RoundState) -> bool:
+        """Rule 2: pre-endorse the proposal X of the current round if this
+        validator is not locked, is locked on X, or the proposal proves a
+        pre-endorsement certificate for X more recent than the lock."""
+        x = state.proposed_block_hash
+        lv = self.level_state(state.level)
+        if lv.locked_round < 0 or lv.locked_hash == x:
+            return True
+        return state.proposal_valid_round > lv.locked_round and self._proof_ok(state)
+
     def _advance(self, state: RoundState) -> List[ConsensusMessage]:
-        """Re-evaluate a round after any new vote or the proposal itself:
-        form the pre-endorsement QC, endorse once it exists, form the
-        endorsement QC. Certificates are only built for the proposed block,
-        and a round keeps trying until a VALID certificate exists, so a
-        stray or hostile vote can delay nothing (Phase C, review point A)."""
+        """Re-evaluate a round after any new vote, the proposal itself, or a
+        change of the node's round. Certificates are only built for a
+        definite block, and a round keeps trying until a VALID certificate
+        exists, so a stray or hostile vote can delay nothing (Phase C,
+        review point A). Phase E: votes are signed only in the current
+        round, under the lock rules."""
         outbound: List[ConsensusMessage] = []
+        lv = self.level_state(state.level)
+
+        # Rule 4: track the most recent pre-endorsement certificate seen,
+        # never above the node's round.
+        if state.round > lv.valid_round and (
+                self.current_round is None or state.round <= self.current_round):
+            polka = (self._build_qc(MsgKind.PREENDORSE, state)
+                     if state.proposed_block_hash is not None else None) or self._polka(state)
+            if polka is not None:
+                lv.valid_round, lv.valid_hash = state.round, polka.block_hash
+
         if state.proposed_block_hash is None:
             return outbound
+        x = state.proposed_block_hash
+        current = self._is_current(state.round)
+
+        # Rule 2: pre-endorse.
+        if current and self._can_vote() and not state.preendorsed and self._may_preendorse(state):
+            msg = self._vote(MsgKind.PREENDORSE, state, lv)
+            if msg is not None:
+                assert msg.validator is not None
+                state.preendorsements.setdefault(msg.validator, msg)
+                state.preendorsed = True
+                outbound.append(msg)
+                LOG.debug("emitted PREENDORSE for L%d R%d hash=%s", state.level, state.round, x[:12])
+
         if state.preendorse_qc is None:
             state.preendorse_qc = self._build_qc(MsgKind.PREENDORSE, state)
-        if state.preendorse_qc is not None:
-            own = self._own_address()
-            if own is not None and self._is_validator(own) and not state.endorsed:
-                assert self.own_keypair is not None
-                endorse = ConsensusMessage(
-                    kind=MsgKind.ENDORSE,
-                    level=state.level,
-                    round=state.round,
-                    block_hash=state.proposed_block_hash,
-                    validator=own,
-                    validator_pubkey=self.own_pubkey_b58 or "",
-                )
-                endorse.sign(self.own_keypair)
-                state.endorsements[own] = endorse
+            if state.preendorse_qc is not None and state.round > lv.valid_round and (
+                    self.current_round is None or state.round <= self.current_round):
+                lv.valid_round, lv.valid_hash = state.round, x
+
+        # Rule 3: endorse and lock, once per round, in the current round.
+        if state.preendorse_qc is not None and current and self._can_vote() and not state.endorsed:
+            after = LevelState(locked_round=state.round, locked_hash=x,
+                               valid_round=max(lv.valid_round, state.round),
+                               valid_hash=x if state.round >= lv.valid_round else lv.valid_hash)
+            msg = self._vote(MsgKind.ENDORSE, state, after)
+            if msg is not None:
+                lv.locked_round, lv.locked_hash = after.locked_round, after.locked_hash
+                lv.valid_round, lv.valid_hash = after.valid_round, after.valid_hash
+                state.endorsements.setdefault(msg.validator, msg)
                 state.endorsed = True
-                outbound.append(endorse)
-                LOG.debug("emitted ENDORSE for L%d R%d hash=%s",
-                          state.level, state.round, state.proposed_block_hash[:12])
+                outbound.append(msg)
+                LOG.debug("emitted ENDORSE for L%d R%d hash=%s", state.level, state.round, x[:12])
+
         if state.endorse_qc is None:
             state.endorse_qc = self._build_qc(MsgKind.ENDORSE, state)
             if state.endorse_qc is not None:
@@ -429,43 +673,111 @@ class BftEngine:
 
     # ---------------------------------------------------------------- inbound
 
-    def on_proposal(self, level: int, round_: int, block_hash: str) -> List[ConsensusMessage]:
-        """Called when this node observes a proposal (either received over
-        the network or self-proposed). Emits a pre-endorsement if we haven't
-        already pre-endorsed this round and we're an active validator."""
+    def on_proposal(self, level: int, round_: int, block_hash: str, *,
+                    valid_round: int = -1,
+                    proof: Optional[QuorumCertificate] = None,
+                    proposal_msg: Optional[ConsensusMessage] = None) -> List[ConsensusMessage]:
+        """Called when this node has validated a proposal for (level, round)
+        (received over the network, or its own). The node has already
+        checked the block and the proposer; the engine checks the signed
+        PROPOSE message when given (and keeps an equivocation as evidence)
+        and the proof of `valid_round`."""
+        if proposal_msg is not None:
+            if (proposal_msg.kind != MsgKind.PROPOSE or proposal_msg.level != level
+                    or proposal_msg.round != round_ or proposal_msg.block_hash != block_hash
+                    or proposal_msg.valid_round != valid_round
+                    or not proposal_msg.verify_signature()):
+                LOG.warning("rejected proposal at L%d R%d: PROPOSE message does not match",
+                            level, round_)
+                return []
         state = self._state(level, round_)
+        if (proposal_msg is not None and state.proposal_msg is not None
+                and state.proposal_msg.validator == proposal_msg.validator
+                and (state.proposal_msg.block_hash != proposal_msg.block_hash
+                     or state.proposal_msg.valid_round != proposal_msg.valid_round)):
+            ev = ProposalEquivocation(proposal_msg.validator, state.proposal_msg, proposal_msg)
+            if ev.verify()[0] and not any(
+                    (e.offender, e.msg_a.level, e.msg_a.round) == (ev.offender, level, round_)
+                    for e in self.proposal_evidence):
+                LOG.error("PROPOSAL EQUIVOCATION: %s at L%d R%d", ev.offender, level, round_)
+                self.proposal_evidence.append(ev)
         if state.proposed_block_hash is None:
             state.proposed_block_hash = block_hash
+            state.proposal_msg = proposal_msg
+            state.proposal_valid_round = valid_round
+            state.proposal_proof_ok = self._check_proof(level, round_, block_hash, valid_round, proof)
         elif state.proposed_block_hash != block_hash:
             LOG.warning(
                 "conflicting proposal at L%d R%d: had %s, got %s — ignoring second",
                 level, round_, state.proposed_block_hash[:12], block_hash[:12],
             )
             return []
+        elif state.proposal_msg is None and proposal_msg is not None:
+            state.proposal_msg = proposal_msg
+        return self._advance(state)
 
-        outbound: List[ConsensusMessage] = []
+    def _check_proof(self, level: int, round_: int, block_hash: str, valid_round: int,
+                     proof: Optional[QuorumCertificate]) -> bool:
+        if valid_round < 0 or proof is None:
+            return False
+        if (proof.kind != MsgKind.PREENDORSE or proof.level != level
+                or proof.round != valid_round or valid_round >= round_
+                or proof.block_hash != block_hash):
+            return False
+        return proof.verify(self.validator_set)[0]
+
+    def enter_round(self, level: int, round_: int) -> List[ConsensusMessage]:
+        """The node moved to `round_` at `level`: re-evaluate that round,
+        whose proposal and votes may already have arrived."""
+        self.current_round = round_
+        state = self.states.get((level, round_))
+        return self._advance(state) if state is not None else []
+
+    def make_proposal(self, level: int, round_: int, block_hash: str,
+                      valid_round: int) -> Optional[ConsensusMessage]:
+        """Sign this node's PROPOSE message for (level, round), through the
+        signing journal. None if the journal refuses (for instance a
+        restarted proposer that already proposed another block there)."""
         own = self._own_address()
-        if own is None or not self._is_validator(own) or state.preendorsed:
-            # Votes that arrived before the proposal may already form a
-            # certificate for it.
-            return outbound + self._advance(state)
+        if own is None:
+            return None
+        msg = ConsensusMessage(kind=MsgKind.PROPOSE, level=level, round=round_,
+                               block_hash=block_hash, validator=own,
+                               validator_pubkey=self.own_pubkey_b58 or "",
+                               valid_round=valid_round)
+        return msg if self._sign(msg, self.level_state(level)) else None
 
-        # Emit pre-endorsement.
-        assert self.own_keypair is not None  # guarded by _own_address above
-        msg = ConsensusMessage(
-            kind=MsgKind.PREENDORSE,
-            level=level,
-            round=round_,
-            block_hash=block_hash,
-            validator=own,
-            validator_pubkey=self.own_pubkey_b58 or "",
-        )
-        msg.sign(self.own_keypair)
-        state.preendorsements[own] = msg
-        state.preendorsed = True
-        outbound.append(msg)
-        LOG.debug("emitted PREENDORSE for L%d R%d hash=%s", level, round_, block_hash[:12])
-        return outbound + self._advance(state)
+    def adopt_self_commit(self, msg: ConsensusMessage) -> bool:
+        """A proposer that holds more than two thirds of the stake signs its
+        own endorsement when it builds the block (kern.consensus
+        propose_block). That signature is an endorsement like any other:
+        record it in the journal, lock on the block, and count it. The
+        caller must not publish the block if this returns False."""
+        own = self._own_address()
+        if own is None or msg.validator != own or msg.kind != MsgKind.ENDORSE:
+            return False
+        if msg.level <= self.no_signing_through_level:
+            return False
+        lv = self.level_state(msg.level)
+        if lv.locked_round >= 0 and lv.locked_hash != msg.block_hash:
+            return False
+        after = LevelState(msg.round, msg.block_hash, max(lv.valid_round, msg.round), msg.block_hash)
+        j = self.journal
+        if j is not None:
+            if j.conflicts(msg.kind.value, msg.level, msg.round, msg.block_hash):  # type: ignore[attr-defined]
+                return False
+            try:
+                j.append(msg.kind.value, msg.level, msg.round, msg.block_hash,  # type: ignore[attr-defined]
+                         locked_round=after.locked_round, locked_hash=after.locked_hash,
+                         valid_round=after.valid_round, valid_hash=after.valid_hash)
+            except OSError:
+                return False
+        lv.locked_round, lv.locked_hash = after.locked_round, after.locked_hash
+        lv.valid_round, lv.valid_hash = after.valid_round, after.valid_hash
+        state = self._state(msg.level, msg.round)
+        state.endorsements.setdefault(own, msg)
+        state.endorsed = True
+        return True
 
     def in_window(self, level: int, round_: int) -> bool:
         """True if (level, round) is close enough to the node's position to
@@ -492,23 +804,26 @@ class BftEngine:
             LOG.warning("rejected message from non-validator %s", msg.validator)
             return []
 
-        state = self._state(msg.level, msg.round)
-        outbound: List[ConsensusMessage] = []
-
         if msg.kind == MsgKind.PROPOSE:
-            # PROPOSE messages are accepted by recording the block hash; the
-            # actual block is delivered via the block-gossip channel.
-            return self.on_proposal(msg.level, msg.round, msg.block_hash)
+            # A bare PROPOSE carries no block: the node only hands proposals
+            # to the engine after validating the block (on_proposal).
+            return []
 
+        state = self._state(msg.level, msg.round)
         if msg.kind == MsgKind.PREENDORSE:
             self._record_vote(state.preendorsements, msg)
-            return outbound + self._advance(state)
-
-        if msg.kind == MsgKind.ENDORSE:
+        elif msg.kind == MsgKind.ENDORSE:
             self._record_vote(state.endorsements, msg)
-            return outbound + self._advance(state)
-
-        return outbound
+        else:
+            return []
+        out = self._advance(state)
+        # A certificate in this round may complete a proof for a later
+        # proposal in the current round (rule 2) or move the valid round.
+        if self.current_round is not None and msg.round < self.current_round:
+            cur = self.states.get((msg.level, self.current_round))
+            if cur is not None:
+                out += self._advance(cur)
+        return out
 
     # ---------------------------------------------------------------- queries
 
@@ -520,11 +835,51 @@ class BftEngine:
         state = self.states.get((level, round_))
         return state.preendorse_qc if state else None
 
+    def find_preendorse_qc(self, level: int, round_: int,
+                           block_hash: str) -> Optional[QuorumCertificate]:
+        """Pre-endorsement certificate for `block_hash` at (level, round),
+        whether or not it was that round's proposal (a proposer's proof)."""
+        state = self.states.get((level, round_))
+        return self._qc_for(MsgKind.PREENDORSE, state, block_hash) if state else None
+
+    def find_endorse_qc(self, level: int, block_hash: str) -> Optional[QuorumCertificate]:
+        """Endorsement certificate for `block_hash` at `level`, at the lowest
+        round where one exists (rule 6: finalize at any round)."""
+        for (lvl, _r), state in sorted(self.states.items()):
+            if lvl != level:
+                continue
+            qc = (state.endorse_qc if state.endorse_qc is not None
+                  and state.endorse_qc.block_hash == block_hash
+                  else self._qc_for(MsgKind.ENDORSE, state, block_hash))
+            if qc is not None:
+                return qc
+        return None
+
+    def round_to_skip_to(self, level: int) -> Optional[int]:
+        """Highest round above the current one in which validators holding
+        more than one third of the stake have already voted (Tendermint's
+        round skip). At least one honest validator is there, so the node
+        can move to that round without waiting for its own timeouts, and a
+        byzantine minority cannot make it jump."""
+        if self.current_round is None:
+            return None
+        total = self._total_stake()
+        best: Optional[int] = None
+        for (lvl, r), st in self.states.items():
+            if lvl != level or r <= self.current_round or (best is not None and r <= best):
+                continue
+            voters = set(st.preendorsements) | set(st.endorsements)
+            if total > 0 and sum(self._stake_of(a) for a in voters) * 3 > total:
+                best = r
+        return best
+
     def prune_below(self, level: int) -> None:
         """Drop state for levels strictly below `level` (free memory)."""
         to_drop = [k for k in self.states if k[0] < level]
         for k in to_drop:
             del self.states[k]
+        for lvl in [lvl for lvl in self.levels if lvl < level]:
+            del self.levels[lvl]
         self.min_level = max(self.min_level, level)
 
 

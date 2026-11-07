@@ -50,7 +50,7 @@ def _genesis_with_validators(keypairs, stake_each=1_000_000_000, balances=None):
     }
     proposer = keypairs[0]
     header = BlockHeader(
-        level=0, round=0, timestamp=int(time.time()),
+        level=0, payload_round=0, timestamp=int(time.time()),
         parent_hash="0" * 64,
         state_root=state_root_hex(state),
         txs_root=txs_merkle_root_hex([]),
@@ -188,17 +188,22 @@ def test_two_of_three_equal_stake_is_insufficient():
     chain = Chain(genesis, validators, initial_state=state)
     block = _propose_next(genesis, chain.state, proposer_kp)
 
-    # Exactly 2 of 3 equal-stake endorse-schema signatures: proposer's
-    # self-commit + one other validator. 2/3 is NOT strictly greater than
-    # 2/3, so the block must be rejected.
-    endorse = ConsensusMessage(
-        kind=MsgKind.ENDORSE, level=1, round=1,
-        block_hash=block.hash_hex(),
-        validator=other_kp.address,
-        validator_pubkey=other_kp.public_key_b58,
-    )
-    endorse.sign(other_kp)
-    block.endorsements = [commit_entry(endorse)]
+    # Exactly 2 of 3 equal-stake endorse-schema signatures. 2/3 is NOT
+    # strictly greater than 2/3, so the block must be rejected. (Phase E:
+    # with several validators the proposer signs no self-commit, so both
+    # signatures are wire endorsements.)
+    assert block.commits == []
+    entries = []
+    for kp in (proposer_kp, other_kp):
+        endorse = ConsensusMessage(
+            kind=MsgKind.ENDORSE, level=1, round=1,
+            block_hash=block.hash_hex(),
+            validator=kp.address,
+            validator_pubkey=kp.public_key_b58,
+        )
+        endorse.sign(kp)
+        entries.append(commit_entry(endorse))
+    block.endorsements = entries
     with pytest.raises(ValueError, match="insufficient commit stake"):
         chain.append(block, require_quorum=True)
 
@@ -212,9 +217,14 @@ def test_duplicate_endorsements_count_once():
     proposer_kp = next(kp for kp in kps if kp.address == sel["address"])
     chain = Chain(genesis, validators, initial_state=state)
     block = _propose_next(genesis, chain.state, proposer_kp)
-    # Repeat the proposer's own valid commit three times as endorsements:
-    # dedup by address must keep counted stake at 1/3 → insufficient.
-    block.endorsements = list(block.commits) * 3
+    # Repeat one valid endorsement three times: dedup by address must keep
+    # counted stake at 1/3, so the quorum is insufficient.
+    endorse = ConsensusMessage(
+        kind=MsgKind.ENDORSE, level=1, round=1, block_hash=block.hash_hex(),
+        validator=proposer_kp.address, validator_pubkey=proposer_kp.public_key_b58,
+    )
+    endorse.sign(proposer_kp)
+    block.endorsements = [commit_entry(endorse)] * 3
     with pytest.raises(ValueError, match="insufficient commit stake"):
         chain.append(block, require_quorum=True)
 
@@ -295,7 +305,7 @@ def test_load_chain_replays_from_periodic_snapshot(tmp_path):
         tx = make_transfer(kp, recipient=alice.address, amount=1000,
                            nonce=level - 1, fee=0)
         block = _propose_next(chain.head, chain.state, kp,
-                              txs=[tx], round_=chain.head.header.round + 1)
+                              txs=[tx], round_=chain.head.header.payload_round + 1)
         chain.append(block, require_quorum=True)
         storage.save_block(block)
         storage.maybe_save_state(chain.state, level)
