@@ -143,7 +143,7 @@ PY_ECC_AVAILABLE = True   # module-level flag, set at import time
 
 If py_ecc is missing, the precompile still handles the empty-input case (returns True), but production nodes MUST install py_ecc.
 
-Future: py_ecc is pure Python and slow (~30ms per pairing). A v1.x will swap for blst via FFI for ~10x speedup — critical for high-throughput zkSNARK verification.
+Future: py_ecc is pure Python and slow (~30ms per pairing). A v1.x will swap in a compiled BN254 pairing backend (mcl or arkworks bindings via FFI) for ~10x speedup — critical for high-throughput zkSNARK verification. Note: blst implements BLS12-381 only and is not a BN254 option; for the Go client the equivalent is gnark-crypto (see go-port-breakpoints.md).
 
 ### Tests
 

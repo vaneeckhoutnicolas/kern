@@ -142,7 +142,7 @@ Kern's reference implementation provides (a) through (f) as a coherent design. T
 - A slashable attestation registry as a protocol primitive
 - A schema marketplace and ZK-claims infrastructure built on (5)
 - An on-chain governance system with dual tracks and equivocation slashing
-- 100,000,000 KRN genesis supply, distributed per the Ethereum 2014 template (70% public sale / 10% founder vested 4y / 15% Foundation / 3% contributors / 2% validator bootstrap)
+- 100,000,000 KRN genesis supply (70% public sale / 10% founder vested 4y / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake)
 
 **Kern is not**:
 - A general-purpose high-throughput chain. The L1 is throughput-limited in service of finality and verifiability. High-throughput applications live in rollups.
@@ -656,9 +656,10 @@ The native token is **KRN**. The smallest unit is the **mukrn** (Tezos homage): 
 |---|---:|---|
 | Public sale | 70% | Sold to the public at genesis (staged distribution; see §12) |
 | Founder | 10% | Vested 4 years, 1-year cliff |
-| Foundation | 15% | Treasury for ecosystem grants, audits, infrastructure |
+| Foundation | 14% | Treasury for ecosystem grants, audits, infrastructure |
 | Contributors | 3% | Retroactive grants for v0.1-v1.0 contributors |
 | Validator bootstrap | 2% | Initial subsidy pool for testnet and mainnet validators |
+| Bootstrap validator stake | 1% | Own stake of the first validator, from the Foundation pool |
 
 ### 9.2 Issuance
 
@@ -820,7 +821,7 @@ Quick start to run Kern locally:
 git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
 cd kern
 pip install -e ".[dev,explorer,docs]"
-pytest tests/                # 692 tests should pass in ~20 seconds
+pytest tests/                # 836 tests should pass in ~20 seconds
 python networks/devnet_bootstrap.py    # local 3-validator devnet
 python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 ```

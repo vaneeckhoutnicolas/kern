@@ -163,8 +163,22 @@ def mukrn_to_krn_str(mukrn: int) -> str:
     return f"{mukrn / MUKRN_PER_KRN:.6f}"
 
 
-def inject(tx: Transaction) -> str:
-    """POST a signed tx to /chain/inject_transaction. Return the tx hash."""
+def bind_chain_id(tx: Transaction, kp: KernKeypair) -> Transaction:
+    """Sign `tx` for the network the RPC node runs. The node rejects a
+    transaction whose chain_id differs from its own (cross-network replay
+    protection), so the wallet asks the node and re-signs."""
+    health = rpc_get(f"{rpc_base()}/chain/health")
+    chain_id = health.get("chain_id") if isinstance(health, dict) else None
+    if chain_id != tx.chain_id:
+        tx.chain_id = chain_id
+        tx.sign(kp)
+    return tx
+
+
+def inject(tx: Transaction, kp: KernKeypair) -> str:
+    """Bind the tx to the node's chain_id, POST it to
+    /chain/inject_transaction, and return the tx hash."""
+    bind_chain_id(tx, kp)
     result = rpc_post(f"{rpc_base()}/chain/inject_transaction", tx.to_dict())
     tx_hash = result.get("hash") or result.get("tx_hash")
     if not tx_hash:
@@ -264,7 +278,7 @@ def cmd_transfer(args):
             print("Aborted.")
             return
 
-    tx_hash = inject(tx)
+    tx_hash = inject(tx, kp)
     print(f"Injected. Tx hash: {tx_hash}")
 
 
@@ -293,7 +307,7 @@ def cmd_delegate(args):
             print("Aborted.")
             return
 
-    tx_hash = inject(tx)
+    tx_hash = inject(tx, kp)
     print(f"Injected. Tx hash: {tx_hash}")
 
 
@@ -318,7 +332,7 @@ def cmd_undelegate(args):
             print("Aborted.")
             return
 
-    tx_hash = inject(tx)
+    tx_hash = inject(tx, kp)
     print(f"Injected. Tx hash: {tx_hash}")
 
 
@@ -353,7 +367,7 @@ def cmd_vote(args):
             print("Aborted.")
             return
 
-    tx_hash = inject(tx)
+    tx_hash = inject(tx, kp)
     print(f"Injected. Tx hash: {tx_hash}")
 
 
@@ -385,7 +399,7 @@ def cmd_slash(args):
             print("Aborted.")
             return
 
-    tx_hash = inject(tx)
+    tx_hash = inject(tx, kp)
     print(f"Injected. Tx hash: {tx_hash}")
 
 

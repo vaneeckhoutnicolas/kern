@@ -215,7 +215,7 @@ def fuzz_governance_invariants(*, iterations: int = 50, seed: int = 0) -> Dict[s
         action = rng.choice(["submit", "vote", "advance", "advance"])
 
         if action == "submit":
-            submitter = rng.choice(validators)["address"]
+            submitter = str(rng.choice(validators)["address"])
             payload = {"params": {"i_max": rng.uniform(0.001, 0.1)}}
             salt = rng.randint(0, 1_000_000)
             ok, _, pid = gov.submit(submitter, payload, level, salt=salt)
@@ -225,7 +225,7 @@ def fuzz_governance_invariants(*, iterations: int = 50, seed: int = 0) -> Dict[s
             if not gov.proposals:
                 continue
             pid = rng.choice(list(gov.proposals.keys()))
-            voter = rng.choice(validators)["address"]
+            voter = str(rng.choice(validators)["address"])
             vote = rng.choice([Vote.YES, Vote.NO, Vote.ABSTAIN])
             gov.vote(pid, voter, vote, level)
         elif action == "advance":
@@ -271,7 +271,7 @@ def fuzz_governance_invariants(*, iterations: int = 50, seed: int = 0) -> Dict[s
 
 def run_all_fuzzers(*, iterations: int = 100, seed: int = 0) -> Dict[str, Any]:
     """Run all fuzzers; aggregate results."""
-    results = {
+    results: Dict[str, Any] = {
         "evm_determinism": fuzz_evm_determinism(iterations=iterations, seed=seed),
         "transaction_safety": fuzz_transaction_safety(iterations=iterations, seed=seed),
         "governance_invariants": fuzz_governance_invariants(iterations=iterations, seed=seed),

@@ -63,6 +63,37 @@ These are the non-code items that have to happen for Kern to be a *real* chain r
 
 The Foundation setup, in particular, is *the* gating item that the rest depends on. Audits are commissioned by a legal entity; bounties pay out from a legal entity; the Foundation also holds the validator registry and signs the genesis ceremony.
 
+## Track 4 — Multi-client (kern-go)
+
+**Announced. Development starts after the v1.1-rc Phase A hardening in this repo.**
+
+A second, independent client in Go — working name **kern-go** — will be
+developed as a sibling repository. The division of roles is deliberate
+and permanent:
+
+- **This Python implementation is the executable specification.** It
+  stays the canonical baseline: readable, exhaustively tested, the place
+  where protocol changes land first. It is not deprecated by the port.
+- **kern-go becomes the reference client for operators** once — and only
+  once — it passes differential testing against this repo: identical
+  canonical encodings, identical hashes, identical state roots on the
+  shared vectors (see [`go-port-breakpoints.md`](go-port-breakpoints.md)
+  §6). Until then it is a candidate, not a reference.
+- **Skald is unchanged.** The contract language, its type checker, and
+  its deploy-time guarantees are protocol surface, not client surface.
+- **Protocol changes land here first**, then port. A divergence between
+  the clients is a kern-go bug by definition until proven to be a
+  specification bug here.
+
+Why Go: native performance for signature verification and state hashing,
+a single static binary for validator operations, first-class concurrency
+for the networking layer, and `gnark-crypto` for BN254 (the pure-Python
+`py_ecc` dependency is the current performance and portability
+bottleneck; note that blst is BLS12-381-only and is **not** a BN254
+option). The full inventory of translation hazards — integer widths,
+canonical JSON, map ordering, crypto backends, concurrency — is
+maintained in [`go-port-breakpoints.md`](go-port-breakpoints.md).
+
 ## Cross-track timing (realistic if pursued seriously)
 
 Assuming a small focused team and a serious commitment to the audit-driven path:
@@ -97,6 +128,7 @@ The three-track structure makes it visible that progress on one track doesn't au
 
 ## Status as of this commit
 
-- **Code**: v0.9 ✅ shipped. v1.0-rc 🟡 in progress (genesis distribution + stake delegation + slashing tx + dynamic gas wiring done; remaining: BN254 real pairing, API freeze spec, mkdocs site).
+- **Code**: v1.1-rc ✅ with the Phase A hardening applied: consensus on the wire (every networked block requires a cryptographically verified > 2/3 endorsement quorum), strict typed ingress decoding, integer-only issuance (ppm fixed point), periodic state snapshots with deterministic replay, catch-up sync and re-gossip, mypy clean. See [`consensus-wire.md`](consensus-wire.md).
+- **Multi-client**: kern-go announced (Track 4). This repo remains the executable specification and baseline; the Go client becomes the operator-facing reference after differential testing.
 - **Networks**: Devnet bootstrap script ships in `networks/devnet_bootstrap.py`. Previewnet design pending.
 - **Ops**: All blocked on Foundation setup, which is a real-world action no codebase can take by itself. Genesis distribution table is finalized — see [`tokenomics.md`](tokenomics.md) §4 and [`contributors-program.md`](contributors-program.md).

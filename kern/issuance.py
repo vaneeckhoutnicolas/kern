@@ -2,71 +2,81 @@
 # Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
 """
 kern.issuance
-=============
+-------------
 
-Adaptive issuance for Kern.
+Adaptive issuance: per-block rewards with a self-stabilizing emission
+curve, computed **entirely in integer arithmetic**.
 
-The protocol targets a fixed staking ratio (default 50%). When realized
-staking is below target, block rewards rise (incentivizing more stake);
-when above target, rewards fall (reducing dilution of non-stakers).
+Why integers only
+-----------------
 
-The emission rate as a function of staking ratio
-------------------------------------------------
+Issuance is consensus-critical: every validator must derive the exact
+same reward from the same state, and a future second client (kern-go)
+must reproduce the same values bit-for-bit. Floating point is therefore
+banned from this module. All rates are expressed in **parts per million
+(ppm)**: 1_000_000 ppm = 100%.
 
-    i(r) = i_min + (i_max - i_min) * smoothstep(saturate(1 - r/target))
+The curve
+---------
 
-where:
-    r           = realized staking ratio (staked / total supply), 0..1
-    target      = target staking ratio, default 0.5
-    i_min       = floor inflation, default 0.0025  (0.25%/yr)
-    i_max       = ceiling inflation, default 0.06  (6%/yr)
-    saturate(x) = clamp(x, 0, 1)
-    smoothstep(x) = x * x * (3 - 2 * x)
+    i(r) = i_min + (i_max - i_min) * smoothstep(1 - r / target)
+
+where (all in ppm):
+
+    r           = realized staking ratio       (staked * PPM // supply)
+    target      = target staking ratio,        default 500_000  (50%)
+    i_min       = floor inflation,             default   2_500  (0.25%/yr)
+    i_max       = ceiling inflation,           default  60_000  (6%/yr)
+    smoothstep(x) = x*x*(3*PPM - 2*x) // PPM²   on the clamped domain [0, PPM]
 
 The shape:
     r = 0      →  i = i_max   (max incentive to stake)
     r = target →  i = i_min   (target reached, minimum dilution)
     r > target →  i = i_min   (no need for more stake)
 
-The smoothstep avoids sharp transitions that would create gaming
-opportunities around the target.
-
 Per-block reward
 ----------------
 
-    reward_per_block = (i * total_supply) / blocks_per_year
+    reward_per_block = supply * i_ppm // (PPM * blocks_per_year)
 
-with blocks_per_year derived from the protocol's target block time:
+with blocks_per_year an exact integer derived from the target block
+time expressed in **milliseconds**:
 
-    blocks_per_year = 365.25 * 24 * 3600 / target_block_time_seconds
+    blocks_per_year = SECONDS_PER_YEAR * 1000 // target_block_time_ms
 
-For 1-second blocks: ~31_557_600 blocks/year.
+For 1-second blocks: 31_557_600 blocks/year.
 
 Distribution
 ------------
 
-Each block reward is split:
+Each block reward is split (ppm shares):
 
-    treasury_share = 5%  →  on-chain treasury contract
-    baker_share    = 95% →  proposer + endorsers (proportional to stake)
+    treasury_share_ppm = 50_000  (5%)  →  on-chain treasury contract
+    remainder                          →  proposer + endorsers
 
-The baker_share is further divided proportionally: the round's proposer
-receives a fixed proposer_bonus (default 10% of baker_share), and the
-remainder is distributed to endorsing validators proportional to their
-stake among endorsers.
+The proposer receives proposer_bonus_ppm (default 100_000 = 10%) of the
+baker pool; the remainder is distributed to endorsing validators
+proportional to stake, with the rounding leftover going to the proposer.
+
+Porting note (kern-go)
+----------------------
+
+Intermediate products here can exceed int64: `supply * rate_ppm` reaches
+~6e18 at genesis supply and grows with issuance; `remainder * stake`
+reaches ~1e23. Python integers are arbitrary precision; the Go client
+MUST use math/bits.Mul64+Div64 or math/big for these products. See
+docs/go-port-breakpoints.md.
 
 Concrete API
 ------------
 
     >>> p = IssuanceParams()
-    >>> issuance_rate(staking_ratio=0.0, params=p)
-    0.06
-    >>> issuance_rate(staking_ratio=0.5, params=p)
-    0.0025
-    >>> reward_per_block(total_supply=1_000_000_000_000_000, ratio=0.3, params=p)
-    760...
-
-All amounts are integers (mukrn); supply is expressed in mukrn = 10⁻⁶ KRN.
+    >>> issuance_rate_ppm(0, p)
+    60000
+    >>> issuance_rate_ppm(500_000, p)
+    2500
+    >>> reward_per_block(1_000_000_000_000_000, 300_000, p)
+    720587
 """
 
 from __future__ import annotations
@@ -75,75 +85,108 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 
-SECONDS_PER_YEAR = int(365.25 * 24 * 3600)  # 31_557_600
+PPM = 1_000_000
+SECONDS_PER_YEAR = int(365.25 * 24 * 3600)  # 31_557_600 (exact int)
+
+# Legacy float keys accepted by IssuanceParams.from_dict for state written
+# before the integer migration; converted once, at the parsing boundary.
+_LEGACY_FLOAT_KEYS = {
+    "i_min": "i_min_ppm",
+    "i_max": "i_max_ppm",
+    "target_staking_ratio": "target_staking_ratio_ppm",
+    "treasury_share": "treasury_share_ppm",
+    "proposer_bonus": "proposer_bonus_ppm",
+}
 
 
 @dataclass(frozen=True)
 class IssuanceParams:
-    """Parameters of the adaptive issuance formula. All amendable through
-    on-chain governance."""
+    """Parameters of the adaptive issuance formula, all integers.
+    All amendable through on-chain governance."""
 
-    i_min: float = 0.0025                 # 0.25%/yr at target
-    i_max: float = 0.06                   # 6%/yr at zero staking
-    target_staking_ratio: float = 0.50    # 50%
-    target_block_time_seconds: float = 1.0
-    treasury_share: float = 0.05          # 5% to treasury
-    proposer_bonus: float = 0.10          # 10% of baker share
+    i_min_ppm: int = 2_500                    # 0.25%/yr at target
+    i_max_ppm: int = 60_000                   # 6%/yr at zero staking
+    target_staking_ratio_ppm: int = 500_000   # 50%
+    target_block_time_ms: int = 1_000         # 1 second
+    treasury_share_ppm: int = 50_000          # 5% to treasury
+    proposer_bonus_ppm: int = 100_000         # 10% of baker share
 
-    def blocks_per_year(self) -> float:
-        return SECONDS_PER_YEAR / self.target_block_time_seconds
+    def blocks_per_year(self) -> int:
+        return SECONDS_PER_YEAR * 1000 // self.target_block_time_ms
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "IssuanceParams":
+        """Build params from a state dict.
+
+        Accepts the canonical integer ppm keys. For chains whose state was
+        written before the integer migration, the legacy float keys
+        (i_min, i_max, target_staking_ratio, treasury_share,
+        proposer_bonus, target_block_time_seconds) are converted once here
+        at the parsing boundary; consensus math itself never sees a float.
+        Unknown keys are ignored.
+        """
+        kw: Dict[str, int] = {}
+        for f in (
+            "i_min_ppm", "i_max_ppm", "target_staking_ratio_ppm",
+            "target_block_time_ms", "treasury_share_ppm", "proposer_bonus_ppm",
+        ):
+            if f in d:
+                kw[f] = int(d[f])
+        for legacy, ppm_key in _LEGACY_FLOAT_KEYS.items():
+            if legacy in d and ppm_key not in kw:
+                kw[ppm_key] = int(round(float(d[legacy]) * PPM))
+        if "target_block_time_seconds" in d and "target_block_time_ms" not in kw:
+            kw["target_block_time_ms"] = int(round(float(d["target_block_time_seconds"]) * 1000))
+        return cls(**kw)
 
 
-def _saturate(x: float) -> float:
+def _saturate_ppm(x: int) -> int:
     if x < 0:
-        return 0.0
-    if x > 1:
-        return 1.0
+        return 0
+    if x > PPM:
+        return PPM
     return x
 
 
-def _smoothstep(x: float) -> float:
-    """Smoothstep function: x^2 * (3 - 2x). Maps [0,1] to [0,1] with
-    zero slope at the endpoints — avoids derivative discontinuities
+def _smoothstep_ppm(x: int) -> int:
+    """Integer smoothstep on the ppm domain: x²(3 - 2x) with x in [0, PPM].
+
+    Exact formula: x*x*(3*PPM - 2*x) // PPM². Maps [0, PPM] to [0, PPM]
+    with zero slope at the endpoints — avoids derivative discontinuities
     that incentive games could exploit."""
-    x = _saturate(x)
-    return x * x * (3 - 2 * x)
+    x = _saturate_ppm(x)
+    return x * x * (3 * PPM - 2 * x) // (PPM * PPM)
 
 
-def issuance_rate(staking_ratio: float, params: IssuanceParams = IssuanceParams()) -> float:
-    """Annualized inflation rate as a function of realized staking ratio.
-
-    Returns a float, e.g. 0.012 means 1.2% per year."""
-    # Distance from zero-staking to target, on [0, 1].
-    distance = 1 - staking_ratio / params.target_staking_ratio
-    boost = _smoothstep(distance)
-    return params.i_min + (params.i_max - params.i_min) * boost
+def issuance_rate_ppm(staking_ratio_ppm: int, params: IssuanceParams = IssuanceParams()) -> int:
+    """Annualized inflation rate in ppm as a function of the realized
+    staking ratio in ppm. 60_000 means 6% per year."""
+    if params.target_staking_ratio_ppm <= 0:
+        return params.i_min_ppm
+    distance = PPM - staking_ratio_ppm * PPM // params.target_staking_ratio_ppm
+    boost = _smoothstep_ppm(distance)
+    return params.i_min_ppm + (params.i_max_ppm - params.i_min_ppm) * boost // PPM
 
 
 def reward_per_block(
     total_supply: int,
-    staking_ratio: float,
+    staking_ratio_ppm: int,
     params: IssuanceParams = IssuanceParams(),
 ) -> int:
     """Per-block reward in the same unit as `total_supply` (mukrn).
 
-    Computed as: (annual_rate * supply) / blocks_per_year, rounded down.
-    """
-    rate = issuance_rate(staking_ratio, params)
-    annual = rate * total_supply
-    per_block = annual / params.blocks_per_year()
-    return int(per_block)
+    Computed as supply * rate_ppm // (PPM * blocks_per_year), i.e. floor
+    division applied once, at the end, for maximal precision."""
+    rate = issuance_rate_ppm(staking_ratio_ppm, params)
+    return total_supply * rate // (PPM * params.blocks_per_year())
 
 
 def split_reward(
     total_reward: int,
     params: IssuanceParams = IssuanceParams(),
 ) -> Tuple[int, int]:
-    """Split a block reward into (treasury, baker_pool).
-
-    treasury_share goes to the protocol treasury contract; the rest is
-    available for distribution to the proposer and endorsers."""
-    treasury = int(total_reward * params.treasury_share)
+    """Split a block reward into (treasury, baker_pool)."""
+    treasury = total_reward * params.treasury_share_ppm // PPM
     baker_pool = total_reward - treasury
     return treasury, baker_pool
 
@@ -158,18 +201,16 @@ def distribute_baker_pool(
 
     `endorsers` is a list of {"address": ..., "stake": ...} dicts —
     the validators who actually signed an endorsement for this block.
-
-    The proposer (whose address is in `endorsers` as well, presumably)
-    additionally receives a `proposer_bonus` fraction of the pool.
-    The remainder is distributed to endorsers in proportion to stake.
-
-    Returns a {address: mukrn} dict.
-    """
+    The proposer additionally receives a proposer_bonus_ppm fraction of
+    the pool. The remainder is distributed to endorsers in proportion to
+    stake, iterated in list order (the validator-set order, which is part
+    of consensus state and identical on every node). Rounding leftover
+    goes to the proposer. Returns a {address: mukrn} dict."""
     rewards: Dict[str, int] = {}
     if baker_pool <= 0 or not endorsers:
         return rewards
 
-    bonus = int(baker_pool * params.proposer_bonus)
+    bonus = baker_pool * params.proposer_bonus_ppm // PPM
     rewards[proposer_addr] = rewards.get(proposer_addr, 0) + bonus
 
     remainder = baker_pool - bonus
@@ -183,7 +224,6 @@ def distribute_baker_pool(
         rewards[v["address"]] = rewards.get(v["address"], 0) + share
         distributed += share
 
-    # Any rounding remainder goes to the proposer.
     leftover = remainder - distributed
     if leftover > 0:
         rewards[proposer_addr] = rewards.get(proposer_addr, 0) + leftover
@@ -197,14 +237,10 @@ def distribute_baker_pool(
 
 @dataclass
 class BlockRewardAccounting:
-    """Bookkeeping for the rewards paid out at a single block.
-
-    Useful for the chain state machine: build one of these in apply_block,
-    apply the credits, and emit the totals to the metrics stream.
-    """
+    """Bookkeeping for the rewards paid out at a single block."""
 
     total_supply_before: int
-    staking_ratio: float
+    staking_ratio_ppm: int
     total_reward: int
     treasury_credit: int
     per_validator: Dict[str, int]   # address -> mukrn
@@ -226,14 +262,14 @@ def compute_block_rewards(
     treasury_addr: str,
     params: IssuanceParams = IssuanceParams(),
 ) -> BlockRewardAccounting:
-    """All the math for a single block, end-to-end."""
-    ratio = (staked / total_supply) if total_supply > 0 else 0.0
-    total = reward_per_block(total_supply, ratio, params)
+    """All the math for a single block, end-to-end, in integers."""
+    ratio_ppm = _saturate_ppm(staked * PPM // total_supply) if total_supply > 0 else 0
+    total = reward_per_block(total_supply, ratio_ppm, params)
     treasury, baker_pool = split_reward(total, params)
     per_validator = distribute_baker_pool(baker_pool, proposer_addr, endorsers, params)
     return BlockRewardAccounting(
         total_supply_before=total_supply,
-        staking_ratio=ratio,
+        staking_ratio_ppm=ratio_ppm,
         total_reward=total,
         treasury_credit=treasury,
         per_validator=per_validator,
@@ -276,18 +312,14 @@ def split_validator_reward(
     if reward <= 0:
         return 0, {}
 
-    # Commission off the top.
     commission = reward * commission_pct // 100
     remaining = reward - commission
 
-    # Effective stake.
     total_delegated = sum(bal for _addr, bal in delegators)
     effective = own_stake + total_delegated
     if effective <= 0:
-        # No stake at all — pay everything as commission (degenerate case).
         return reward, {}
 
-    # Pro-rata split.
     validator_prorata = remaining * own_stake // effective
     delegator_shares = {}
     distributed = validator_prorata
@@ -297,7 +329,6 @@ def split_validator_reward(
             delegator_shares[addr] = share
             distributed += share
 
-    # Validator gets commission + pro-rata + any rounding leftover.
     leftover = remaining - distributed
     validator_total = commission + validator_prorata + leftover
 

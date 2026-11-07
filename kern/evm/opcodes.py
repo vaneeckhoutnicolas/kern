@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Optional
+from typing import Dict, Optional
 
 
 class Op(IntEnum):
@@ -137,7 +137,7 @@ class Op(IntEnum):
 
 
 # Per-opcode gas cost (subset; matches yellow paper "base" tier for simplicity)
-GAS_COST = {
+GAS_COST: Dict[int, int] = {
     Op.STOP: 0, Op.RETURN: 0, Op.REVERT: 0, Op.JUMPDEST: 1,
     Op.ADD: 3, Op.SUB: 3, Op.LT: 3, Op.GT: 3, Op.EQ: 3,
     Op.ISZERO: 3, Op.AND: 3, Op.OR: 3, Op.XOR: 3, Op.NOT: 3,

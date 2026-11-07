@@ -26,18 +26,17 @@ is delegated to **py_ecc** when available. py_ecc is the reference
 Python implementation maintained by the Ethereum Foundation; it's the
 same code that backs eth-tester and is audit-vetted.
 
-If py_ecc is not installed, the precompile falls back to a placeholder
+If py_ecc is not installed, a pairing raises BN254BackendUnavailable
+(Phase B). Earlier versions fell back to a placeholder
 that correctly handles the empty-input case (which is what most
 Groth16 verifiers test against: `e(...) == 1`) and structurally
 validates inputs. Production nodes MUST have py_ecc installed.
 
-A future v1.x will swap py_ecc for blst via FFI for ~10x speedup.
+A future v1.x will swap py_ecc for a compiled BN254 backend (mcl or arkworks bindings via FFI) for ~10x speedup. Note: blst implements BLS12-381 only and is not a BN254 option; the Go client uses gnark-crypto (see docs/go-port-breakpoints.md).
 """
 
 from __future__ import annotations
 
-import sys
-import threading
 from typing import List, Optional, Tuple
 
 
@@ -51,7 +50,6 @@ try:
         G2 as PY_ECC_G2,
         add as py_ecc_add,
         multiply as py_ecc_multiply,
-        pairing as py_ecc_pairing,
         is_on_curve as py_ecc_is_on_curve,
         b as py_ecc_b,
         b2 as py_ecc_b2,
@@ -63,6 +61,10 @@ try:
     PY_ECC_AVAILABLE = True
 except ImportError:
     PY_ECC_AVAILABLE = False
+
+
+class BN254BackendUnavailable(RuntimeError):
+    """Raised when a pairing is requested and no BN254 backend is installed."""
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +103,7 @@ def point_add(p1: Point, p2: Point) -> Point:
         return p2
     if p2 is INFINITY:
         return p1
+    assert p1 is not None and p2 is not None
     x1, y1 = p1
     x2, y2 = p2
     if x1 == x2:
@@ -137,6 +140,7 @@ def point_mul(pt: Point, scalar: int) -> Point:
 def _kern_to_pyecc_g1(pt: Point):
     if pt is INFINITY:
         return None
+    assert pt is not None
     x, y = pt
     return (PY_ECC_FQ(x), PY_ECC_FQ(y))
 
@@ -162,61 +166,45 @@ def _bytes_to_pyecc_g2(g2_data: bytes):
     return (x, y)
 
 
-def _safe_pairing(g2_pe, g1_pe):
-    """Compute a single BN254 pairing robustly across platforms.
+def _to_optimized_g1(g1_pe):
+    from py_ecc import optimized_bn128 as ob
+    x, y = g1_pe
+    return (ob.FQ(int(x.n)), ob.FQ(int(y.n)), ob.FQ.one())
 
-    py_ecc's FQ12 final-exponentiation recurses ~2800 frames deep. CPython's
-    stack-overflow guard raises RecursionError when that approaches the
-    smaller default thread stack on Windows, even below the default recursion
-    limit. Running it in a worker thread with a large stack and a raised
-    recursion limit avoids the crash without changing the result.
-    """
-    box: dict = {}
 
-    def _run() -> None:
-        old_limit = sys.getrecursionlimit()
-        sys.setrecursionlimit(max(old_limit, 100_000))
-        try:
-            box["value"] = py_ecc_pairing(g2_pe, g1_pe)
-        except BaseException as exc:  # noqa: BLE001 - re-raised on caller thread
-            box["error"] = exc
-        finally:
-            sys.setrecursionlimit(old_limit)
-
-    prev_stack = threading.stack_size()
-    try:
-        threading.stack_size(64 * 1024 * 1024)  # 64 MiB: ample for ~2800 frames
-    except (ValueError, RuntimeError):
-        pass  # platform refused a custom stack size; fall back to default
-    try:
-        worker = threading.Thread(target=_run)
-        worker.start()
-        worker.join()
-    finally:
-        try:
-            threading.stack_size(prev_stack)
-        except (ValueError, RuntimeError):
-            pass
-    if "error" in box:
-        raise box["error"]
-    return box["value"]
+def _to_optimized_g2(g2_pe):
+    from py_ecc import optimized_bn128 as ob
+    x, y = g2_pe
+    return (ob.FQ2([int(c) for c in x.coeffs]), ob.FQ2([int(c) for c in y.coeffs]), ob.FQ2.one())
 
 
 def pairing_check(pairs: List[Tuple[Point, bytes]]) -> bool:
     """Bilinear pairing check. Returns True iff the product equals 1 in F_p^12.
 
-    Empty input → True (identity). Uses py_ecc's real BN128 pairing when
-    available; falls back to structural validation otherwise."""
+    Empty input → True (identity). Uses py_ecc's real BN128 pairing.
+
+    Phase B (audit 2, points 3 and 7): without py_ecc this used to accept
+    any on-curve input, so a node missing the library would accept proofs
+    its peers reject and diverge. A pairing that cannot be computed now
+    raises BN254BackendUnavailable; py_ecc is a hard dependency
+    (requirements.txt) and the node refuses to start without it."""
     if not pairs:
         return True
 
     if not PY_ECC_AVAILABLE:
-        for g1, _g2_bytes in pairs:
-            if g1 is not None and not is_on_curve(g1):
-                return False
-        return True
+        raise BN254BackendUnavailable(
+            "BN254 pairing requires py_ecc; install the dependencies from requirements.txt"
+        )
 
-    product = PY_ECC_FQ12.one()
+    # Product of Miller loops, then ONE final exponentiation, compared with 1.
+    #
+    # Phase B: computed with py_ecc's optimized_bn128 module, whose field
+    # exponentiation is iterative. The plain bn128 module used before has a
+    # recursive FQ12.__pow__ (~2800 frames for the final exponentiation),
+    # which raised RecursionError on Windows' smaller thread stack and forced
+    # an xfail on that platform. Same curve, same pairing, same result.
+    from py_ecc import optimized_bn128 as ob
+    acc = ob.FQ12.one()
     for g1, g2_bytes in pairs:
         g1_pe = _kern_to_pyecc_g1(g1)
         g2_pe = _bytes_to_pyecc_g2(g2_bytes)
@@ -227,12 +215,11 @@ def pairing_check(pairs: List[Tuple[Point, bytes]]) -> bool:
                 return False
             if not py_ecc_is_on_curve(g1_pe, py_ecc_b):
                 return False
-            e = _safe_pairing(g2_pe, g1_pe)
+            acc = acc * ob.pairing(_to_optimized_g2(g2_pe), _to_optimized_g1(g1_pe),
+                                   final_exponentiate=False)
         except Exception:
             return False
-        product = product * e
-
-    return product == PY_ECC_FQ12.one()
+    return ob.final_exponentiate(acc) == ob.FQ12.one()
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +241,7 @@ def _read_point(data: bytes, offset: int) -> Point:
 def _write_point(pt: Point) -> bytes:
     if pt is INFINITY:
         return b"\x00" * 64
+    assert pt is not None
     x, y = pt
     return x.to_bytes(32, "big") + y.to_bytes(32, "big")
 

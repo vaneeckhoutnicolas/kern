@@ -217,10 +217,15 @@ def test_verifier_key_hash_differs_with_input():
     assert h1 != h2
 
 
-def test_verify_zk_claim_accepts_well_formed():
-    """The v1.1-rc stub accepts a well-formed payload."""
+def test_verify_zk_claim_shape_vs_proof():
+    """Phase B (audit 2, point 3): a well-formed payload passes the
+    STRUCTURAL check, but verify_zk_claim no longer accepts it without a
+    registered verifier key and a valid pairing. Real Groth16 vectors are
+    in tests/test_phase_b_zk_groth16.py."""
+    from kern.zk_claims import check_zk_claim_shape
     claim = build_zk_claim("ab" * 16, [42], [1, 2], [[3, 4], [5, 6]], [7, 8], "test")
-    assert verify_zk_claim(claim) is True
+    assert check_zk_claim_shape(claim) is True
+    assert verify_zk_claim(claim) is False
 
 
 def test_verify_zk_claim_rejects_non_zk_claim():
@@ -237,9 +242,10 @@ def test_verify_zk_claim_with_registry():
     # Unknown vk in registry → reject
     assert verify_zk_claim(claim, verifier_key_registry={}) is False
 
-    # Known vk → accept (in the stub)
+    # A registry entry that is not a verifier key matching the hash, or
+    # points that do not satisfy the pairing equation, are rejected.
     registry = {vk_hash: b"actual_vk_bytes"}
-    assert verify_zk_claim(claim, verifier_key_registry=registry) is True
+    assert verify_zk_claim(claim, verifier_key_registry=registry) is False
 
 
 def test_reference_circuits_complete():
@@ -309,7 +315,10 @@ def test_zk_claim_can_be_attestation_payload():
     att_id = result.extra["attestation_id"]
     stored_claim = state["attestations"][att_id]["claim"]
     assert is_zk_claim(stored_claim)
-    assert verify_zk_claim(stored_claim) is True
+    # Stored verbatim; whether it PROVES anything is a separate question
+    # answered by verify_zk_claim against a registered verifier key.
+    from kern.zk_claims import check_zk_claim_shape
+    assert check_zk_claim_shape(stored_claim) is True
 
 
 if __name__ == "__main__":

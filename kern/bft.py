@@ -134,14 +134,33 @@ class ConsensusMessage:
 
     @classmethod
     def from_dict(cls, d: dict) -> "ConsensusMessage":
+        """Strictly typed decode; raises ValueError on malformed input."""
+        if not isinstance(d, dict):
+            raise ValueError("consensus: expected an object")
+
+        def _uint(key: str) -> int:
+            v = d.get(key)
+            if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+                raise ValueError(f"consensus.{key}: expected a non-negative integer")
+            return v
+
+        def _str(key: str) -> str:
+            v = d.get(key)
+            if not isinstance(v, str) or not v:
+                raise ValueError(f"consensus.{key}: expected a non-empty string")
+            return v
+
+        sig = d.get("signature")
+        if sig is not None and not isinstance(sig, str):
+            raise ValueError("consensus.signature: expected a string or null")
         return cls(
-            kind=MsgKind(d["kind"]),
-            level=d["level"],
-            round=d["round"],
-            block_hash=d["block_hash"],
-            validator=d["validator"],
-            validator_pubkey=d["validator_pubkey"],
-            signature=d.get("signature"),
+            kind=MsgKind(_str("kind")),
+            level=_uint("level"),
+            round=_uint("round"),
+            block_hash=_str("block_hash"),
+            validator=_str("validator"),
+            validator_pubkey=_str("validator_pubkey"),
+            signature=sig,
         )
 
 
@@ -318,6 +337,7 @@ class BftEngine:
             return outbound
 
         # Emit pre-endorsement.
+        assert self.own_keypair is not None  # guarded by _own_address above
         msg = ConsensusMessage(
             kind=MsgKind.PREENDORSE,
             level=level,
@@ -383,6 +403,7 @@ class BftEngine:
                 own = self._own_address()
                 if (own is not None and self._is_validator(own)
                         and not state.endorsed and state.proposed_block_hash):
+                    assert self.own_keypair is not None
                     endorse = ConsensusMessage(
                         kind=MsgKind.ENDORSE,
                         level=msg.level,
@@ -442,6 +463,57 @@ class BftEngine:
         to_drop = [k for k in self.states if k[0] < level]
         for k in to_drop:
             del self.states[k]
+
+
+# ---------------------------------------------------------------------------
+# Commit verification (used by chain.validate_block)
+# ---------------------------------------------------------------------------
+
+def commit_entry(msg: "ConsensusMessage") -> str:
+    """Canonical wire form of an endorsement inside a block:
+    "<kn1 address>:<base58 signature>"."""
+    return f"{msg.validator}:{msg.signature}"
+
+
+def verify_commits(
+    block_hash: str,
+    level: int,
+    round_: int,
+    entries: List[str],
+    validator_set: List[dict],
+) -> Tuple[int, Optional[str]]:
+    """Verify a list of "addr:sig" endorsement entries against the block.
+
+    Each signature must be a valid ENDORSE ConsensusMessage signature by a
+    validator in the set, over (endorse, level, round, block_hash, addr,
+    pubkey). Returns (verified_stake, error). Any malformed or forged
+    entry is a hard error — a block carrying junk in its quorum evidence
+    is invalid, full stop. Duplicate addresses count once."""
+    seen: Set[str] = set()
+    stake = 0
+    for entry in entries:
+        if ":" not in entry:
+            return 0, f"malformed commit entry: {entry[:32]!r}"
+        addr, sig = entry.split(":", 1)
+        if addr in seen:
+            continue
+        v = next((v for v in validator_set if v["address"] == addr), None)
+        if v is None:
+            return 0, f"commit from non-validator {addr}"
+        msg = ConsensusMessage(
+            kind=MsgKind.ENDORSE,
+            level=level,
+            round=round_,
+            block_hash=block_hash,
+            validator=addr,
+            validator_pubkey=v["pubkey"],
+            signature=sig,
+        )
+        if not msg.verify_signature():
+            return 0, f"invalid commit signature from {addr}"
+        seen.add(addr)
+        stake += v["stake"]
+    return stake, None
 
 
 # ---------------------------------------------------------------------------

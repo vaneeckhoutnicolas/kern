@@ -132,6 +132,21 @@ def initial_state_from_genesis(genesis: dict) -> dict:
     state["validators"] = list(genesis.get("validators", []))
     # Total supply at genesis = sum of all pre-funded balances.
     state["total_supply"] = sum(state["balances"].values())
+    # Phase B (audit 1, finding 8): a declared total_supply must match the
+    # balances it claims to sum. A genesis file whose two numbers disagree
+    # is refused instead of being silently corrected.
+    declared = genesis.get("total_supply")
+    if declared is not None and int(declared) != state["total_supply"]:
+        raise ValueError(
+            f"genesis total_supply {declared} does not equal the sum of "
+            f"genesis balances {state['total_supply']}"
+        )
+    # Phase B (audit 1, finding 9): the network identifier becomes part of
+    # consensus state, and every transaction must be signed for it.
+    chain_id = genesis.get("chain_id")
+    if chain_id is not None and not isinstance(chain_id, str):
+        raise ValueError("genesis chain_id must be a string")
+    state["chain_id"] = chain_id
     state["treasury_address"] = genesis.get("treasury_address")
     state["issuance_params"] = genesis.get("issuance_params")
     return state
@@ -154,6 +169,14 @@ def derive_contract_address(origination_tx_hash: bytes) -> str:
 def _check_signature_and_nonce(tx: Transaction, state: dict) -> Optional[str]:
     if not tx.verify_signature():
         return "invalid signature"
+    # Phase B (audit 1, finding 9): cross-network replay protection. The
+    # signature already covers chain_id; the state machine now enforces
+    # it. A chain whose state carries a chain_id accepts only transactions
+    # signed for exactly that chain_id (a null chain_id is refused). Test
+    # chains built without a chain_id keep accepting null.
+    expected_chain = state.get("chain_id")
+    if expected_chain is not None and tx.chain_id != expected_chain:
+        return f"wrong chain_id: expected {expected_chain!r}, got {tx.chain_id!r}"
     expected_nonce = state["nonces"].get(tx.sender, 0)
     if tx.nonce != expected_nonce:
         return f"bad nonce: expected {expected_nonce}, got {tx.nonce}"
@@ -218,9 +241,20 @@ def apply_transaction(state: dict, tx: Transaction, baker: str) -> ApplyResult:
     _credit(state, baker, tx.fee)
     state["nonces"][tx.sender] = tx.nonce + 1
 
+    # --- Structural checks per kind. These run AFTER the fee debit and nonce
+    # bump on purpose: a malformed operation that was correctly signed pays
+    # its fee like any other failed operation, so it cannot be replayed
+    # for free (Phase B, audit 1 finding 7). They replace the former
+    # `assert` statements, which crashed block production instead of
+    # rejecting the transaction.
+    malformed = _malformed_reason(tx)
+    if malformed is not None:
+        return ApplyResult(ok=False, error=f"malformed transaction: {malformed}",
+                           gas_used=tx.gas_limit)
+
     # --- Hot path: TRANSFER cannot leave partial state -> no snapshot.
     if tx.kind == OpKind.TRANSFER:
-        assert tx.recipient is not None
+        assert tx.recipient is not None  # guaranteed by _malformed_reason
         err = _debit(state, tx.sender, tx.amount)
         if err:
             # Fee retained, nonce bumped (anti-spam); no partial state to undo.
@@ -232,7 +266,7 @@ def apply_transaction(state: dict, tx: Transaction, baker: str) -> ApplyResult:
     snapshot = copy.deepcopy(state)
     try:
         if tx.kind == OpKind.ORIGINATE:
-            assert tx.code is not None
+            assert tx.code is not None  # guaranteed by _malformed_reason
             contract_addr = derive_contract_address(tx.hash())
             # Validate and "compile" the Skald source.
             storage = interpret_origination(tx.code, tx.initial_storage)
@@ -243,7 +277,7 @@ def apply_transaction(state: dict, tx: Transaction, baker: str) -> ApplyResult:
             return ApplyResult(ok=True, gas_used=10_000, new_contract=contract_addr)
 
         if tx.kind == OpKind.CALL:
-            assert tx.recipient is not None and tx.entry is not None
+            assert tx.recipient is not None and tx.entry is not None  # see _malformed_reason
             contract = state["contracts"].get(tx.recipient)
             if contract is None:
                 raise RuntimeError(f"contract {tx.recipient} not found")
@@ -291,23 +325,85 @@ def apply_transaction(state: dict, tx: Transaction, baker: str) -> ApplyResult:
         if tx.kind == OpKind.SLASH_ATTESTATION_EQUIVOCATION:
             return _apply_slash_attestation_equivocation(state, tx)
 
-    except (RuntimeError, SkaldError) as e:
+    except Exception as e:
         # Roll back to the post-fee/post-nonce snapshot: the operation is
         # undone but the fee stays debited and the nonce stays bumped.
+        #
+        # Phase B (audit 1, finding 7): this used to catch only RuntimeError
+        # and SkaldError. Any other exception raised by a handler (TypeError,
+        # AttributeError, KeyError, ValueError, ...) escaped into
+        # propose_block / apply_block and halted block production on every
+        # baker that saw the transaction. Every exception is now a
+        # deterministic rejection. The error string records the exception
+        # class, not only its message, so receipts stay informative.
         state.clear()
         state.update(snapshot)
-        return ApplyResult(ok=False, error=str(e), gas_used=tx.gas_limit)
+        if isinstance(e, (RuntimeError, SkaldError)):
+            msg = str(e)
+        else:
+            msg = f"{type(e).__name__}: {e}"
+        return ApplyResult(ok=False, error=msg, gas_used=tx.gas_limit)
 
     return ApplyResult(ok=False, error="unknown op kind")
 
-    return ApplyResult(ok=False, error="unknown op kind")
+
+# Operation kinds whose `params` must be a JSON object (or absent). CALL is
+# excluded: its params are an arbitrary Skald value passed to the entry point.
+_DICT_PARAM_KINDS = frozenset({
+    OpKind.GOVERNANCE_PROPOSE, OpKind.GOVERNANCE_VOTE, OpKind.SLASH_EQUIVOCATION,
+    OpKind.DELEGATE_STAKE, OpKind.UNDELEGATE_STAKE, OpKind.ATTEST,
+    OpKind.REVOKE_ATTESTATION, OpKind.SLASH_ATTESTATION_EQUIVOCATION,
+})
+
+
+def _malformed_reason(tx: Transaction) -> Optional[str]:
+    """Return why `tx` is structurally unusable for its kind, or None.
+
+    Pure and deterministic. Field TYPES are already enforced by
+    Transaction.__post_init__; this checks the kind-specific presence rules
+    that the handlers rely on."""
+    if tx.kind in (OpKind.TRANSFER, OpKind.CALL) and not tx.recipient:
+        return f"{tx.kind.value} requires a recipient"
+    if tx.kind == OpKind.CALL and not tx.entry:
+        return "call requires an entry point"
+    if tx.kind == OpKind.ORIGINATE and not tx.code:
+        return "originate requires code"
+    if tx.kind in _DICT_PARAM_KINDS and tx.params is not None and not isinstance(tx.params, dict):
+        return f"{tx.kind.value} params must be a JSON object"
+    return None
 
 
 # --- Block application ----------------------------------------------------
 
 def _compute_staked(state: dict) -> int:
-    """Sum of all validator stakes — the basis for staking ratio."""
-    return sum(v.get("stake", 0) for v in state.get("validators", []))
+    """Total effective stake, the basis for the staking ratio.
+
+    Phase B (audit 1, finding 4): this used to sum validator self-stake
+    only, while rewards and slashing already counted delegated liquid
+    balances (effective_stake). The emission curve therefore saw a lower
+    staking ratio than the one actually at work and over-issued. It now
+    uses the same effective stake as rewards and governance."""
+    return sum(effective_stake(state, v["address"]) for v in state.get("validators", []))
+
+
+def _governance_validator_set(state: dict) -> List[dict]:
+    """The validator set as governance must weigh it: same addresses and
+    order as state["validators"], with `stake` replaced by the effective
+    stake (own stake plus delegated liquid balances).
+
+    Phase B (audit 1, findings 5 and 6): there used to be three views of
+    delegation (state["delegations"] for rewards, a separate copy inside
+    the treasury governance state, and none at all on the protocol track),
+    and a delegator outside the validator set weighed zero. The canonical
+    record is now state["delegations"], applied identically to both
+    governance tracks through this function. Returns copies; the state's
+    own validator records are never mutated."""
+    out = []
+    for v in state.get("validators", []):
+        w = dict(v)
+        w["stake"] = effective_stake(state, v["address"])
+        out.append(w)
+    return out
 
 
 def _apply_block_rewards(state: dict, block: Block) -> None:
@@ -325,7 +421,7 @@ def _apply_block_rewards(state: dict, block: Block) -> None:
     # Build IssuanceParams from state, or use defaults.
     p_dict = state.get("issuance_params")
     if p_dict:
-        params = IssuanceParams(**p_dict)
+        params = IssuanceParams.from_dict(p_dict)
     else:
         params = IssuanceParams()
 
@@ -333,16 +429,20 @@ def _apply_block_rewards(state: dict, block: Block) -> None:
     if not validators:
         return  # no validators → no rewards
 
-    # Endorsers = validators whose commits appear in the block.
-    # For single-validator mode this is just the proposer.
-    committing_addrs = set()
-    for entry in block.commits:
-        if ":" in entry:
-            addr, _ = entry.split(":", 1)
-            committing_addrs.add(addr)
-    if not committing_addrs:
-        # Fall back: treat the proposer as the sole endorser.
-        committing_addrs = {block.header.proposer}
+    # Rewarded endorsers = the proposer only.
+    #
+    # Phase B (audit 2, point 4): rewards used to be keyed on the addresses
+    # listed in `block.commits`, read WITHOUT checking their signatures
+    # (signatures are only checked by the quorum step, which runs after the
+    # state root comparison and is skipped when require_quorum=False). A
+    # relay could therefore add or drop commit entries and change the
+    # reward split. Commits sign the final header hash, which commits to the
+    # post-reward state root, so a block's own commits cannot feed its own
+    # rewards without circularity anyway. Until parent-based endorsement
+    # accounting lands (see docs/consensus-wire.md, limitations), the
+    # proposer is the sole rewarded endorser, which is what the proposer's
+    # placeholder self-commit already produced in practice.
+    committing_addrs = {block.header.proposer}
 
     endorsers = [v for v in validators if v["address"] in committing_addrs]
     if not endorsers:
@@ -402,6 +502,22 @@ def _apply_block_rewards(state: dict, block: Block) -> None:
 
 # --- Governance transaction handlers --------------------------------------
 
+def _load_treasury(gov_state: dict, state: dict, balance: int):
+    """Load the treasury track with the canonical delegation view. Any
+    legacy delegation copy kept inside the treasury state is ignored: the
+    effective validator set already includes delegated balances."""
+    from .governance import load_treasury_governance
+    gov = load_treasury_governance(gov_state, _governance_validator_set(state), balance)
+    gov.delegations = {}
+    return gov
+
+
+def _save_treasury(gov_state: dict, gov) -> None:
+    from .governance import save_treasury_governance
+    save_treasury_governance(gov_state, gov)
+    gov_state.get("treasury", {}).pop("delegations", None)
+
+
 def _apply_governance_propose(state: dict, tx: Transaction) -> ApplyResult:
     """Handle a GOVERNANCE_PROPOSE transaction.
 
@@ -441,7 +557,7 @@ def _apply_governance_propose(state: dict, tx: Transaction) -> ApplyResult:
         err = _debit(state, tx.sender, bond)
         if err:
             return ApplyResult(ok=False, error=f"cannot post bond: {err}")
-        gov = load_protocol_governance(gov_state, state["validators"])
+        gov = load_protocol_governance(gov_state, _governance_validator_set(state))
         ok, reason, pid = gov.submit(tx.sender, payload, _current_level(state), salt=salt)
         if not ok:
             # Refund the bond if submission was rejected.
@@ -457,12 +573,12 @@ def _apply_governance_propose(state: dict, tx: Transaction) -> ApplyResult:
     if err:
         return ApplyResult(ok=False, error=f"cannot post bond: {err}")
     treasury_balance = state["balances"].get(state.get("treasury_address") or "", 0)
-    gov = load_treasury_governance(gov_state, state["validators"], treasury_balance)
-    ok, reason, pid = gov.submit(tx.sender, payload, _current_level(state), salt=salt)
+    tgov = _load_treasury(gov_state, state, treasury_balance)
+    ok, reason, pid = tgov.submit(tx.sender, payload, _current_level(state), salt=salt)
     if not ok:
         _credit(state, tx.sender, bond)
         return ApplyResult(ok=False, error=reason)
-    save_treasury_governance(gov_state, gov)
+    _save_treasury(gov_state, tgov)
     gov_state["treasury"]["bonds"][pid] = {"submitter": tx.sender, "amount": bond}
     return ApplyResult(ok=True, gas_used=tx.gas_limit)
 
@@ -496,7 +612,7 @@ def _apply_governance_vote(state: dict, tx: Transaction) -> ApplyResult:
     })
 
     if track == "protocol":
-        gov = load_protocol_governance(gov_state, state["validators"])
+        gov = load_protocol_governance(gov_state, _governance_validator_set(state))
         ok, reason = gov.vote(pid, tx.sender, Vote(vote_str), _current_level(state))
         if not ok:
             return ApplyResult(ok=False, error=reason)
@@ -504,11 +620,11 @@ def _apply_governance_vote(state: dict, tx: Transaction) -> ApplyResult:
         return ApplyResult(ok=True, gas_used=tx.gas_limit)
 
     treasury_balance = state["balances"].get(state.get("treasury_address") or "", 0)
-    gov = load_treasury_governance(gov_state, state["validators"], treasury_balance)
-    ok, reason = gov.vote(pid, tx.sender, Vote(vote_str), _current_level(state))
+    tgov = _load_treasury(gov_state, state, treasury_balance)
+    ok, reason = tgov.vote(pid, tx.sender, Vote(vote_str), _current_level(state))
     if not ok:
         return ApplyResult(ok=False, error=reason)
-    save_treasury_governance(gov_state, gov)
+    _save_treasury(gov_state, tgov)
     return ApplyResult(ok=True, gas_used=tx.gas_limit)
 
 
@@ -781,12 +897,26 @@ def _apply_attest(state: dict, tx: Transaction) -> ApplyResult:
 
 
 def _apply_revoke_attestation(state: dict, tx: Transaction) -> ApplyResult:
-    """Mark an attestation as revoked. Returns the bond to the issuer
-    (if any). The attestation record remains on-chain so that slashing
-    evidence can still be submitted against it for past contradictions."""
+    """Mark an attestation as revoked and start its unbonding period.
+
+    Phase B (audit 1, findings 1, 2 and 10): the bond is NOT returned at
+    revocation any more. It stays locked in the attestation record, and
+    remains slashable, until `revoked_at_level + unbonding period`; the
+    per-block hook `_release_matured_attestation_bonds` then credits it
+    back to the issuer. A bond therefore has exactly one economic owner
+    at any time (the record while locked, the issuer once released, the
+    slash otherwise), and the invariant
+
+        sum(balances) + sum(locked attestation bonds) + escrowed bonds
+            == total_supply
+
+    holds across revoke, slash and release. The record remains on-chain so
+    that evidence of past contradictions can still be submitted."""
+    from .attestation import attestation_unbonding_blocks
+
     params = tx.params or {}
     attestation_id = params.get("attestation_id")
-    if not attestation_id:
+    if not attestation_id or not isinstance(attestation_id, str):
         return ApplyResult(ok=False, error="missing attestation_id")
 
     attestations = state.setdefault("attestations", {})
@@ -800,18 +930,42 @@ def _apply_revoke_attestation(state: dict, tx: Transaction) -> ApplyResult:
     if att.get("consumed_for_slashing"):
         return ApplyResult(ok=False, error="attestation was slashed; bond cannot be reclaimed")
 
-    att["revoked_at_level"] = _current_level(state)
-
-    # Return the bond to the issuer
-    bond_returned = att["bond"]
-    if bond_returned > 0:
-        state["balances"][tx.sender] = state["balances"].get(tx.sender, 0) + bond_returned
+    level = _current_level(state)
+    att["revoked_at_level"] = level
+    release_at = level + attestation_unbonding_blocks(state)
+    att["bond_release_level"] = release_at
+    if att.get("bond", 0) > 0:
+        queue = state.setdefault("attestation_unbonding", {})
+        queue.setdefault(str(release_at), []).append(attestation_id)
 
     return ApplyResult(
         ok=True,
         gas_used=tx.gas_limit,
-        extra={"bond_returned": bond_returned},
+        extra={"bond_locked_until_level": release_at, "bond": att.get("bond", 0)},
     )
+
+
+def _release_matured_attestation_bonds(state: dict, level: int) -> None:
+    """Credit back every revoked attestation bond whose unbonding period
+    ends at or before `level`. Called once per block by apply_block (and by
+    propose_block via the same path). Bonds already resolved by a slash
+    are zero and are skipped. Deterministic: queue keys are visited in
+    ascending numeric order, ids in insertion order."""
+    queue = state.get("attestation_unbonding")
+    if not queue:
+        return
+    due = sorted(int(k) for k in queue if int(k) <= level)
+    attestations = state.get("attestations", {})
+    for key in due:
+        for att_id in queue.pop(str(key)):
+            att = attestations.get(att_id)
+            if not att or att.get("consumed_for_slashing"):
+                continue
+            bond = att.get("bond", 0)
+            if bond > 0:
+                _credit(state, att["issuer"], bond)
+                att["bond"] = 0
+                att["bond_released_at_level"] = level
 
 
 def _apply_slash_attestation_equivocation(state: dict, tx: Transaction) -> ApplyResult:
@@ -840,42 +994,40 @@ def _apply_slash_attestation_equivocation(state: dict, tx: Transaction) -> Apply
     if pair is None:
         return ApplyResult(ok=False, error="attestations do not constitute valid equivocation evidence")
 
-    # Slash from the bond on whichever attestation has more remaining bond.
-    # (Typically these are equal; the issuer might have left a smaller bond
-    # on the later one in an attempt to limit exposure.)
-    bond_to_slash_from = max(att_1["bond"], att_2["bond"])
+    # Slash from the larger of the two bonds. Both bonds are still held by
+    # their records: Phase B made revocation start an unbonding period
+    # instead of returning the bond, so a revoked half of the pair is
+    # still slashable (audit 1, findings 1 and 2).
+    bond_1 = att_1.get("bond", 0)
+    bond_2 = att_2.get("bond", 0)
+    target_att, other_att = (att_1, att_2) if bond_1 >= bond_2 else (att_2, att_1)
+    bond_to_slash_from = target_att.get("bond", 0)
     slash, reward, burn = compute_attestation_slash(bond_to_slash_from)
 
     if slash == 0:
         return ApplyResult(ok=False, error="no bond to slash (bond was zero on both attestations)")
 
-    # The attestation's bond was debited from the issuer at attest time.
-    # On slashing:
-    #   - `slash` is taken out of the bond (split into reward + burn)
-    #   - the unslashed remainder is RETURNED to the issuer
-    # This fix closes finding S-MAJ-2 from the v1.1-rc internal security
-    # review: previously the unslashed portion was permanently locked in
-    # the attestation record, creating a supply-vs-balances inconsistency
-    # AND meaning the issuer effectively lost 100% of bond rather than 30%
-    # as the math implied. With this fix, the issuer's economic loss is
-    # exactly `slash` (= 30% of bond by default), matching the documented
-    # behavior and matching standard slashing semantics elsewhere in Kern.
-    target_att = att_1 if att_1["bond"] >= att_2["bond"] else att_2
+    # Economic resolution of BOTH bonds (audit 1, finding 10: the second
+    # bond used to stay locked forever once both records were consumed):
+    #   - `slash` comes out of the larger bond: `reward` to the
+    #     whistleblower, `burn` removed from total_supply;
+    #   - the rest of the larger bond returns to the issuer;
+    #   - the smaller bond returns to the issuer in full.
+    # The issuer's loss is exactly `slash`, as documented.
     unslashed_remainder = bond_to_slash_from - slash
-    target_att["bond"] = 0   # the bond is fully resolved (returned + slashed)
+    other_bond = other_att.get("bond", 0)
+    target_att["bond"] = 0
+    other_att["bond"] = 0
 
-    # Pay reward to whistleblower (tx.sender)
-    state["balances"][tx.sender] = state["balances"].get(tx.sender, 0) + reward
-
-    # Refund the unslashed remainder to the issuer
-    if unslashed_remainder > 0:
-        state["balances"][issuer] = state["balances"].get(issuer, 0) + unslashed_remainder
-
-    # Burn the remainder (reduce total_supply)
+    _credit(state, tx.sender, reward)
+    refund = unslashed_remainder + other_bond
+    if refund > 0:
+        _credit(state, issuer, refund)
     state["total_supply"] = max(0, state.get("total_supply", 0) - burn)
 
     # Mark both attestations as consumed_for_slashing so the same
-    # equivocation cannot be re-submitted (and revoke is blocked).
+    # equivocation cannot be re-submitted, revoke is blocked, and any
+    # pending unbonding entry for them is ignored at release time.
     att_1["consumed_for_slashing"] = True
     att_2["consumed_for_slashing"] = True
 
@@ -886,7 +1038,7 @@ def _apply_slash_attestation_equivocation(state: dict, tx: Transaction) -> Apply
             "slashed": slash,
             "whistleblower_reward": reward,
             "burned": burn,
-            "refunded_to_issuer": unslashed_remainder,
+            "refunded_to_issuer": refund,
             "issuer": issuer,
             "schema_id": schema_id,
             "subject": subject,
@@ -919,7 +1071,7 @@ def _apply_governance_tick(state: dict, current_level: int) -> None:
 
     # ----- Protocol track -----
     activated_count_before = len(gov_state["protocol"].get("activated_changes", []))
-    gov = load_protocol_governance(gov_state, state["validators"])
+    gov = load_protocol_governance(gov_state, _governance_validator_set(state))
     transitions = gov.advance_phases(current_level)
     save_protocol_governance(gov_state, gov)
 
@@ -937,10 +1089,10 @@ def _apply_governance_tick(state: dict, current_level: int) -> None:
     # ----- Treasury track -----
     treasury_addr = state.get("treasury_address")
     treasury_balance = state["balances"].get(treasury_addr or "", 0)
-    tgov = load_treasury_governance(gov_state, state["validators"], treasury_balance)
+    tgov = _load_treasury(gov_state, state, treasury_balance)
     pre_balance = tgov.treasury_balance
     transitions_t = tgov.advance_phases(current_level)
-    save_treasury_governance(gov_state, tgov)
+    _save_treasury(gov_state, tgov)
 
     # For each EXECUTED treasury proposal: actually move the KRN from the
     # treasury account to the recipients.
@@ -1002,6 +1154,11 @@ def apply_block(state: dict, block: Block) -> Tuple[dict, List[ApplyResult]]:
 
     with observe_latency("kern_block_apply_seconds"):
         new_state = copy.deepcopy(state)
+        # Phase B (audit 1, finding 3): transactions in block N observe
+        # level N. The level used to be written only by the governance tick
+        # at the END of the block, so every transaction saw N-1 (wrong
+        # attestation issue/revoke levels, governance windows shifted).
+        new_state["_current_level"] = block.header.level
         results: List[ApplyResult] = []
         for tx in block.transactions:
             r = apply_transaction(new_state, tx, baker=block.header.proposer)
@@ -1014,6 +1171,8 @@ def apply_block(state: dict, block: Block) -> Tuple[dict, List[ApplyResult]]:
         # Block rewards are credited AFTER transaction processing so that they
         # appear in the post-block state_root commitment.
         _apply_block_rewards(new_state, block)
+        # Release attestation bonds whose unbonding period has ended.
+        _release_matured_attestation_bonds(new_state, block.header.level)
         # Governance tick: advance any in-flight proposals and apply activations.
         _apply_governance_tick(new_state, block.header.level)
 
@@ -1106,16 +1265,19 @@ def check_fee_rules(transactions: List[Transaction], params: dict) -> Optional[s
     return None
 
 
-def validate_block(
+def validate_and_apply(
     block: Block,
     parent_header: Optional[BlockHeader],
     state_before: dict,
     validator_set: List[dict],
     *,
     require_quorum: bool = True,
-) -> Optional[str]:
-    """Validate a block against its parent and the prior state. Returns
-    None if valid, otherwise an error string.
+) -> "Tuple[Optional[str], Optional[dict]]":
+    """Validate a block against its parent and the prior state, returning
+    (error, new_state). new_state is the post-block state when the block
+    is valid, else None. Returning the applied state lets the caller
+    (Chain.append) reuse it instead of applying the block a second time —
+    validation already pays the O(state) apply + state_root cost once.
 
     Checks:
     1. Header signature is valid.
@@ -1124,62 +1286,77 @@ def validate_block(
     4. Proposer is in the validator set.
     5. txs_root matches the merkle of the included transactions.
     6. Applying the block yields the declared state_root.
-    7. (optional) Commit quorum is met: > 2/3 of validator stake has signed.
+    7. (optional) Commit quorum is met: > 2/3 of validator stake has
+       produced *cryptographically verified* endorse-schema signatures
+       over this block's hash, counted across block.commits (known at
+       proposal time, feeds rewards) and block.endorsements (the wire
+       quorum certificate gathered after the header was signed).
     """
     if not block.header.verify_signature():
-        return "invalid header signature"
+        return "invalid header signature", None
 
     if parent_header is None:
         if block.header.level != 0:
-            return "non-genesis block with no parent"
+            return "non-genesis block with no parent", None
         if block.header.parent_hash != "0" * 64:
-            return "genesis must have zero parent_hash"
+            return "genesis must have zero parent_hash", None
     else:
         if block.header.level != parent_header.level + 1:
-            return f"non-monotonic level: parent {parent_header.level}, block {block.header.level}"
+            return (f"non-monotonic level: parent {parent_header.level}, "
+                    f"block {block.header.level}"), None
         if block.header.parent_hash != parent_header.hash_hex():
-            return "parent_hash mismatch"
+            return "parent_hash mismatch", None
 
     if not any(v["address"] == block.header.proposer for v in validator_set):
-        return "proposer is not in validator set"
+        return "proposer is not in validator set", None
 
     expected_txs_root = txs_merkle_root_hex(block.transactions)
     if block.header.txs_root != expected_txs_root:
-        return "txs_root mismatch"
+        return "txs_root mismatch", None
 
     # Optional fee floor / block size cap (consensus rule; off by default).
     # Read from the prior state so every node applies the identical rule.
     fee_err = check_fee_rules(block.transactions, fee_params(state_before))
     if fee_err:
-        return fee_err
+        return fee_err, None
 
     new_state, _ = apply_block(state_before, block)
     if state_root_hex(new_state) != block.header.state_root:
-        return "state_root mismatch after applying transactions"
+        return "state_root mismatch after applying transactions", None
 
     if require_quorum and block.header.level > 0:
-        # 2/3+ stake must have signed.
+        from .bft import verify_commits
         total_stake = sum(v["stake"] for v in validator_set)
-        # In this reference implementation, we trust commit signatures are
-        # validated upstream; we just count them as a proportional weight.
-        # A production implementation verifies each commit signature against
-        # the block hash and the validator's registered key.
-        committed_stake = 0
-        signed_by = set()
-        # Format: each commit is "kn1...:ksig...". Production: structured.
-        for entry in block.commits:
-            if ":" in entry:
-                addr, _sig = entry.split(":", 1)
-                if addr in signed_by:
-                    continue
-                v = next((v for v in validator_set if v["address"] == addr), None)
-                if v:
-                    committed_stake += v["stake"]
-                    signed_by.add(addr)
+        entries = list(block.commits) + list(block.endorsements)
+        committed_stake, err = verify_commits(
+            block.hash_hex(), block.header.level, block.header.round,
+            entries, validator_set,
+        )
+        if err is not None:
+            return err, None
         if committed_stake * 3 <= total_stake * 2:
-            return f"insufficient commit stake: {committed_stake}/{total_stake} (need > 2/3)"
+            return (f"insufficient commit stake: {committed_stake}/{total_stake} "
+                    f"(need > 2/3)"), None
 
-    return None
+    return None, new_state
+
+
+def validate_block(
+    block: Block,
+    parent_header: Optional[BlockHeader],
+    state_before: dict,
+    validator_set: List[dict],
+    *,
+    require_quorum: bool = True,
+) -> Optional[str]:
+    """Validate a block; returns None if valid, else an error string.
+    Thin wrapper over validate_and_apply for callers that don't need the
+    resulting state."""
+    err, _ = validate_and_apply(
+        block, parent_header, state_before, validator_set,
+        require_quorum=require_quorum,
+    )
+    return err
 
 
 # --- Chain wrapper --------------------------------------------------------
@@ -1219,11 +1396,23 @@ class Chain:
     def height(self) -> int:
         return self.head.header.level
 
-    def append(self, block: Block) -> None:
+    def append(self, block: Block, *, require_quorum: bool = False) -> None:
+        """Validate and append a block.
+
+        `require_quorum` defaults to False for library and tooling use
+        (single-process chains built in tests, replay of already-validated
+        blocks). The live node passes require_quorum=True on every path a
+        block can arrive through — self-baked, gossiped, or synced — so
+        no networked block is ever accepted without a cryptographically
+        verified > 2/3 endorsement quorum. The block is applied exactly
+        once: validate_and_apply returns the post-block state."""
         parent = self.head.header
-        err = validate_block(block, parent, self.state, self.validators, require_quorum=False)
+        err, new_state = validate_and_apply(
+            block, parent, self.state, self.validators,
+            require_quorum=require_quorum,
+        )
         if err is not None:
             raise ValueError(f"block invalid: {err}")
-        new_state, _ = apply_block(self.state, block)
+        assert new_state is not None
         self.state = new_state
         self.blocks.append(block)

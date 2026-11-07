@@ -115,11 +115,6 @@ def test_bn_pairing_precompile_invalid_length():
 
 
 @pytest.mark.skipif(not PY_ECC_AVAILABLE, reason="py_ecc not installed")
-@pytest.mark.xfail(
-    sys.platform == "win32",
-    reason="py_ecc 8.x computes the BN254 final exponentiation with a deeply recursive FQ12.__pow__ that exceeds CPython's recursion limit / Windows' smaller default thread stack (RecursionError). The pairing math is correct (passes on Linux/macOS). Real fix: run the pairing in a worker thread with a larger stack and a raised recursion limit in kern/evm/bn254.py.",
-    strict=False,
-)
 def test_pairing_with_real_implementation_basic_property():
     """When py_ecc is available, test e(G1, G2) and e(2*G1, G2) and
     e(G1, 2*G2) — they should all be related as e(aP, bQ) = e(P, Q)^(ab).
@@ -206,3 +201,33 @@ if __name__ == "__main__":
         getattr(me, t)()
         print(f"  ✓ {t}")
     print(f"All {len(tests)} BN254 tests passed.")
+
+
+def test_pairing_runs_under_a_tiny_recursion_limit():
+    """Phase B: the pairing no longer recurses deeply, so it works on
+    Windows' smaller thread stack. Simulated here with a recursion limit
+    far below the ~2800 frames the former implementation needed."""
+    import threading
+    G2_GEN = (
+        11559732032986387107991004021392285783925812861821192530917403151452391805634,
+        10857046999023057135944570762232829481370756359578518086990519993285655852781,
+        4082367875863433681332203403145435568316851327593401208105741076214120093531,
+        8495653923123431417604973247489272438418190587263600148770280649306958101930,
+    )
+    g2 = b"".join(v.to_bytes(32, "big") for v in G2_GEN)
+    calldata = ((1).to_bytes(32, "big") + (2).to_bytes(32, "big") + g2
+                + (1).to_bytes(32, "big") + (P - 2).to_bytes(32, "big") + g2)
+    box = {}
+
+    def run():
+        old = sys.getrecursionlimit()
+        sys.setrecursionlimit(200)
+        try:
+            box["r"] = bn_pairing_precompile(calldata)
+        finally:
+            sys.setrecursionlimit(old)
+
+    t = threading.Thread(target=run)
+    t.start()
+    t.join()
+    assert box.get("r") == b"\x00" * 31 + b"\x01"

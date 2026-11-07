@@ -20,7 +20,7 @@ The three BN254 (alt_bn128) curve operations are the prerequisites for on-chain 
 
 Implementation is in [`kern/evm/bn254.py`](../kern/evm/bn254.py): pure-Python arithmetic over the BN254 base field, with proper modular inverse, point doubling, projective-to-affine conversion, scalar multiplication via double-and-add.
 
-The pairing implementation is a **placeholder** that correctly handles the most common case (empty product → identity = 1) and gets calldata parsing / gas accounting right. A full pairing (Miller loop + final exponentiation in F_p^12) is ~1000 lines of careful math; a production node links against `blst` or `py_ecc` via FFI. This is documented clearly in the module — the protocol integration is correct, the math is honest about its limits.
+The pairing implementation is a **placeholder** that correctly handles the most common case (empty product → identity = 1) and gets calldata parsing / gas accounting right. A full pairing (Miller loop + final exponentiation in F_p^12) is ~1000 lines of careful math; a production node links against a compiled BN254 pairing library (mcl or arkworks bindings — note `blst` implements BLS12-381, not BN254) or uses `py_ecc`. This is documented clearly in the module — the protocol integration is correct, the math is honest about its limits.
 
 ### Dynamic gas costs ([`kern/evm/dynamic_gas.py`](../kern/evm/dynamic_gas.py))
 

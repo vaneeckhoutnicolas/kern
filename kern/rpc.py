@@ -212,6 +212,9 @@ def build_app(
     async def health(_req: web.Request) -> web.Response:
         return web.json_response({
             "ok": True,
+            # Wallets read this to sign for the right network; the state
+            # machine rejects any transaction signed for another chain_id.
+            "chain_id": node.chain.state.get("chain_id"),
             "level": node.chain.height,
             "peers": len(node.network.peers) if node.network else 0,
             "mempool": node.storage.mempool_size(),

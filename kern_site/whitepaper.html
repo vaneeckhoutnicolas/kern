@@ -821,7 +821,7 @@
 - A slashable attestation registry as a protocol primitive
 - A schema marketplace and ZK-claims infrastructure built on (5)
 - An on-chain governance system with dual tracks and equivocation slashing
-- 100,000,000 KRN genesis supply, distributed per the Ethereum 2014 template (70% public sale / 10% founder vested 4y / 15% Foundation / 3% contributors / 2% validator bootstrap)</p>
+- 100,000,000 KRN genesis supply (70% public sale / 10% founder vested 4y / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake)</p>
 <p><strong>Kern is not</strong>:
 - A general-purpose high-throughput chain. The L1 is throughput-limited in service of finality and verifiability. High-throughput applications live in rollups.
 - A privacy-by-default protocol. ZK-claims allow attestations to be privacy-preserving; bare transfers are visible on-chain.
@@ -1371,7 +1371,7 @@
 </tr>
 <tr>
 <td>Foundation</td>
-<td style="text-align: right;">15%</td>
+<td style="text-align: right;">14%</td>
 <td>Treasury for ecosystem grants, audits, infrastructure</td>
 </tr>
 <tr>
@@ -1383,6 +1383,11 @@
 <td>Validator bootstrap</td>
 <td style="text-align: right;">2%</td>
 <td>Initial subsidy pool for testnet and mainnet validators</td>
+</tr>
+<tr>
+<td>Bootstrap validator stake</td>
+<td style="text-align: right;">1%</td>
+<td>Own stake of the first validator, from the Foundation pool</td>
 </tr>
 </tbody>
 </table>
@@ -1624,7 +1629,7 @@
 <pre><code class="language-bash">git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
 cd kern
 pip install -e &quot;.[dev,explorer,docs]&quot;
-pytest tests/                # 692 tests should pass in ~20 seconds
+pytest tests/                # 836 tests should pass in ~20 seconds
 python networks/devnet_bootstrap.py    # local 3-validator devnet
 python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 </code></pre>

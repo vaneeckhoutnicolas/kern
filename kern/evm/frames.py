@@ -178,34 +178,38 @@ class CallResult:
 # ---------------------------------------------------------------------------
 
 def _precompile_ecrecover(calldata: bytes) -> bytes:
-    """ECRECOVER: recover the public key from a (hash, signature) tuple.
+    """ECRECOVER at address 0x01, Kern variant: Ed25519 signature check.
 
-    Kern uses Ed25519 (not Ethereum's secp256k1). The calldata layout:
-        bytes  0..32  message hash
-        bytes 32..64  ignored (would be `v` in secp256k1)
-        bytes 64..96  r (placeholder)
-        bytes 96..128 s (placeholder)
+    Kern accounts use Ed25519, not Ethereum's secp256k1, so this precompile
+    does NOT recover a key from (v, r, s). It VERIFIES an Ed25519 signature
+    and returns the signer's address. Calldata layout (128 bytes):
 
-    For demonstration, we use a placeholder layout: 32-byte hash + 32-byte
-    pubkey + 64-byte signature. Returns the address (low 20 bytes of
-    blake2b(pubkey)) on success, 32 zero bytes on failure."""
+        bytes   0..32   message (typically a 32-byte hash)
+        bytes  32..64   Ed25519 public key
+        bytes  64..128  Ed25519 signature
+
+    Output: 12 zero bytes followed by the 20-byte address payload derived
+    exactly as kern.crypto does (blake2b-160, key b"kern.addr"), or 32 zero
+    bytes if the input is short or the signature does not verify.
+
+    Phase B (audit 2, point 7): the docstring used to describe the
+    secp256k1 (hash, v, r, s) layout, which this code never read. PyNaCl is
+    a hard dependency; if it is missing the precompile now raises instead
+    of silently returning zeros, because a node that cannot verify must not
+    compute a different state from its peers."""
     if len(calldata) < 128:
         return b"\x00" * 32
     msg_hash = calldata[0:32]
     pubkey = calldata[32:64]
     signature = calldata[64:128]
+    from nacl.signing import VerifyKey
+    from nacl.exceptions import BadSignatureError, CryptoError
     try:
-        from nacl.signing import VerifyKey
-        from nacl.exceptions import BadSignatureError
-        try:
-            VerifyKey(pubkey).verify(msg_hash, signature)
-            # Derive a 20-byte "address" from pubkey (same as kern.crypto).
-            addr_bytes = hashlib.blake2b(pubkey, digest_size=20, key=b"kern.addr").digest()
-            return b"\x00" * 12 + addr_bytes  # pad to 32 bytes
-        except BadSignatureError:
-            return b"\x00" * 32
-    except ImportError:
+        VerifyKey(pubkey).verify(msg_hash, signature)
+    except (BadSignatureError, CryptoError, ValueError, TypeError):
         return b"\x00" * 32
+    addr_bytes = hashlib.blake2b(pubkey, digest_size=20, key=b"kern.addr").digest()
+    return b"\x00" * 12 + addr_bytes  # pad to 32 bytes
 
 
 def _precompile_sha256(calldata: bytes) -> bytes:
@@ -219,15 +223,99 @@ def _precompile_identity(calldata: bytes) -> bytes:
 
 
 def _precompile_ripemd160(calldata: bytes) -> bytes:
-    """RIPEMD-160: 160-bit hash, left-padded to 32 bytes for word alignment."""
+    """RIPEMD-160: 160-bit hash, left-padded to 32 bytes for word alignment.
+
+    Phase B (audit 2, point 7): when OpenSSL lacks the legacy provider,
+    hashlib has no ripemd160 and this used to return 32 zero bytes, so two
+    nodes could compute different state roots for the same bytecode. It
+    now falls back to the pure-Python implementation below, which produces
+    the same digest on every platform."""
+    return b"\x00" * 12 + ripemd160(calldata)
+
+
+def ripemd160(data: bytes) -> bytes:
+    """RIPEMD-160 digest. Uses hashlib when it provides the algorithm,
+    otherwise the portable implementation; both are byte-identical."""
     try:
         h = hashlib.new("ripemd160")
-        h.update(calldata)
-        return b"\x00" * 12 + h.digest()
     except ValueError:
-        # ripemd160 may not be available in some Python builds without
-        # OpenSSL legacy provider. Fallback: return zeros.
-        return b"\x00" * 32
+        return _ripemd160_pure(data)
+    h.update(data)
+    return h.digest()
+
+
+# Portable RIPEMD-160 (Dobbertin, Bosselaers, Preneel, 1996).
+_RMD_KL = (0x00000000, 0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xA953FD4E)
+_RMD_KR = (0x50A28BE6, 0x5C4DD124, 0x6D703EF3, 0x7A6D76E9, 0x00000000)
+_RMD_RL = (
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8,
+    3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12,
+    1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2,
+    4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13,
+)
+_RMD_RR = (
+    5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12,
+    6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2,
+    15, 5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13,
+    8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14,
+    12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11,
+)
+_RMD_SL = (
+    11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8,
+    7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12,
+    11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5,
+    11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12,
+    9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6,
+)
+_RMD_SR = (
+    8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6,
+    9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11,
+    9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5,
+    15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8,
+    8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11,
+)
+
+
+def _rmd_f(j: int, x: int, y: int, z: int) -> int:
+    if j < 16:
+        return x ^ y ^ z
+    if j < 32:
+        return (x & y) | (~x & z)
+    if j < 48:
+        return (x | ~y) ^ z
+    if j < 64:
+        return (x & z) | (y & ~z)
+    return x ^ (y | ~z)
+
+
+def _rmd_rol(x: int, n: int) -> int:
+    x &= 0xFFFFFFFF
+    return ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF
+
+
+def _ripemd160_pure(data: bytes) -> bytes:
+    h = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0]
+    msg = bytes(data) + b"\x80"
+    msg += b"\x00" * ((56 - len(msg) % 64) % 64)
+    msg += (8 * len(data) & 0xFFFFFFFFFFFFFFFF).to_bytes(8, "little")
+    for off in range(0, len(msg), 64):
+        x = [int.from_bytes(msg[off + 4 * i: off + 4 * i + 4], "little") for i in range(16)]
+        al, bl, cl, dl, el = h
+        ar, br, cr, dr, er = h
+        for j in range(80):
+            r = j // 16
+            t = _rmd_rol(al + _rmd_f(j, bl, cl, dl) + x[_RMD_RL[j]] + _RMD_KL[r], _RMD_SL[j]) + el
+            al, el, dl, cl, bl = el, dl, _rmd_rol(cl, 10), bl, t & 0xFFFFFFFF
+            t = _rmd_rol(ar + _rmd_f(79 - j, br, cr, dr) + x[_RMD_RR[j]] + _RMD_KR[r], _RMD_SR[j]) + er
+            ar, er, dr, cr, br = er, dr, _rmd_rol(cr, 10), br, t & 0xFFFFFFFF
+        t = (h[1] + cl + dr) & 0xFFFFFFFF
+        h[1] = (h[2] + dl + er) & 0xFFFFFFFF
+        h[2] = (h[3] + el + ar) & 0xFFFFFFFF
+        h[3] = (h[4] + al + br) & 0xFFFFFFFF
+        h[4] = (h[0] + bl + cr) & 0xFFFFFFFF
+        h[0] = t
+    return b"".join(v.to_bytes(4, "little") for v in h)
 
 
 def _precompile_modexp(calldata: bytes) -> bytes:

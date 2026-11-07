@@ -34,6 +34,41 @@ from .crypto import (
 )
 
 
+
+# ---------------------------------------------------------------------------
+# Strict decoding helpers (ingress validation)
+# ---------------------------------------------------------------------------
+
+def _req_str(d: dict, key: str) -> str:
+    v = d.get(key)
+    if not isinstance(v, str) or not v:
+        raise ValueError(f"tx.{key}: expected a non-empty string")
+    return v
+
+
+def _opt_str(d: dict, key: str):
+    v = d.get(key)
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError(f"tx.{key}: expected a string or null")
+    return v
+
+
+def _req_uint(d: dict, key: str) -> int:
+    v = d.get(key)
+    if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+        raise ValueError(f"tx.{key}: expected a non-negative integer")
+    return v
+
+
+def _opt_uint(d: dict, key: str, default: int = 0) -> int:
+    v = d.get(key, default)
+    if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+        raise ValueError(f"tx.{key}: expected a non-negative integer")
+    return v
+
+
 class OpKind(str, Enum):
     TRANSFER = "transfer"
     ORIGINATE = "originate"
@@ -101,7 +136,26 @@ class Transaction:
 
         We enforce non-negativity for all numeric fields HERE rather
         than at every consumer, so any consumer (mempool, RPC inject,
-        block construction, replay) gets the same guarantee."""
+        block construction, replay) gets the same guarantee.
+
+        Phase B (audit 1, finding 7): field TYPES are checked here as well,
+        not only in from_dict, so that a Transaction built in-process (by a
+        tool, a test or a future decoder) cannot carry a string fee or a
+        list recipient into the state machine either."""
+        if not isinstance(self.kind, OpKind):
+            raise TypeError(f"tx.kind must be an OpKind, got {type(self.kind).__name__}")
+        for name in ("sender", "sender_pubkey"):
+            if not isinstance(getattr(self, name), str):
+                raise TypeError(f"tx.{name} must be a string")
+        for name in ("nonce", "fee", "gas_limit", "amount"):
+            v = getattr(self, name)
+            # bool is a subclass of int in Python; reject it explicitly.
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise TypeError(f"tx.{name} must be an integer, got {type(v).__name__}")
+        for name in ("recipient", "code", "entry", "signature", "chain_id"):
+            v = getattr(self, name)
+            if v is not None and not isinstance(v, str):
+                raise TypeError(f"tx.{name} must be a string or null")
         if self.fee < 0:
             raise ValueError(f"fee must be non-negative, got {self.fee}")
         if self.amount < 0:
@@ -178,21 +232,32 @@ class Transaction:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Transaction":
+        """Decode a transaction dict with strict type and bounds checks.
+
+        This is the ingress gate for every transaction that arrives from
+        outside the process (P2P gossip and RPC injection both route
+        through it), so it must reject malformed shapes *here* rather than
+        letting them surface later inside consensus code. Raises
+        ValueError with a field-specific message on any violation.
+        Note: bool is a subclass of int in Python, so integer fields
+        explicitly reject booleans."""
+        if not isinstance(d, dict):
+            raise ValueError("tx: expected an object")
         return cls(
-            kind=OpKind(d["kind"]),
-            sender=d["sender"],
-            sender_pubkey=d["sender_pubkey"],
-            nonce=d["nonce"],
-            fee=d["fee"],
-            gas_limit=d["gas_limit"],
-            recipient=d.get("recipient"),
-            amount=d.get("amount", 0),
-            code=d.get("code"),
+            kind=OpKind(_req_str(d, "kind")),
+            sender=_req_str(d, "sender"),
+            sender_pubkey=_req_str(d, "sender_pubkey"),
+            nonce=_req_uint(d, "nonce"),
+            fee=_req_uint(d, "fee"),
+            gas_limit=_req_uint(d, "gas_limit"),
+            recipient=_opt_str(d, "recipient"),
+            amount=_opt_uint(d, "amount", default=0),
+            code=_opt_str(d, "code"),
             initial_storage=d.get("initial_storage"),
-            entry=d.get("entry"),
+            entry=_opt_str(d, "entry"),
             params=d.get("params"),
-            signature=d.get("signature"),
-            chain_id=d.get("chain_id"),
+            signature=_opt_str(d, "signature"),
+            chain_id=_opt_str(d, "chain_id"),
         )
 
 

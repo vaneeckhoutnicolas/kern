@@ -264,7 +264,11 @@ def test_delegator_receives_share_of_block_rewards():
         baker_kp.address: 200_000_000,
         del_kp.address: 9_000_000_000,
     }
-    state["total_supply"] = 10_200_000_000
+    # Phase B (audit 1, finding 4): delegated balances now count in the
+    # staking ratio. With a supply of 10.2B, 98% would be staked and the
+    # adaptive curve would mint almost nothing; a supply of 100B keeps the
+    # ratio near 10%, where issuance is meaningful.
+    state["total_supply"] = 100_000_000_000
     state["delegations"] = {del_kp.address: baker_kp.address}
 
     pre_del_balance = state["balances"][del_kp.address]

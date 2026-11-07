@@ -217,7 +217,7 @@ git status
 If you don't know what to contribute, the [roadmap](roadmap.md) lists open milestones. Specifically:
 
 - **v1.0-rc → v1.0**: audit findings remediation, doc polish, edge-case test coverage
-- **v1.x**: BN254 via blst FFI (10x speedup), more EVM opcodes, additional Skald examples
+- **v1.x**: BN254 via a compiled pairing backend (mcl/arkworks FFI; blst is BLS12-381-only and not applicable to BN254), more EVM opcodes, additional Skald examples
 - **Heimdall** (the official explorer): Sessions 2-4 of the Heimdall delivery plan — per-vertical dashboards, Grafana stack, UI polish (see [setup-heimdall-operator.md](setup-heimdall-operator.md))
 - **Tooling**: wallet integrations, IDE tools for Skald
 - **Skald applications**: AMMs, lending, identity contracts demonstrating the invariants pattern

@@ -56,7 +56,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .crypto import (
     KernKeypair,
@@ -204,27 +204,44 @@ class FraudProof:
     Arbitrum / Optimism) — the challenger and the rollup operator narrow
     down to a single VM step that can be verified on L1.
 
-    In this reference implementation, we model only the L1-side state
-    machine of the challenge process. A real implementation would call
-    out to an EVM single-step verifier as part of `verify()`.
-    """
+    Phase B (audit 2, point 6): a fraud proof is no longer recognised by
+    its shape. Opening a challenge starts an interactive bisection
+    (kern.evm.bisection) between the sequencer's trace and the
+    challenger's; the dispute is decided ONLY by `RollupState.resolve_challenge`,
+    which re-executes the single disputed step with
+    `single_step_verify`. There is no public path that reverts a batch
+    without an executed step.
 
+    Commitment convention for the reference EVM rollup: a batch's
+    `parent_state_root` and `state_root` are the mini-EVM state
+    commitments (VmState.commitment_hex) before and after executing the
+    batch program, and `tx_data_hash` is `program_hash(code)`.
+
+    `witness_data` must carry {"n_steps": int >= 1}, the length of the
+    execution trace both parties bisect over.
+    """
     rollup_id: str
     batch_index: int
     challenger: str                            # kn1...
     expected_state_root: str                   # what the correct execution would produce
     claimed_state_root: str                    # what the batch claimed
     witness_data: dict                         # protocol-specific evidence
-    # For demonstration, the witness here includes a `step_proof` field that
-    # a real verifier would consume. We treat the proof as valid if it
-    # asserts an expected_state_root different from claimed_state_root.
 
     def verify_shape(self) -> Tuple[bool, str]:
+        """Admission checks only. Passing them OPENS a dispute; it never
+        decides one."""
         if self.expected_state_root == self.claimed_state_root:
             return False, "expected and claimed state roots agree — not a fraud"
-        if "step_proof" not in self.witness_data:
-            return False, "witness missing step_proof field"
+        n = self.witness_data.get("n_steps") if isinstance(self.witness_data, dict) else None
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            return False, "witness must declare n_steps (int >= 1) for the bisection"
         return True, "ok"
+
+
+def program_hash(code: bytes) -> str:
+    """Binding between a batch and the program executed for it:
+    batch.tx_data_hash must equal program_hash(code)."""
+    return blake2b256(code, key=b"kern.rollup.program").hex()
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +259,8 @@ class RollupState:
     # Pending withdrawals: each withdrawal references the batch that authorized
     # it; once that batch is final, the withdrawal can be claimed on L1.
     pending_withdrawals: Dict[int, List[dict]] = field(default_factory=dict)
+    # Phase B: the bisection in progress for each active challenge.
+    bisections: Dict[int, Any] = field(default_factory=dict)
 
     # ------------------------------------------------------------ posting
 
@@ -295,34 +314,90 @@ class RollupState:
             return False, f"proof rejected: {reason}"
         if proof.claimed_state_root != batch.state_root:
             return False, "claimed state root in proof does not match batch"
+        from .evm.bisection import BisectionState
         self.active_challenges[proof.batch_index] = proof
+        self.bisections[proof.batch_index] = BisectionState(
+            n_steps=proof.witness_data["n_steps"],
+            initial_commitment=batch.parent_state_root,
+            final_commitment_seq=batch.state_root,
+            final_commitment_chal=proof.expected_state_root,
+        )
         batch.status = BatchStatus.CHALLENGED
         return True, "ok"
 
-    def resolve_challenge_for_challenger(self, batch_index: int) -> Tuple[bool, str]:
-        """The challenger wins. Revert this batch and every batch on top of it.
-
-        In a real implementation, `verify()` would run a single-step EVM
-        execution to decide the winner. Here we assume the result has been
-        determined by an external verifier."""
-        if batch_index not in self.active_challenges:
+    def challenge_round(self, batch_index: int, seq_commitment_at_mid: str,
+                        chal_commitment_at_mid: str) -> Tuple[bool, str]:
+        """One bisection round: both parties reveal their commitment at
+        the current midpoint (see kern.evm.bisection.bisection_round)."""
+        from .evm.bisection import bisection_round
+        bis = self.bisections.get(batch_index)
+        if bis is None:
             return False, "no active challenge"
-        # Revert this batch and all subsequent ones.
+        if bis.is_ready_for_single_step:
+            return False, "bisection finished; resolve with resolve_challenge"
+        bisection_round(bis, seq_commitment_at_mid, chal_commitment_at_mid)
+        return True, "ok"
+
+    def resolve_challenge(self, batch_index: int, code: bytes,
+                          pre_state: Any) -> Tuple[bool, str]:
+        """Decide a challenge by executing the single disputed step.
+
+        Preconditions: the bisection has narrowed the dispute to one step;
+        `code` is the batch program (program_hash(code) == tx_data_hash);
+        `pre_state` is the VM state both parties agreed on at step `lo`
+        (its commitment must equal that agreed commitment).
+
+        single_step_verify then executes one instruction. If the result
+        matches the sequencer's commitment at step `hi`, the sequencer
+        wins and the batch returns to PENDING. Otherwise the sequencer's
+        claim is refuted: this batch and every batch built on it are
+        REVERTED. Returns (ok, "challenger" | "sequencer") or (False, reason).
+
+        Phase B (audit 2, point 6): this is the only way a challenge ends.
+        The former resolve_challenge_for_challenger reverted a batch on the
+        word of "an external verifier" without executing anything."""
+        from .evm.bisection import single_step_verify
+        bis = self.bisections.get(batch_index)
+        if bis is None or batch_index not in self.active_challenges:
+            return False, "no active challenge"
+        if not bis.is_ready_for_single_step:
+            return False, "bisection not finished"
+        batch = self.batches[batch_index]
+        if not isinstance(code, (bytes, bytearray)) or program_hash(bytes(code)) != batch.tx_data_hash:
+            return False, "code does not match the batch's tx_data_hash"
+        agreed = bis.revealed_seq.get(bis.lo)
+        if agreed is None or agreed != bis.revealed_chal.get(bis.lo):
+            return False, "no agreed commitment at the start of the disputed step"
+        try:
+            if pre_state.commitment_hex() != agreed:
+                return False, "pre_state does not match the agreed commitment"
+        except AttributeError:
+            return False, "pre_state is not a VM state"
+        result = single_step_verify(
+            code=bytes(code),
+            pre_state=pre_state,
+            claimed_post_commitment_seq=bis.revealed_seq[bis.hi],
+            claimed_post_commitment_chal=bis.revealed_chal[bis.hi],
+            disputed_step=bis.hi,
+        )
+        if result.challenger_wins:
+            self._revert_from(batch_index)
+            return True, "challenger"
+        batch.status = BatchStatus.PENDING
+        del self.active_challenges[batch_index]
+        del self.bisections[batch_index]
+        return True, "sequencer"
+
+    def _revert_from(self, batch_index: int) -> None:
+        """Revert this batch and every batch on top of it. Private: only
+        resolve_challenge calls it, after an executed step refuted the
+        sequencer."""
         for b in self.batches[batch_index:]:
             if b.status != BatchStatus.REVERTED:
                 b.status = BatchStatus.REVERTED
                 self.pending_withdrawals.pop(b.batch_index, None)
-        del self.active_challenges[batch_index]
-        return True, "ok"
-
-    def resolve_challenge_for_sequencer(self, batch_index: int) -> Tuple[bool, str]:
-        """The sequencer wins the challenge: batch returns to pending status
-        and the challenger's bond is slashed."""
-        if batch_index not in self.active_challenges:
-            return False, "no active challenge"
-        self.batches[batch_index].status = BatchStatus.PENDING
-        del self.active_challenges[batch_index]
-        return True, "ok"
+        self.active_challenges.pop(batch_index, None)
+        self.bisections.pop(batch_index, None)
 
     # ------------------------------------------------------------ finality
 

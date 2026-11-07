@@ -32,6 +32,12 @@ def get_nonce(rpc: str, addr: str) -> int:
         return json.loads(r.read())["nonce"]
 
 
+def get_chain_id(rpc: str):
+    req = urllib.request.Request(f"{rpc}/chain/health")
+    with urllib.request.urlopen(req) as r:
+        return json.loads(r.read()).get("chain_id")
+
+
 def inject(rpc: str, tx_dict: dict) -> dict:
     data = json.dumps(tx_dict).encode("utf-8")
     req = urllib.request.Request(
@@ -58,6 +64,9 @@ def main() -> int:
 
     nonce = get_nonce(args.rpc, kp.address)
     tx = make_transfer(kp, recipient=args.to, amount=args.amount, nonce=nonce, fee=args.fee)
+    # Sign for the node's network: transactions for another chain_id are rejected.
+    tx.chain_id = get_chain_id(args.rpc)
+    tx.sign(kp)
     resp = inject(args.rpc, tx.to_dict())
     print(f"Injected transaction: {resp.get('hash')}")
     return 0

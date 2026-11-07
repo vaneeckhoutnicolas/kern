@@ -58,10 +58,12 @@ module that ships with the protocol." What this module provides:
     Python — they'd be Circom or similar) for the most common
     predicates: "age threshold" and "value threshold"
 
-In the v1.1-rc demonstration, the verification function is a STUB
-that returns True for an empty proof (matching the empty-input case
-of the underlying BN254 pairing). Production deployments substitute
-a real proof verifier here once the application circuit is built.
+Phase B (audit 2, point 3): `verify_zk_claim` now performs the real
+Groth16 pairing check on BN254 against a registered verifier key. It
+used to be a stub that returned True for any well-formed claim. The
+structural check alone is still available as `check_zk_claim_shape`.
+Without a verifier key for the claim's `verifier_key_hash`, a claim is
+NOT verified (False): there is nothing to check it against.
 
 CLAIM PAYLOAD FORMAT (canonical)
 ---------------------------------
@@ -174,71 +176,150 @@ def derive_verifier_key_hash(verifier_key_bytes: bytes) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Verification (stub for v1.1-rc; real impl uses BN254 precompile)
+# Verification: Groth16 over BN254
 # ---------------------------------------------------------------------------
+
+def check_zk_claim_shape(claim: Any) -> bool:
+    """Structural validation only: canonical fields present, proof points
+    are integer pairs, G2 `b` is a 2x2 integer matrix, public inputs are
+    integers. This is what `verify_zk_claim` used to return as its final
+    answer in v1.1-rc; it proves nothing cryptographically.
+
+    Closes S-MED-2 from the v1.1-rc internal review (non-integer members
+    used to pass)."""
+    if not is_zk_claim(claim):
+        return False
+    proof = claim["proof"]
+
+    def _ints(v: Any, n: int) -> bool:
+        return (isinstance(v, list) and len(v) == n
+                and all(isinstance(x, int) and not isinstance(x, bool) for x in v))
+
+    if not _ints(proof.get("a"), 2) or not _ints(proof.get("c"), 2):
+        return False
+    b = proof.get("b")
+    if not isinstance(b, list) or len(b) != 2 or not all(_ints(row, 2) for row in b):
+        return False
+    public_inputs = claim.get("public_inputs")
+    if not isinstance(public_inputs, list) or not all(
+        isinstance(x, int) and not isinstance(x, bool) for x in public_inputs
+    ):
+        return False
+    return True
+
+
+def verifier_key_bytes(vk: dict) -> bytes:
+    """Canonical encoding of a Groth16 verifier key, used for its hash.
+
+    vk = {"alpha1": [x, y], "beta2": [[x_r, x_i], [y_r, y_i]],
+          "gamma2": G2, "delta2": G2, "ic": [[x, y], ...]}
+    where len(ic) == number of public inputs + 1."""
+    return json.dumps(vk, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
 
 def verify_zk_claim(
     claim: dict,
     verifier_key_registry: Optional[dict] = None,
 ) -> bool:
-    """Verify a ZK-claim payload.
+    """Verify a ZK-claim payload cryptographically.
 
-    In v1.1-rc this is a STUB: it does structural validation
-    (well-formed claim, public inputs present, proof has the right
-    shape) but does NOT perform the actual pairing check. To plug in
-    real verification:
+    Steps:
+      1. Structural validation (`check_zk_claim_shape`).
+      2. proof_system must be "groth16-bn254".
+      3. The verifier key is looked up in `verifier_key_registry` by the
+         claim's `verifier_key_hash`, and must hash to that value
+         (`derive_verifier_key_hash(verifier_key_bytes(vk))`), so a
+         registry entry cannot be swapped for another circuit's key.
+      4. Groth16 check on BN254:
+             e(A, B) == e(alpha1, beta2) * e(vk_x, gamma2) * e(C, delta2)
+         with vk_x = ic[0] + sum(public_inputs[i] * ic[i + 1]),
+         evaluated as a single product of Miller loops followed by one
+         final exponentiation, compared with 1.
 
-        1. Look up verifier_key_registry[claim["verifier_key_hash"]]
-        2. Build the BN254 pairing inputs from the verifier key and
-           the (a, b, c) proof points + public inputs
-        3. Call kern.evm.bn254.pairing_check(...) with the inputs
-        4. Return its boolean result
+    Returns False on any failure, including a missing registry or key,
+    points off the curve or outside the field, or public inputs outside
+    the scalar field. Raises BN254BackendUnavailable if py_ecc is absent.
 
-    For the v1.1-rc demonstration, we return True iff the claim is
-    well-formed. Production deployments MUST replace this with the
-    real verifier before relying on ZK attestations.
-
-    Why a stub: a real verifier requires the specific circuit's
-    verifier key, which is application-specific work (a real
-    deployment generates these via a trusted setup ceremony). The
-    primitive infrastructure here is what matters — applications
-    plug in their own circuits.
-    """
-    if not is_zk_claim(claim):
+    Phase B (audit 2, point 3): this function used to return True after
+    the structural check, without any pairing."""
+    if not check_zk_claim_shape(claim):
         return False
-    proof = claim["proof"]
-    # Structural checks — closes S-MED-2 from the v1.1-rc internal
-    # security review: previously, a malicious caller could submit a
-    # claim with `proof_a = ["not_an_int", "neither"]` and the stub
-    # would return True. Now we enforce that proof points are 2-element
-    # lists of integers, G2 b is a 2x2 integer matrix, and public_inputs
-    # are integers.
-    a = proof.get("a")
-    if not isinstance(a, list) or len(a) != 2 or not all(isinstance(x, int) for x in a):
+    if claim.get("proof_system") != "groth16-bn254":
         return False
-    b = proof.get("b")
-    if not isinstance(b, list) or len(b) != 2:
+    if not verifier_key_registry:
         return False
-    for row in b:
-        if not isinstance(row, list) or len(row) != 2 or not all(isinstance(x, int) for x in row):
+    vk_hash = claim["verifier_key_hash"]
+    vk = verifier_key_registry.get(vk_hash)
+    if not isinstance(vk, dict):
+        return False
+    try:
+        if derive_verifier_key_hash(verifier_key_bytes(vk)) != vk_hash:
             return False
-    c = proof.get("c")
-    if not isinstance(c, list) or len(c) != 2 or not all(isinstance(x, int) for x in c):
+    except (TypeError, ValueError):
         return False
-    public_inputs = claim.get("public_inputs")
-    if not isinstance(public_inputs, list) or not all(isinstance(x, int) for x in public_inputs):
-        return False
+    return _groth16_verify(vk, claim["public_inputs"], claim["proof"])
 
-    # Verifier-key-registry lookup (placeholder)
-    if verifier_key_registry is not None:
-        vk_hash = claim["verifier_key_hash"]
-        if vk_hash not in verifier_key_registry:
+
+def _groth16_verify(vk: dict, public_inputs: List[int], proof: dict) -> bool:
+    from .evm.bn254 import PY_ECC_AVAILABLE, BN254BackendUnavailable, N, P
+    if not PY_ECC_AVAILABLE:
+        raise BN254BackendUnavailable("Groth16 verification requires py_ecc")
+    from py_ecc import optimized_bn128 as ob
+
+    def g1(v: Any):
+        if not (isinstance(v, list) and len(v) == 2
+                and all(isinstance(t, int) and not isinstance(t, bool) and 0 <= t < P for t in v)):
+            raise ValueError("bad G1")
+        if v == [0, 0]:
+            return ob.Z1  # point at infinity
+        pt = (ob.FQ(v[0]), ob.FQ(v[1]), ob.FQ.one())
+        if not ob.is_on_curve(pt, ob.b):
+            raise ValueError("G1 off curve")
+        return pt
+
+    def g2(v: Any):
+        if not (isinstance(v, list) and len(v) == 2 and all(
+                isinstance(r, list) and len(r) == 2
+                and all(isinstance(t, int) and not isinstance(t, bool) and 0 <= t < P for t in r)
+                for r in v)):
+            raise ValueError("bad G2")
+        (xr, xi), (yr, yi) = v
+        pt = (ob.FQ2([xr, xi]), ob.FQ2([yr, yi]), ob.FQ2.one())
+        if not ob.is_on_curve(pt, ob.b2):
+            raise ValueError("G2 off curve")
+        # Subgroup check: G2 on BN254 has a non-trivial cofactor.
+        if not ob.is_inf(ob.multiply(pt, N)):
+            raise ValueError("G2 not in subgroup")
+        return pt
+
+    try:
+        ic = vk.get("ic")
+        if not isinstance(ic, list) or len(ic) != len(public_inputs) + 1:
             return False
-        # In production: load the verifier key and run the BN254 pairing
-        # check via kern.evm.bn254.pairing_check(...).
+        if any(not (0 <= x < N) for x in public_inputs):
+            return False
+        a = g1(proof["a"])
+        b = g2(proof["b"])
+        c = g1(proof["c"])
+        alpha1 = g1(vk.get("alpha1"))
+        beta2 = g2(vk.get("beta2"))
+        gamma2 = g2(vk.get("gamma2"))
+        delta2 = g2(vk.get("delta2"))
+        vk_x = g1(ic[0])
+        for x, point in zip(public_inputs, ic[1:]):
+            vk_x = ob.add(vk_x, ob.multiply(g1(point), x))
+    except (ValueError, TypeError, KeyError):
+        return False
 
-    # v1.1-rc stub: structural validation passes
-    return True
+    def miller(q, p):
+        if ob.is_inf(q) or ob.is_inf(p):
+            return ob.FQ12.one()
+        return ob.pairing(q, p, final_exponentiate=False)
+
+    neg_a = ob.neg(a)
+    acc = (miller(b, neg_a) * miller(beta2, alpha1)
+           * miller(gamma2, vk_x) * miller(delta2, c))
+    return ob.final_exponentiate(acc) == ob.FQ12.one()
 
 
 # ---------------------------------------------------------------------------
