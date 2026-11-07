@@ -202,6 +202,11 @@ class Node:
         # serves every round in which it is proposed.
         self._pending: Dict[Tuple[int, str], Block] = {}
         self._seen_proposals: Set[Tuple[int, int, str, str, int]] = set()
+        # Review of 84cbbcc: the first block seen for each (level, round).
+        # Only that block is validated and kept; another one for the same
+        # (level, round) is equivocation evidence, never validated or stored.
+        self._round_block: Dict[Tuple[int, int], str] = {}
+        self._relayed_conflicts: Set[Tuple[int, int]] = set()
         # (level, round) the engine was last told about.
         self._engine_pos: Tuple[int, int] = (-1, -1)
         # Advisory dedup sets (see MAX_SEEN_ENTRIES note above).
@@ -409,6 +414,8 @@ class Node:
         if self.journal is not None and level % JOURNAL_COMPACT_EVERY == 0:
             self.journal.compact(level + 1)
         self._seen_proposals = {k for k in self._seen_proposals if k[0] > level}
+        self._round_block = {k: v for k, v in self._round_block.items() if k[0] > level}
+        self._relayed_conflicts = {k for k in self._relayed_conflicts if k[0] > level}
         self._round = 0
         self._proposed_this_round = False
         self._round_deadline = time.monotonic() + self._round_timeout()
@@ -517,6 +524,7 @@ class Node:
             return
         failpoints.hit("after_proposal_signed")
         self._pending[(level, h)] = block
+        self._round_block.setdefault((level, r), h)
         self._seen_proposals.add((level, r, h, proposal.validator, valid_round))
         LOG.info("proposed block %d round %d (payload round %d, valid round %d, "
                  "hash %s, %d txs)", level, r, block.header.payload_round,
@@ -709,6 +717,21 @@ class Node:
                 return
         self._seen_proposals.add(key)
         self._trim(self._seen_proposals)
+        first = self._round_block.setdefault((level, r), h)
+        if first != h:
+            # A second, different block from the proposer of this round:
+            # keep the two signed PROPOSE messages as evidence (the engine
+            # checks the signature), relay the conflict once so that other
+            # nodes see it, and never validate, store or keep this block.
+            if self.bft is not None:
+                self._refresh_engine()
+                self.bft.on_proposal(level, r, h, valid_round=vr, proof=proof, proposal_msg=pmsg)
+            if self.network and (level, r) not in self._relayed_conflicts:
+                self._relayed_conflicts.add((level, r))
+                asyncio.create_task(self.network.broadcast_proposal(envelope))
+            LOG.warning("conflicting proposal at level %d round %d from %s: kept as evidence, "
+                        "not validated", level, r, pmsg.validator)
+            return
         if (level, h) not in self._pending:
             # Full validation BEFORE pre-endorsing (quorum not required on a
             # proposal — the quorum is what we are about to help build).

@@ -67,6 +67,11 @@ pre-endorsement, after these checks, in this order (`Node._on_proposal_msg`):
    `select_proposer(parent_hash, validators, payload_round)`, txs root,
    fee rules and state root.
 
+Only the first block seen for a (level, round), after steps 1 and 2, goes
+through steps 3 and 4 and is kept. A different block for the same (level,
+round) is not validated or kept: its PROPOSE message is recorded as
+proposal equivocation evidence, and the conflict is relayed once.
+
 Bare PROPOSE messages on the `consensus` channel are dropped: no
 validator ever pre-endorses a hash whose block it has not executed. Valid
 proposals are re-gossiped, so a proposer that sends two different blocks
@@ -308,7 +313,8 @@ malformed record is moved aside, and a missing journal on a chain past
 genesis is treated the same way: the validator does not sign at the
 level in progress and resumes once that level is finalized by others. A
 final line cut by a crash is ignored, because the signature it announced
-was never produced. Records below the finalized height are compacted
+was never produced; in the block file, a cut final line is removed and
+every append starts on a fresh line. Records below the finalized height are compacted
 every 64 levels.
 
 **Limits.** No nil votes yet: a round that cannot gather a certificate
