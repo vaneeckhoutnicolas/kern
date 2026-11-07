@@ -172,3 +172,13 @@ The source of truth is the code and the named tests; see
 | effective_stake counts bonded amounts only | `chain.effective_stake`, `chain.delegators_of` | same |
 | Slash: 30% of own stake (10% of it to the reporter, rest burned) and 30% of each bond and unbonding entry to the offender (burned); refused only if all are zero | `chain._slash_validator` | same |
 | Consensus equivocation evidence older than `delegation_unbonding_blocks` is rejected | `chain._apply_slash_consensus_equivocation` | same |
+
+## 10. Phase E consensus rule changes
+
+| Rule | Python reference | Pinned by |
+|---|---|---|
+| `UNDELEGATE_STAKE` lowers the validator's entry in `consensus_set` to `min(entry, effective_stake)` in the same transaction; no operation raises an entry inside an epoch | `chain._apply_undelegate_stake`, `chain._lower_consensus_weight` | `tests/test_phase_e_bond_timing.py` |
+| Delegation records are `{"validator", "amount", "tranches"}`, each tranche `{"level", "amount"}`; a top-up at the level of the last tranche merges into it, otherwise appends; records without `tranches` read as one tranche at level 0 | `chain._apply_delegate_stake`, `chain._tranches` | same |
+| Unbonding entries are `{"delegator", "validator", "amount", "tranches", "unbonding_from"}`; entries without `unbonding_from` are treated as exposed | `chain._apply_undelegate_stake` | same |
+| Slash for an offence at level `L`: 30% (integer division, per tranche) of each tranche with `level <= L`, in live bonds and in unbonding entries with `unbonding_from >= L`; `amount` is recomputed as the sum of the tranches | `chain._slash_validator`, `chain._cut_exposed_tranches` | same |
+| `L` is the vote level for `SLASH_CONSENSUS_EQUIVOCATION`, and `second_at_level` of the equivocation record for `SLASH_EQUIVOCATION` (current level if missing) | `chain._apply_slash_consensus_equivocation`, `chain._apply_slash_equivocation` | same |

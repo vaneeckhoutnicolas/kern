@@ -17,8 +17,8 @@ Kern is designed to close that gap, not by being a "better Ethereum" or a "more 
 
 ## 2. What Kern is, in five points
 
-1. **A Layer-1 with deterministic finality.** Tenderbake-style BFT consensus, ~1-second block time, ~2-second finality. No probabilistic reorganizations.
-2. **A Liquid Proof-of-Stake validator economy.** Anyone can delegate without giving up custody. Validators stake KRN; rewards adjust adaptively to participation.
+1. **A Layer-1 with deterministic finality.** Tenderbake-style BFT consensus, ~1-second block time, ~2-second finality as a design target. Multi-validator safety is not established yet (see [consensus-locking.md](consensus-locking.md)).
+2. **A bonded Proof-of-Stake validator economy.** Anyone can delegate without handing funds to a third party: delegated KRN are bonded by the protocol, share in the validator's rewards and in its slashing risk. Rewards adjust adaptively to participation.
 3. **A contract language built for verification.** Skald is small, statically typed, and enforces declared invariants at runtime. A lending market literally cannot enter an insolvent state.
 4. **An on-chain evolution path.** Protocol amendments — including consensus parameters, gas pricing, and Skald itself — go through an on-chain governance cycle. No hard forks.
 5. **EVM compatibility via Optimistic Rollups.** Existing Ethereum applications run on a Kern-anchored rollup with Hardhat/Foundry/MetaMask working unchanged. Kern itself stays narrow and verifiable.

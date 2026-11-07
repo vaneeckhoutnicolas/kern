@@ -1,80 +1,70 @@
 # Staking and Delegation
 
-This document is the canonical reference for how staking works in Kern. It complements [`tokenomics.md`](tokenomics.md) §6 with deeper detail on the mechanics, the math, and the user flows.
+This document is the reference for how staking works in Kern as the code stands in v1.1-rc. It complements [`tokenomics.md`](tokenomics.md) §6. Every rule below can be checked in [`kern/chain.py`](../kern/chain.py).
 
-Kern uses **bonded Proof-of-Stake delegation**. Delegated KRN leave the delegator's spendable balance and are held, at protocol level, in a bond to one validator: they count toward that validator's consensus weight, earn a share of its rewards, and are slashed with it. Undelegating starts an unbonding period during which the bond carries no weight but stays slashable. There is no derivative token and no smart-contract counterparty.
+Kern uses **bonded Proof-of-Stake delegation**. Delegated KRN leave the delegator's spendable balance and are held, at protocol level, in a bond to one validator. A bond counts toward that validator's consensus weight, earns a share of its rewards, and is slashed with it. Undelegating starts an unbonding period during which the bond carries no weight but stays locked, and slashable for offences committed before the undelegation. There is no derivative token and no smart-contract counterparty.
 
-> **Changed in v1.1-rc Phase D.** Earlier versions counted the delegator's *liquid* balance, which stayed spendable. An external review showed that this let consensus weight exist without collateral behind it: a holder could delegate just before an epoch snapshot and move the funds away the next block. Sections below that describe liquid balances are superseded by this paragraph and by [phase-d-changes.md](phase-d-changes.md).
+> **History.** Before v1.1-rc Phase D, a delegation counted the delegator's *liquid* balance, which stayed spendable. An external review showed that this let consensus weight exist without collateral behind it. Phase D bonded delegations ([phase-d-changes.md](phase-d-changes.md)); Phase E made undelegation lower consensus weight at once and limited slashing to the stake that was exposed at the offence ([phase-e-changes.md](phase-e-changes.md)).
 
 This document covers:
 
-- §1 — How baking works (becoming a validator)
-- §2 — How delegation works (delegating to a validator)
-- §3 — How rewards are split between validator and delegators
-- §4 — How slashing works (and how delegators are exposed)
-- §5 — Practical: how to delegate, how to choose a validator, how to switch
+- §1 Validators
+- §2 Delegation
+- §3 Reward splitting
+- §4 Slashing, and how delegators are exposed
+- §5 Practical guide
+
+All durations are in blocks. With the default target block time of 1 second, 86 400 blocks is about one day; a chain can set other values in its genesis.
 
 ---
 
-## 1. Baking (becoming a validator)
+## 1. Validators
 
-A validator (also called a *baker* in Tezos terminology — Kern uses both terms interchangeably) is an account that runs a node and participates in consensus by:
+A validator (also called a *baker*, the Tezos term) runs a node and takes part in consensus by proposing blocks when selected, pre-endorsing and endorsing blocks (the two BFT voting steps), and voting on governance proposals.
 
-- **Proposing blocks** when it's their turn (proposer selection is stake-weighted)
-- **Endorsing blocks** proposed by others (a form of pre-vote in the BFT protocol)
-- **Voting on governance proposals** (protocol amendments and treasury allocations)
+### The validator set
 
-### Registration
+In v1.1-rc the validator set is fixed by the genesis file. There is no transaction to register a new validator or to exit as one; both are on the roadmap. Each genesis validator declares an own stake, which is taken out of its genesis balance and bonded (a genesis that declares more stake than the balance covers is refused).
 
-Any account holding at least **10 000 KRN** of own stake can register as a validator by submitting a `register_validator` transaction. This:
+### Consensus weight and epochs
 
-1. Adds the account to `state["validators"]` with its declared `stake` amount.
-2. Makes it eligible for proposer selection.
-3. Subjects it to slashing risk for misbehavior.
+A validator's **effective stake** is its own stake plus every amount currently bonded to it:
 
-The minimum own-stake requirement is a Sybil-resistance measure. Without it, anyone could spawn thousands of validator accounts and game the proposer-selection lottery. 10 000 KRN is calibrated to be meaningful but not prohibitive — at a $1/KRN price (a reasonable Kern mainnet target), that's $10 000 of capital at risk.
+```python
+effective_stake(state, validator)
+  = own_stake_of_validator
+  + sum(bond.amount for bond in delegations if bond.validator == validator)
+```
+
+Consensus does not read that number directly. It reads an **epoch snapshot**, `state["consensus_set"]`, refreshed every `epoch_blocks` blocks (default 120). The snapshot is used for proposer selection (stake-weighted, seeded by the parent hash and the round) and for the two-thirds quorum of the BFT votes.
+
+- A new or increased delegation adds weight only at the next epoch boundary, so nobody can move weight into a validator just before a vote.
+- A slash or an undelegation lowers weight **at once**, in the same transaction.
+- Inside an epoch, a validator's weight can only go down.
 
 ### Commission
 
-Each validator sets a commission rate (default 10%) that determines what fraction of delegator rewards the validator takes off the top. This is publicly visible on-chain and can be updated by the validator (a future v1.x will add a dedicated `SET_COMMISSION` transaction; currently it's set by direct state modification at validator registration).
-
-Commission ranges in production PoS networks:
-
-| Network | Typical range | Notes |
-|---|---|---|
-| Tezos | 5-12% | Most bakers cluster around 8-10% |
-| Cosmos | 5-20% | Wider spread; some validators compete on commission |
-| NEAR | 0-50% | Wide range; many bakers near 0 to attract delegators |
-
-Kern's **10% default** is the Tezos cluster. Validators can compete on lower commissions, but should weigh that against their operational costs (server, monitoring, on-call).
-
-### Unbonding
-
-A validator who voluntarily exits faces a **14-day unbonding period** before their staked funds become transferable. This window exists so that slashing penalties for offenses committed shortly before exit can still be applied.
-
-If a validator is slashed during the unbonding period, the slash is applied to their unbonding funds (same as if they were still active).
+Each validator has a commission rate (default 10%) taken off the top of the rewards before they are split with delegators. Rates live in `state["commission_rates"]` and are set at genesis; a dedicated transaction to change them is not implemented yet.
 
 ---
 
-## 2. Delegation (Liquid PoS baking delegation)
+## 2. Delegation
 
-Delegation is the mechanism by which non-validators participate in staking rewards without running infrastructure.
+Delegation lets a holder take part in staking without running a node.
 
 ### Properties
 
-| Property | Kern (Liquid PoS) | Ethereum (PoS) | Cosmos (Cosmos-style) |
+| Property | Kern (bonded delegation) | Ethereum (PoS) | Cosmos |
 |---|---|---|---|
-| Custody of delegated KRN | **Delegator keeps it** | Transferred to deposit contract or LST | Transferred to validator |
-| Lockup period to delegate | **None** | None on entry, ~9 days on exit (was longer before Shanghai) | None on entry, 21 days on exit |
-| Lockup period to undelegate / redelegate | **None** | 9 days unbonding | 21 days unbonding |
-| Minimum delegation | **1 mukrn** | 0.01 ETH (via LST) or 32 ETH (native) | varies, usually 1 token |
-| LST or derivative token | **No** | Yes (stETH, rETH, …) | No |
-| Liquidity of delegated stake | **Full — balance stays spendable** | Locked or held as LST (with depeg risk) | Locked |
+| Custody of delegated KRN | Held by the protocol in a bond, not by the validator | Deposit contract or liquid staking token | Bonded by the protocol |
+| Delay to delegate | None; weight counts from the next epoch boundary | Activation queue | None |
+| Delay to undelegate | Unbonding period (default 86 400 blocks) | Exit queue and withdrawal delay | 21 days |
+| Switch validator | Undelegate first, then delegate again | Exit and re-deposit | Redelegation |
+| Minimum delegation | 1 mukrn | 32 ETH native, or a liquid staking token | Usually 1 token |
+| Derivative token | No | Often (stETH, rETH) | No |
+| Delegated funds spendable | No, until the unbonding period ends | No (or via the derivative token) | No |
 
-The "delegator keeps custody" property is what makes Kern's design distinctive. Compare:
-
-- **Ethereum**: Alice has 10 ETH. She uses Lido. Lido deposits 32 ETH per validator from a pool; Alice gets 10 stETH in return. Her real 10 ETH is now locked in Lido's pool, exposed to Lido's smart contract risk, and only retrievable by selling stETH (which can de-peg from ETH).
-- **Kern**: Alice has 10 000 KRN. She delegates to validator V. Her 10 000 KRN stays in her account, fully spendable. The validator V can count those 10 000 KRN toward their effective stake at reward-distribution time, but cannot touch them. If Alice wants to spend her KRN, she just spends it — her delegation drops accordingly (next block's effective_stake calculation uses her new balance).
+Example: Alice has 10 000 KRN and delegates 6 000 to validator V at level 1 000. Her spendable balance becomes 4 000 KRN. The 6 000 KRN are bonded to V; they weigh in V's consensus weight from the next epoch boundary and earn her a share of V's rewards. If V equivocates after level 1 000, 30% of her bond is burned. When she undelegates, V loses that weight immediately, the 6 000 KRN (or what is left after a slash) stay locked for the unbonding period, and then return to her balance.
 
 ### The DELEGATE_STAKE transaction
 
@@ -85,193 +75,127 @@ tx = make_delegate_stake(
     sender_kp=alice_keypair,
     validator=validator_address,   # kn1...
     nonce=alice_current_nonce,
+    amount=6_000 * 1_000_000,      # mukrn to bond
 )
 ```
 
 Effects:
-- `state["delegations"][alice_address] = validator_address`
-- If Alice was already delegating to a different validator, the delegation is switched (one delegation per delegator).
+- `tx.amount` leaves the sender's balance and is added to `state["delegations"][sender] = {"validator", "amount", "tranches"}`.
+- Each top-up is recorded as a separate tranche with the level at which it was bonded, so a slash only reaches the tranches that were exposed at the offence (§4).
 
 Errors:
-- Validator not in active set → tx rejected
-- Delegating to self → tx rejected (register as a validator instead)
+- Validator not in the set: rejected.
+- Delegating to self: rejected.
+- Amount zero or more than the balance: rejected.
+- Already delegating to another validator: rejected; undelegate first.
 
 ### The UNDELEGATE_STAKE transaction
 
 ```python
 from kern.transaction import make_undelegate_stake
 
-tx = make_undelegate_stake(
-    sender_kp=alice_keypair,
-    nonce=alice_current_nonce,
-)
+tx = make_undelegate_stake(sender_kp=alice_keypair, nonce=alice_current_nonce)
 ```
 
-Effects: `del state["delegations"][alice_address]`. No-op if Alice wasn't delegating.
+Effects:
+- The delegation record is removed and an entry is added to `state["delegation_unbonding"]`, keyed by its release level (current level plus `delegation_unbonding_blocks`), with the bond's tranches and the level at which unbonding started.
+- The validator's consensus weight drops at once.
+- At the release level the remaining amount is credited back to the delegator.
 
-### What "effective stake" means
-
-```python
-effective_stake(state, validator_address) 
-  = own_stake_of_validator 
-  + sum(balances[d] for d in addresses_delegating_to(validator_address))
-```
-
-This number is used in two places:
-
-1. **Proposer selection.** Each block, a proposer is sampled with probability proportional to `effective_stake / total_effective_stake`. More stake (own + delegated) = more blocks proposed = more fees and rewards.
-
-2. **Reward distribution** (next section).
-
-The snapshot of effective stake is taken at **reward time** — that is, the moment `apply_block` credits rewards. Critically: a delegator's balance at that moment is what counts. If a delegator drains their account just before reward distribution, they forfeit that block's yield.
+The unbonding period can never be shorter than an epoch, and slashing evidence is accepted for as long as the unbonding period, so funds cannot leave before an offence they backed can still be reported.
 
 ---
 
 ## 3. Reward splitting
 
-When a validator earns a block reward of `R` mukrn, the split happens in `kern/issuance.py::split_validator_reward`:
+When a validator earns a block reward of `R` mukrn, `kern/issuance.py::split_validator_reward` splits it:
 
 ```
 1. Commission off the top:
        commission = R * commission_pct / 100
-       remaining = R - commission
+       remaining  = R - commission
 
 2. Pro-rata distribution of `remaining`:
-       effective = own_stake + sum(delegator_balances)
-       
+       effective         = own_stake + sum(bonded amounts)
        validator_prorata = remaining * own_stake / effective
-       delegator_i_share = remaining * delegator_i_balance / effective
+       delegator_i_share = remaining * bonded_i / effective
 
 3. Rounding leftover (integer division crumbs) goes to the validator.
-
-4. Validator receives commission + validator_prorata + leftover.
-   Each delegator receives their share.
 ```
+
+Bonds in the unbonding period earn nothing.
 
 ### Worked example
 
-Validator V has:
-- Own stake: 100 000 KRN
-- Delegator Alice: 900 000 KRN
-- Delegator Bob: 0 KRN (just stopped delegating; balance is 0)
-- Commission rate: 10%
-- Block reward earned: 1 000 mukrn
+Validator V has an own stake of 100 000 KRN, Alice has 900 000 KRN bonded to it, Bob has just undelegated (his bond is unbonding), the commission is 10% and the reward is 1 000 mukrn.
 
-Computation:
-- Commission = 1 000 × 10% = 100 mukrn → V
-- Remaining = 900 mukrn
-- Effective stake = 100k + 900k + 0 = 1M
-- V's prorata = 900 × 100k/1M = 90 mukrn
-- Alice's prorata = 900 × 900k/1M = 810 mukrn
-- Bob's prorata = 900 × 0/1M = 0 mukrn
+- Commission = 100 mukrn to V; remaining = 900 mukrn.
+- Effective stake = 100 000 + 900 000 = 1 000 000 KRN (Bob's unbonding funds do not count).
+- V's pro-rata = 90 mukrn; Alice's = 810 mukrn; Bob gets nothing.
+- V receives 190 mukrn, Alice 810 mukrn. Sum: 1 000.
 
-Final:
-- V total: 100 + 90 + 0 (leftover) = 190 mukrn
-- Alice: 810 mukrn
-- Bob: 0 mukrn
-
-Sum: 190 + 810 + 0 = 1 000 ✓
-
-### Why proportional to the bonded amount?
-
-Since v1.1-rc Phase D, Kern tracks a bonded `amount` per delegator, held in
-the delegation record and locked with the validator. Rewards, consensus
-weight and slashing all use that amount, never the delegator's liquid
-balance. Earlier versions counted the liquid balance at reward time; that
-made consensus weight movable at will and not slashable, which an external
-review identified as consensus power without collateral.
-
-- **Weight follows locked funds only.** Splitting a balance across several
-  accounts changes nothing: only what is bonded counts.
-- **Exit is delayed on purpose.** `UNDELEGATE_STAKE` removes the weight at
-  once but keeps the funds locked and slashable for the unbonding period,
-  so a fault committed while they weighed in consensus can still be
-  punished.
+Rewards currently go to the block proposer only. Paying the network endorsers needs per-parent-block accounting that does not exist yet.
 
 ---
 
-## 4. Slashing — and how delegators are exposed
+## 4. Slashing, and how delegators are exposed
 
-Slashable offenses in Kern (as of v1.0-rc):
+Slashable offences in v1.1-rc:
 
-| Offense | Detection | Penalty | Reporter reward |
-|---|---|---|---|
-| Double-baking | Multiple block proposals at same level | 30% of stake | 10% to reporter |
-| Double-endorsing | Multiple BFT endorsements at same level | 30% of stake | 10% to reporter |
-| **Governance equivocation** | Different votes on same proposal/phase from same voter | **30% of stake** | **10% to reporter** |
+| Offence | Evidence | Transaction |
+|---|---|---|
+| Consensus equivocation | Two signed PREENDORSE or ENDORSE votes from the same validator, same level and round, different blocks | `SLASH_CONSENSUS_EQUIVOCATION` |
+| Governance equivocation | Two different votes from the same voter on the same proposal and phase, recorded by the governance engine | `SLASH_EQUIVOCATION` |
+| Attestation equivocation | Two contradictory attestations by the same issuer about the same schema and subject (slashes the attestation bond, see [attestations](attestations.md)) | `SLASH_ATTESTATION_EQUIVOCATION` |
 
-Governance equivocation slashing is the v0.8/v1.0-rc addition. It's reportable on-chain via the `SLASH_EQUIVOCATION` transaction by anyone who has the proposal_id and the equivocator address — the runtime checks `state["governance"]["protocol"]["proposals"][pid]["equivocations"]` for matching evidence.
+Proposing two different blocks at the same level is not slashable on its own; only the votes are.
 
-### Proportional delegator slashing
+### What a validator slash takes
 
-When a validator V is slashed for `S` mukrn, each delegator D of V is also slashed proportionally:
+For an offence committed at level `L`:
 
-```
-delegator_slash = D's balance × SLASHING_PERCENTAGE / 100
-```
+- 30% of the validator's own stake is removed; 10% of that goes to the reporter and the rest is burned.
+- 30% of every **exposed** delegated tranche is burned. A tranche is exposed when it was bonded at or before `L` and its bond had not started unbonding before `L`. This covers live bonds and bonds still in their unbonding period.
+- A tranche bonded after the offence, or a bond that started unbonding before it, is not touched: it was not backing the validator at the offence.
+- The validator's consensus weight drops at once.
+- Liquid balances are never touched.
 
-Same percentage as the validator. The delegator's balance is reduced; the slashed KRN is burned (not paid to the reporter — the reporter reward comes from the validator's own slashed amount, not from delegators).
+The level `L` is the vote level for a consensus equivocation and the level of the second, conflicting vote for a governance equivocation. Consensus evidence older than the unbonding period is rejected. The same consensus offence (validator, kind, level, round) can be slashed only once.
+
+Bonds written before Phase E carry no tranche levels; they are treated as bonded at level 0, so they stay exposed as they were under Phase D.
 
 ### Why this matters
 
-Without this, delegation is pure upside: a delegator gets rewards but takes no risk if the validator misbehaves. Mass-delegating to a single validator becomes the rational strategy, defeating decentralization.
-
-With proportional slashing, picking a validator is a real economic decision:
-
-- **High-uptime, well-operated validator**: low slashing risk, modest commission → good for typical users.
-- **Cheap-commission validator with sketchy ops**: high slashing risk, low commission → bad bet for serious holders.
-
-This is exactly the dynamic Tezos has had since 2018 and is part of why Tezos has never had a Lido-equivalent concentration problem.
-
-### Cap on delegator slash
-
-A delegator can never be slashed more than their available balance: `min(slash_amount, balances[delegator])`. This is a practical safety bound; it can't cause an account to go negative.
+Without delegator slashing, delegation is pure upside and piling onto one validator becomes the rational strategy. With it, choosing a validator is an economic decision. Limiting the slash to exposed stake keeps the rule fair: a holder who delegates after a fault, or who left before it, does not pay for it.
 
 ---
 
-## 5. Practical: how to delegate
+## 5. Practical guide
 
-### As a holder of KRN who wants to earn yield
+### As a holder who wants to earn yield
 
-1. **Pick a validator.** Look at `kern.chain` RPC endpoint `/chain/validators` to see active validators. Each entry shows their stake and commission rate. (A future block explorer will surface uptime, slashing history, and total delegated.)
+1. **Pick a validator.** The RPC endpoint `/chain/validators` lists the validators with their stake.
+2. **Bond an amount.** With the wallet script: `python scripts/kern_wallet.py delegate KEY.json --validator kn1... --amount <KRN>`.
+3. **Wait for the next epoch boundary.** Your bond weighs in consensus from there, and earns a share of each reward your validator receives.
+4. **To switch:** undelegate, wait for the unbonding period to end, then delegate to the new validator.
+5. **To stop:** undelegate. The funds come back to your balance after the unbonding period, minus any slash for an offence your validator committed while they backed it.
 
-2. **Submit a `DELEGATE_STAKE` transaction.** From any Kern wallet, sign:
-   ```
-   {kind: "delegate_stake", params: {validator: "kn1..."}}
-   ```
+### Choosing a validator
 
-3. **Wait for the next reward distribution.** Your share appears in your balance at the next block where your validator earns a reward.
-
-4. **To switch:** submit another `DELEGATE_STAKE` to a different validator. No waiting period.
-
-5. **To stop:** submit `UNDELEGATE_STAKE`. No waiting period.
-
-### Choosing a validator — what to look for
-
-- **Commission**: lower is better, all else equal. Watch for 0% — that's often a teaser; commissions can be raised by the validator.
-- **Uptime**: a validator that's offline doesn't propose blocks and doesn't earn rewards. Aim for ≥ 99% uptime over 30 days.
-- **Slashing history**: any past slashes are a yellow flag. Two or more = red flag.
-- **Total stake**: don't pile onto the largest validator — that concentrates the network. Spread your delegation. Validators with 5-15% of total stake are typically a good zone.
-- **Identity / accountability**: validators with public identities (Twitter, website, GitHub) tend to be more reliable than anonymous ones, because reputation is on the line.
+- **Commission:** lower is better, all else equal.
+- **Uptime:** an offline validator proposes no blocks and earns nothing.
+- **Slashing history:** a past slash is a warning sign.
+- **Total stake:** spreading delegations across validators keeps the network decentralised.
 
 ### Returns to expect
 
-At ~50% staking ratio (Kern's target), adaptive issuance produces ~0.25% to ~3% annual yield depending on participation. After a typical 10% commission, a delegator earns ~90% of that, so roughly **0.2% – 2.7% annual yield in KRN** on their delegated balance.
-
-This is intentionally modest. Kern's design assumes that the value of holding KRN comes primarily from network use (transaction demand, governance participation, ecosystem growth) rather than from staking yield alone. A network where staking yield is the only reason to hold the token tends to become extractive and dilutive over time.
-
-### What you don't have to do
-
-- **You don't need to run a node.** That's what the validator is for.
-- **You don't need a minimum amount.** 1 mukrn delegations are valid (though gas fees make tiny delegations economically silly).
-- **You don't need to wait to undelegate.** No 21-day Cosmos-style cool-down.
-- **You don't need to worry about LST de-pegs.** There is no LST.
+At the target staking ratio of about 50%, adaptive issuance gives roughly 0.25% to 3% a year depending on participation. After a 10% commission, a delegator earns about 90% of that. This is intentionally modest: the value of holding KRN is meant to come from using the network, not from staking yield alone.
 
 ---
 
 ## Reference
 
-- Code: [`kern/chain.py`](../kern/chain.py) (handlers `_apply_delegate_stake`, `_apply_undelegate_stake`, helpers `effective_stake`, `delegators_of`, `commission_rate_of`)
-- Reward math: [`kern/issuance.py`](../kern/issuance.py) (function `split_validator_reward`)
-- Transactions: [`kern/transaction.py`](../kern/transaction.py) (builders `make_delegate_stake`, `make_undelegate_stake`)
-- Tests: [`tests/test_delegation.py`](../tests/test_delegation.py) (20 tests covering math, state, and end-to-end)
+- Code: [`kern/chain.py`](../kern/chain.py) (`_apply_delegate_stake`, `_apply_undelegate_stake`, `_slash_validator`, `effective_stake`, `delegators_of`, `commission_rate_of`, `_epoch_tick`)
+- Reward math: [`kern/issuance.py`](../kern/issuance.py) (`split_validator_reward`)
+- Transactions: [`kern/transaction.py`](../kern/transaction.py) (`make_delegate_stake`, `make_undelegate_stake`)
+- Tests: [`tests/test_delegation.py`](../tests/test_delegation.py), [`tests/test_phase_d_bonded_stake.py`](../tests/test_phase_d_bonded_stake.py), [`tests/test_phase_e_bond_timing.py`](../tests/test_phase_e_bond_timing.py)

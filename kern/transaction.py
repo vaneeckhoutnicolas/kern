@@ -463,8 +463,10 @@ def make_delegate_stake(
 
     Phase D: delegation is bonded. The amount leaves the balance, counts
     in the validator's consensus weight and reward share, and is slashed
-    with the validator. Delegating again to the same validator adds to the
-    bond; switching validator requires UNDELEGATE_STAKE first, after which
+    with the validator for offences committed after it was bonded (Phase E:
+    each top-up is a separate slice with its own level). It weighs in
+    consensus from the next epoch boundary. Delegating again to the same
+    validator adds to the bond; switching validator requires UNDELEGATE_STAKE first, after which
     the bond stays locked (and slashable) for the unbonding period before
     returning to the balance."""
     tx = Transaction(
@@ -488,9 +490,11 @@ def make_undelegate_stake(
     fee: int = 2_000,
     gas_limit: int = 20_000,
 ) -> Transaction:
-    """Stop delegating. The sender's balance no longer counts toward any
-    validator's effective stake. The sender stops earning baking yield
-    but also stops being subject to validator slashing risk."""
+    """Stop delegating. The bond stops counting in the validator's
+    consensus weight and reward share at once (Phase E), but stays locked
+    for the unbonding period and is still slashed for offences the
+    validator committed up to the level of this undelegation. It then
+    returns to the sender's balance."""
     tx = Transaction(
         kind=OpKind.UNDELEGATE_STAKE,
         sender=sender_kp.address,

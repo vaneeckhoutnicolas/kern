@@ -17,7 +17,7 @@ Usage:
     kern-wallet head
     kern-wallet validators
     kern-wallet transfer KEY.json --to ADDR --amount KRN [--fee MUKRN]
-    kern-wallet delegate KEY.json --validator ADDR
+    kern-wallet delegate KEY.json --validator ADDR --amount KRN
     kern-wallet undelegate KEY.json
     kern-wallet vote KEY.json --proposal PID --track protocol|treasury --vote yes|no|pass
     kern-wallet slash KEY.json --proposal PID --equivocator ADDR
@@ -463,7 +463,7 @@ def build_parser() -> argparse.ArgumentParser:
     pt.set_defaults(func=cmd_transfer)
 
     # delegate
-    pd = sub.add_parser("delegate", help="Delegate baking to a validator")
+    pd = sub.add_parser("delegate", help="Bond KRN to a validator")
     pd.add_argument("keyfile", help="Delegator keypair")
     pd.add_argument("--validator", required=True, help="Validator kn1... address")
     pd.add_argument("--amount", required=True, help="KRN to bond (decimal)")

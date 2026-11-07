@@ -6,7 +6,7 @@
 
 > *The noyau. The kernel. The grain of state that endures.*
 
-**Kern** is a Layer-1 blockchain protocol that combines EVM tooling and developer-ecosystem compatibility with native on-chain governance, formal verifiability, and Liquid Proof-of-Stake. Smart contracts are written in **Skald**, a small statically typed language (scalar types `int`, `bool`, `string`, `address`; no recursion, no loops) with declared invariants that the runtime re-checks after every entry call.
+**Kern** is a Layer-1 blockchain protocol that combines EVM tooling and developer-ecosystem compatibility with native on-chain governance, formal verifiability, and bonded Proof-of-Stake with delegation. Smart contracts are written in **Skald**, a small statically typed language (scalar types `int`, `bool`, `string`, `address`; no recursion, no loops) with declared invariants that the runtime re-checks after every entry call.
 
 > **Status.** Kern is a Layer-1 protocol with a Python reference implementation, at devnet stage; no public network is in operation. The repository's `genesis.json` is a devnet file whose keys are public placeholders. Nothing here has been professionally audited, and nothing here has monetary value (see [docs/disclaimer.md](docs/disclaimer.md)).
 
@@ -140,7 +140,7 @@ kern/
 | Foundation | 14 000 000 | 14% | Strategic ops, legal-entity multisig |
 | Early contributors pool | 3 000 000 | 3% | 6-month cliff + 3-year linear |
 | Validator bootstrap | 2 000 000 | 2% | Released over 1 year |
-| Bootstrap baker | 1 000 000 | 1% | Genesis validator stake (liquid) |
+| Bootstrap baker | 1 000 000 | 1% | Genesis validator stake (bonded at genesis) |
 | **Total** | **100 000 000** | **100%** | |
 
 > **Allocation notes (reconcile before genesis).** This table now matches the executable [`genesis.json`](genesis.json), which is the source of truth. Two items still need a decision before the genesis ceremony: (1) the Foundation pool (14M) currently shares an address with the on-chain **treasury** — for clean accounting and audit these should be **separate addresses**; (2) the **Bootstrap baker** holds the only genesis validator stake (1M) and is therefore a single point of control at launch — the validator-onboarding plan in [`docs/setup-validator.md`](docs/setup-validator.md) should bring independent validators in as early as possible. Earlier drafts described a flat 70/10/15/3/2 split; the 1M baker line was carved out of the Foundation share, which is why Foundation reads 14% here.
@@ -231,9 +231,9 @@ python scripts/kern_wallet.py governance
 python scripts/kern_wallet.py transfer ~/my-wallet.json \
     --to kn1recipient... --amount 10.5
 
-# Delegate to a validator (Liquid PoS — your KRN stays in your account)
+# Bond KRN to a validator (locked until the unbonding period ends)
 python scripts/kern_wallet.py delegate ~/my-wallet.json \
-    --validator kn1baker...
+    --validator kn1baker... --amount 100
 
 # Vote on a governance proposal (validators only)
 python scripts/kern_wallet.py vote ~/my-wallet.json \
@@ -246,7 +246,7 @@ python scripts/kern_wallet.py slash ~/my-wallet.json \
 
 Set `KERN_RPC=<url>` to point at a public RPC instead of localhost.
 
-## Delegate KRN to a validator (Liquid PoS)
+## Delegate KRN to a validator
 
 ```python
 from kern.crypto import KernKeypair
@@ -261,6 +261,8 @@ tx = make_delegate_stake(
     sender_kp=alice,
     validator="kn1baker_address_here",   # validator's address
     nonce=0,
+    amount=100 * 1_000_000,              # mukrn to bond (100 KRN)
+    chain_id="kern-devnet-placeholder",  # read it from /chain/health
 )
 
 # Inject via RPC
@@ -272,7 +274,7 @@ req = urllib.request.Request(
 print(urllib.request.urlopen(req).read().decode())
 ```
 
-The `amount` passed to `make_delegate_stake` is bonded: it leaves Alice's spendable balance, counts toward the validator's effective stake from the next epoch, earns rewards proportionally minus the validator's commission (10% default), and is slashed with the validator. To stop: `make_undelegate_stake(alice, nonce=...)`; the bond stays locked and slashable for the unbonding period (86 400 blocks by default), then returns to her balance. No LST derivative.
+The `amount` passed to `make_delegate_stake` is bonded: it leaves Alice's spendable balance, counts toward the validator's consensus weight from the next epoch boundary, earns rewards proportionally minus the validator's commission (10% default), and is slashed with the validator. To stop: `make_undelegate_stake(alice, nonce=...)`; the validator loses that weight at once, and the bond stays locked for the unbonding period (86 400 blocks by default), still slashable for offences committed before the undelegation, then returns to her balance. No LST derivative.
 
 See [`docs/staking.md`](docs/staking.md) for full mechanics.
 

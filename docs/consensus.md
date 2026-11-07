@@ -1,10 +1,12 @@
 # Consensus
 
-Kern uses a simplified BFT consensus algorithm in the four-phase family (propose, prevote, precommit, commit). This document describes the protocol as designed; the reference implementation in [`consensus.py`](../kern/consensus.py) implements its single-validator collapse.
+Kern uses a simplified BFT consensus algorithm in the four-phase family (propose, prevote, precommit, commit). This document describes the protocol as designed. The reference implementation runs the vote exchange over the network ([`bft.py`](../kern/bft.py), [`consensus-wire.md`](consensus-wire.md)); it has not yet run on a network of independent machines.
+
+> **Safety warning (Phase E).** The current engine has no lock and no nil vote. Under message delay alone, with every validator honest, two rounds of the same level can each gather two thirds of the endorsements for two different blocks, so two blocks can be finalized at the same level. The fix (a Tendermint-style lock with a valid round) is designed in [consensus-locking.md](consensus-locking.md) and is not implemented yet. Until it is, multi-validator safety is not established.
 
 ## Goals
 
-- **Deterministic finality** under partial synchrony: an endorsed block cannot be reverted.
+- **Deterministic finality** under partial synchrony: an endorsed block cannot be reverted. *Target, not yet met: see the safety warning above.*
 - **Fast finality** under good network conditions: ≤ 2 blocks (~ 2 seconds).
 - **Stake-weighted** participation: voting power is proportional to staked KRN.
 - **Accessible validation**: any holder can delegate or self-stake without specialized hardware.
@@ -12,7 +14,7 @@ Kern uses a simplified BFT consensus algorithm in the four-phase family (propose
 ## Roles
 
 - **Baker (validator).** An account that has registered a staking commitment. Bakers propose and endorse blocks. The active baker set rotates per cycle (planned: ~7000 blocks).
-- **Delegator.** An account that has delegated its KRN balance to a baker. Delegators do not produce blocks but share in the rewards (Liquid PoS).
+- **Delegator.** An account that has bonded KRN to a baker. Delegators do not produce blocks but share in the rewards and in the slashing risk.
 
 ## Cycle structure
 
@@ -56,14 +58,14 @@ This is verifiable (everyone with the parent block can compute it) and stake-wei
 
 A round "fails" when its proposer's block does not collect > 2/3 endorsements within the round's duration. The next proposer (selected via the round-incremented seed) takes over.
 
-## Liquid Proof-of-Stake
+## Bonded Proof-of-Stake delegation
 
-Stake delegation in Kern follows the Liquid PoS model:
+Stake delegation in Kern works as follows (details in [staking.md](staking.md)):
 
 1. A holder funds an address and either self-stakes (becoming a baker) or delegates to an existing baker.
-2. Delegated balances count toward the baker's stake for proposer selection, vote weight and quorum, through the consensus validator set: a snapshot of effective stake (bonded own stake after slashing plus bonded delegations) taken at every epoch boundary (`epoch_blocks`, default 120). A delegation change therefore moves consensus weight at the next boundary, never mid-epoch; a slash lowers the offender's weight immediately. See [consensus-wire.md](consensus-wire.md).
+2. Delegated balances count toward the baker's stake for proposer selection, vote weight and quorum, through the consensus validator set: a snapshot of effective stake (bonded own stake after slashing plus bonded delegations) taken at every epoch boundary (`epoch_blocks`, default 120). A new delegation therefore adds weight at the next boundary, never mid-epoch; a slash or an undelegation lowers the validator's weight immediately (Phase E). See [consensus-wire.md](consensus-wire.md).
 3. Rewards are split by the protocol: the baker keeps its commission and the share of its own stake, and each delegator is credited its share in proportion to its delegated balance (`issuance.split_validator_reward`).
-4. Delegated KRN are bonded: they leave the delegator's balance and are slashed with the validator. Undelegating starts an unbonding period (`delegation_unbonding_blocks`, default 86 400, never shorter than an epoch) during which the funds carry no weight but remain slashable. To change validator, undelegate first. A validator's own stake is bonded out of its balance at genesis.
+4. Delegated KRN are bonded: they leave the delegator's balance and are slashed with the validator. Undelegating starts an unbonding period (`delegation_unbonding_blocks`, default 86 400, never shorter than an epoch) during which the funds carry no weight but remain slashable for offences committed before the undelegation. A slash only reaches the stake exposed at the offence (Phase E). To change validator, undelegate first. A validator's own stake is bonded out of its balance at genesis.
 
 ## Adaptive issuance
 
@@ -73,19 +75,8 @@ The full formula is parameterized at the protocol level and is itself subject to
 
 ## Slashing
 
-Two slashable offenses are defined:
+The slashable consensus offence is **double voting**: signing two PREENDORSE or two ENDORSE messages for different blocks at the same level and round. Anyone can submit the two signed messages in a `SLASH_CONSENSUS_EQUIVOCATION` transaction. The penalty is 30% of the validator's own stake and of every delegated amount exposed at the offence; the reporter receives 10% of the own-stake cut and the rest is burned. Evidence older than the unbonding period is rejected. Proposing two blocks at the same level is not slashable on its own. Governance equivocation is slashable too; see [staking.md](staking.md) §4.
 
-- **Double-baking** — producing two distinct blocks at the same level. Penalty: forfeit the baker's deposit for the current cycle.
-- **Double-endorsing** — signing two contradictory endorsement messages at the same level. Penalty: forfeit the baker's deposit for the current cycle.
+## Single-validator mode
 
-A third party who submits cryptographic proof of either offense receives half the slashed deposit; the rest is burned.
-
-## Reference implementation collapse
-
-The reference implementation in this repository runs a **single validator**. In that degenerate case:
-
-- The proposer selection always returns the sole validator.
-- Pre-endorsement and endorsement are not exchanged; the proposer self-commits.
-- Finality is immediate (one block, ~ 1 second by default; ~ 500 ms with `--block-time 0.5`).
-
-A multi-validator implementation is a straightforward extension that adds the pre-endorsement and endorsement message exchange to [`network.py`](../kern/network.py) and the corresponding signature aggregation to [`consensus.py`](../kern/consensus.py).
+With a single validator, proposer selection always returns that validator and its own votes form the quorum, so each block is final as soon as it is produced (about 1 second by default; about 500 ms with `--block-time 0.5`). The multi-validator path exchanges pre-endorsements and endorsements over the network ([`network.py`](../kern/network.py), [`bft.py`](../kern/bft.py)) and is subject to the safety warning above.
