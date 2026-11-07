@@ -398,6 +398,35 @@ class Node:
         self._engine_pos = pos
         self._refresh_engine()
         await self._emit_consensus(self.bft.enter_round(*pos))
+        self._prune_round_data()
+
+    def _prune_round_data(self) -> None:
+        """Review of 0695a80, P2: what the node keeps per round of the level
+        in progress follows the engine's round window. Proposals of rounds
+        that left the window are dropped, except those of the lock and the
+        valid round, and so are the blocks that no kept proposal, lock or
+        valid round refers to. A level that does not finalize for many
+        rounds no longer accumulates one block per round in memory."""
+        if self.bft is None:
+            return
+        level, cur = self.chain.height + 1, self._round
+        kept = self.bft.kept_rounds(level)
+
+        def in_reach(r: int) -> bool:
+            return abs(r - cur) <= MAX_ROUND_DISTANCE or r in kept
+
+        self._round_proposal = {k: v for k, v in self._round_proposal.items()
+                                if k[0] != level or in_reach(k[1])}
+        self._relayed_conflicts = {k for k in self._relayed_conflicts
+                                   if k[0] != level or in_reach(k[1])}
+        live = {v[0] for k, v in self._round_proposal.items() if k[0] == level}
+        lv = self.bft.levels.get(level)
+        if lv is not None:
+            live |= {h for h in (lv.locked_hash, lv.valid_hash) if h is not None}
+        self._pending = {k: v for k, v in self._pending.items()
+                         if k[0] != level or k[1] in live}
+        self._invalid_proposals = {k for k in self._invalid_proposals
+                                   if k[0] != level or k[1] in live}
 
     @staticmethod
     def _trim(seen: set) -> None:
@@ -670,7 +699,8 @@ class Node:
 
         Checks, in order (docs/consensus-wire.md): decoding; level; the
         PROPOSE signature and its signer being the proposer selected for
-        the proposal round; the valid round (-1 for a new payload, whose
+        the proposal round; the first signed proposal of the round is then
+        recorded (a different later one is only evidence); the valid round (-1 for a new payload, whose
         payload round is then the proposal round; otherwise a verified
         pre-endorsement certificate for the block at valid_round, with
         payload_round <= valid_round < round); full validation of the block,
@@ -707,24 +737,11 @@ class Node:
             LOG.warning("proposal at level %d round %d from illegitimate "
                         "proposer %s", level, r, pmsg.validator)
             return
-        if vr < 0:
-            if block.header.payload_round != r:
-                LOG.warning("new proposal at level %d round %d with payload round %d",
-                            level, r, block.header.payload_round)
-                return
-        else:
-            if not block.header.payload_round <= vr < r:
-                LOG.warning("re-proposal at level %d round %d: payload round %d, "
-                            "valid round %d", level, r, block.header.payload_round, vr)
-                return
-            if (proof is None or proof.kind != MsgKind.PREENDORSE or proof.level != level
-                    or proof.round != vr or proof.block_hash != h
-                    or not proof.verify(validators)[0]):
-                LOG.warning("re-proposal at level %d round %d without a valid proof "
-                            "for valid round %d", level, r, vr)
-                return
-        self._seen_proposals.add(key)
-        self._trim(self._seen_proposals)
+        # Review of 0695a80, P2: the first signed PROPOSE of the selected
+        # proposer occupies its (level, round) before the valid round is
+        # checked, so that a later, different proposal is kept as evidence
+        # even when the first one fails those checks (as section 10.8 does
+        # for a block that fails validation).
         first = self._round_proposal.setdefault((level, r), (h, pmsg, envelope))
         if first[1] is not pmsg and self.bft is not None:
             # Same proposer, same (level, round), another signed message
@@ -743,6 +760,30 @@ class Node:
             LOG.warning("conflicting proposal at level %d round %d from %s: kept as evidence, "
                         "not validated", level, r, pmsg.validator)
             return
+        # The valid round and the payload round are signed by the proposer
+        # (the block hash binds the header): a wrong one is the proposer's
+        # fault, and the round stays occupied by that proposal. The proof is
+        # not signed by the proposer and a relay may have damaged it, so a
+        # bad proof is only refused here: the same signed proposal arriving
+        # later with a valid proof is accepted (it is not marked as seen).
+        if vr < 0:
+            if block.header.payload_round != r:
+                LOG.warning("new proposal at level %d round %d with payload round %d",
+                            level, r, block.header.payload_round)
+                return
+        else:
+            if not block.header.payload_round <= vr < r:
+                LOG.warning("re-proposal at level %d round %d: payload round %d, "
+                            "valid round %d", level, r, block.header.payload_round, vr)
+                return
+            if (proof is None or proof.kind != MsgKind.PREENDORSE or proof.level != level
+                    or proof.round != vr or proof.block_hash != h
+                    or not proof.verify(validators)[0]):
+                LOG.warning("re-proposal at level %d round %d without a valid proof "
+                            "for valid round %d", level, r, vr)
+                return
+        self._seen_proposals.add(key)
+        self._trim(self._seen_proposals)
         if (level, h) in self._invalid_proposals:
             return
         if (level, h) not in self._pending:

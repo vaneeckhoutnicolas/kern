@@ -23,7 +23,7 @@ This document is the canonical checklist for everything that must be complete be
 | Item | Owner | Status |
 |---|---|---|
 | All v1.0-rc features implemented per [v10rc-changes.md](v10rc-changes.md) | Founder | ✅ |
-| 984 tests passing, none skipped (v1.1-rc) | Founder | ✅ |
+| 992 tests passing, none skipped (v1.1-rc) | Founder | ✅ |
 | Real BN254 pairing via py_ecc functional | Founder | ✅ |
 | All 55 Python files carry SPDX-License-Identifier: Apache-2.0 | Founder | ✅ |
 | All 55 Python files credit Nicolas Van Eeckhout (founder) | Founder | ✅ |

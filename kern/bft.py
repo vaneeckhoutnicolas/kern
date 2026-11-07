@@ -89,7 +89,7 @@ LOG = logging.getLogger("kern.bft")
 # is created.
 MAX_LEVELS_AHEAD = 2        # accept levels min_level .. min_level + 2
 MAX_ROUND_DISTANCE = 8      # accept rounds within +/- 8 of the node's round
-MAX_ROUND_STATES = 256      # hard cap on RoundState objects kept
+MAX_ROUND_STATES = 256      # backstop; prune_rounds keeps far fewer
 # Review of 84cbbcc: proposal equivocation evidence is kept (not slashable
 # yet) but bounded; the oldest entries are dropped first.
 MAX_PROPOSAL_EVIDENCE = 256
@@ -793,6 +793,7 @@ class BftEngine:
         """The node moved to `round_` at `level`: re-evaluate that round,
         whose proposal and votes may already have arrived."""
         self.current_round = round_
+        self.prune_rounds()
         state = self.states.get((level, round_))
         return self._advance(state) if state is not None else []
 
@@ -950,6 +951,39 @@ class BftEngine:
             if total > 0 and sum(self._stake_of(a) for a in voters) * 3 > total:
                 best = r
         return best
+
+    def kept_rounds(self, level: int) -> Set[int]:
+        """Rounds of `level` whose state must outlive the round window: the
+        lock and the valid round. The valid round's certificate is what
+        lets this node propose its valid block again with its proof, and
+        what proves a later re-proposal of that block (rule 2)."""
+        lv = self.levels.get(level)
+        if lv is None:
+            return set()
+        return {r for r in (lv.locked_round, lv.valid_round) if r >= 0}
+
+    def prune_rounds(self) -> None:
+        """Review of 0695a80, P2: drop the state of rounds that left the
+        window around the node's round, at every level still kept, except
+        the lock and the valid round of each level. in_window already
+        refuses every message for those rounds, so nothing they hold can
+        grow any more; a block finalized in such a round reaches the node
+        with its certificate and is checked in full. Without this, the
+        state of a level that does not finalize for many rounds filled
+        MAX_ROUND_STATES and in_window then refused every new round: the
+        level could never finalize again, even on a stable network."""
+        if self.current_round is None:
+            return
+        cur = self.current_round
+        kept: Dict[int, Set[int]] = {}
+        for key in list(self.states):
+            lvl, r = key
+            if abs(r - cur) <= MAX_ROUND_DISTANCE:
+                continue
+            if lvl not in kept:
+                kept[lvl] = self.kept_rounds(lvl)
+            if r not in kept[lvl]:
+                del self.states[key]
 
     def prune_below(self, level: int) -> None:
         """Drop state for levels strictly below `level` (free memory)."""

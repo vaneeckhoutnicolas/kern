@@ -56,6 +56,10 @@ _rng = random.Random()
 
 
 def _bindable(port):
+    # A probe, not a server: each socket is bound and closed at once, never
+    # listens. It checks the wildcard address because the nodes started by
+    # these tests listen on 0.0.0.0 (kern/node.py), and a port taken there
+    # would make a node fail to start.
     for host in ("0.0.0.0", "127.0.0.1"):
         s = socket.socket()
         try:
