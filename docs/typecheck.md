@@ -1,6 +1,6 @@
 # Skald Static Type Checking
 
-This document describes the static type checker for Skald, implemented in [`kern/skald/typecheck.py`](../kern/skald/typecheck.py) and wired into the origination pipeline.
+This document describes the static type checker for Skald, implemented in [`kern/skald/typecheck.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/typecheck.py) and wired into the origination pipeline.
 
 The motivation: a contract that contains type errors must never be deployed. Catching errors at origination time — rather than at first call — turns silent runtime failures into loud, fixable deployment failures.
 
@@ -81,7 +81,7 @@ The checker enforces that:
 
 ## Integration with origination
 
-The function `interpret_origination` in [`kern/skald/__init__.py`](../kern/skald/__init__.py) calls the type-checker as its first step:
+The function `interpret_origination` in [`kern/skald/__init__.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/__init__.py) calls the type-checker as its first step:
 
 ```python
 def interpret_origination(code, initial_storage):

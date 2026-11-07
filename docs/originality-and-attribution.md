@@ -1,6 +1,6 @@
 # Originality and Attribution
 
-This document is the technical companion to [AUTHORS](../AUTHORS). It addresses two related questions:
+This document is the technical companion to [AUTHORS](https://github.com/vaneeckhoutnicolas/kern/blob/main/AUTHORS). It addresses two related questions:
 
 1. **Is the Kern reference implementation original code?** (Answer: yes.)
 2. **How is the founder's authorship preserved despite the Apache-2.0 license that permits derivatives?**

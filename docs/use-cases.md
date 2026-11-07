@@ -64,7 +64,7 @@ Kern's design — predictable finality, formal invariants, on-chain evolution �
 To make the targeting concrete, the inverse is worth stating. Kern is not designed for:
 
 - **Mass-market consumer NFTs and gaming** — these benefit from cheap, high-throughput execution that an L1 cannot economically deliver. They belong on a rollup.
-- **Fully anonymous payments** — ZK-claims (shipped; see [zk_claims.py](../kern/zk_claims.py)) enable privacy-preserving *attestations*, but Kern is not a shielded-value chain; confidential transfers remain out of scope.
+- **Fully anonymous payments** — ZK-claims (shipped; see [zk_claims.py](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/zk_claims.py)) enable privacy-preserving *attestations*, but Kern is not a shielded-value chain; confidential transfers remain out of scope.
 - **Maximally permissive smart-contract experimentation** — Skald's deliberate restrictions (no recursion — now enforced statically by the type checker — no dynamic dispatch, and primitive types only at present) are a feature when verifiability matters, but a friction when rapid prototyping does.
 
 These are not failings of Kern; they are choices. The chain is designed to be excellent at a narrow set of things rather than mediocre at all of them.

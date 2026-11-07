@@ -98,10 +98,10 @@ The economic incentive to report equivocation is symmetric: every honest partici
 
 | Template | Purpose | Use case |
 |---|---|---|
-| [`generic-data-oracle.skald`](../kern/skald/examples/generic-data-oracle.skald) | Any data type | Energy, telco, weather, IoT, identity, supply chain |
-| [`defi-price-oracle.skald`](../kern/skald/examples/defi-price-oracle.skald) | Prices specifically | DeFi consumers (lending, DEXs, derivatives) |
-| [`schema-marketplace.skald`](../kern/skald/examples/schema-marketplace.skald) | Registry of schemas + minimum bonds | Foundation, validators, application devs |
-| [`quadratic-funding.skald`](../kern/skald/examples/quadratic-funding.skald) (from §5.3) | Uses oracle for personhood proofs | Public goods funding rounds |
+| [`generic-data-oracle.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/generic-data-oracle.skald) | Any data type | Energy, telco, weather, IoT, identity, supply chain |
+| [`defi-price-oracle.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/defi-price-oracle.skald) | Prices specifically | DeFi consumers (lending, DEXs, derivatives) |
+| [`schema-marketplace.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/schema-marketplace.skald) | Registry of schemas + minimum bonds | Foundation, validators, application devs |
+| [`quadratic-funding.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/quadratic-funding.skald) (from §5.3) | Uses oracle for personhood proofs | Public goods funding rounds |
 
 ### Generic data oracle features
 
@@ -273,7 +273,7 @@ The plain attestation format reveals the full claim to everyone reading the chai
 
 ### ZK-claim format
 
-A ZK-claim payload (see [`kern/zk_claims.py`](../kern/zk_claims.py)):
+A ZK-claim payload (see [`kern/zk_claims.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/zk_claims.py)):
 
 ```python
 {
@@ -375,9 +375,9 @@ These are real limitations but not blocking. The v1.1-rc model is operationally 
 
 ## 8. Reference
 
-- **Skald templates**: [`generic-data-oracle.skald`](../kern/skald/examples/generic-data-oracle.skald), [`defi-price-oracle.skald`](../kern/skald/examples/defi-price-oracle.skald), [`schema-marketplace.skald`](../kern/skald/examples/schema-marketplace.skald)
-- **Python module**: [`kern/zk_claims.py`](../kern/zk_claims.py)
+- **Skald templates**: [`generic-data-oracle.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/generic-data-oracle.skald), [`defi-price-oracle.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/defi-price-oracle.skald), [`schema-marketplace.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/schema-marketplace.skald)
+- **Python module**: [`kern/zk_claims.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/zk_claims.py)
 - **Attestation primitive**: [`attestations.md`](attestations.md)
 - **BN254 precompiles**: see `kern/evm/bn254.py` (py_ecc-backed pairing)
-- **Tests**: [`tests/test_oracle_and_zk.py`](../tests/test_oracle_and_zk.py)
+- **Tests**: [`tests/test_oracle_and_zk.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_oracle_and_zk.py)
 - **Use case integrations**: [`sto-mica.md`](sto-mica.md), [`public-goods-funding.md`](public-goods-funding.md)

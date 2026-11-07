@@ -1,6 +1,6 @@
 # On-chain Governance
 
-This document describes Kern's on-chain governance system, implemented in [`kern/governance.py`](../kern/governance.py). Two parallel tracks — protocol amendments and treasury allocations — let the chain evolve and fund ecosystem work without hard forks or off-chain coordination.
+This document describes Kern's on-chain governance system, implemented in [`kern/governance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/governance.py). Two parallel tracks — protocol amendments and treasury allocations — let the chain evolve and fund ecosystem work without hard forks or off-chain coordination.
 
 The token economy document ([`tokenomics.md`](tokenomics.md) §7) describes the *intent* of governance. This document describes the *implementation*.
 
@@ -231,7 +231,7 @@ Flow:
 5. **Activation**. The runtime reads `gov.active_swap("state_root_function") == "trie"` and updates `state["state_root_function"]`.
 6. **Effect**. From the activation block onward, `state_root_hex(state)` dispatches to `state_root_trie_hex(state)` — the trie-based commitment, which supports light-client proofs.
 
-The integration test in [`tests/test_state_root_swap.py`](../tests/test_state_root_swap.py) walks through this complete flow and verifies that:
+The integration test in [`tests/test_state_root_swap.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_state_root_swap.py) walks through this complete flow and verifies that:
 - Before activation: state root is the JSON-hash root.
 - A rejected proposal does NOT change the state root function.
 - After activation: state root is the trie root, identical to `state_root_trie_hex(state)`.
@@ -250,11 +250,11 @@ This is what "on-chain self-amendment" means in practice. No hard fork; no off-c
 
 ## Reference
 
-[`kern/governance.py`](../kern/governance.py) (~450 lines) implements:
+[`kern/governance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/governance.py) (~450 lines) implements:
 - `ProtocolPhase` / `TreasuryPhase` enums
 - `ProtocolProposal` / `TreasuryProposal` dataclasses with `phase_transitions` history
 - `ProtocolGovernance` / `TreasuryGovernance` state machines with `submit`/`vote`/`advance_phases`
 - Payload validation for both tracks
 - Two Skald contract templates (`PROTOCOL_GOVERNANCE_SKALD`, `TREASURY_GOVERNANCE_SKALD`)
 
-Tested in [`tests/test_governance.py`](../tests/test_governance.py) (28 tests) and [`tests/test_state_root_swap.py`](../tests/test_state_root_swap.py) (4 integration tests).
+Tested in [`tests/test_governance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_governance.py) (28 tests) and [`tests/test_state_root_swap.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_state_root_swap.py) (4 integration tests).

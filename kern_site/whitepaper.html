@@ -723,11 +723,11 @@
     </div>
     <div class="meta-item">
       <span class="meta-label">Reading</span>
-      <span class="meta-value">~57 min</span>
+      <span class="meta-value">~58 min</span>
     </div>
     <div class="meta-item">
       <span class="meta-label">Words</span>
-      <span class="meta-value">11 454</span>
+      <span class="meta-value">11 524</span>
     </div>
     <div class="meta-item">
       <span class="meta-label">License</span>
@@ -752,7 +752,7 @@
 <hr />
 <h2 id="abstract">Abstract</h2>
 <p class="lede"><span class="dropcap">W</span>e present Kern, a Layer-1 blockchain protocol designed around a specific thesis we call <strong>institutional legibility</strong>: the property that the rules an institution must follow — whether regulatory (MiCA, AIFMD, MiFID II), procedural (grant-making, funding allocation), or evidentiary (oracle attestations, supply chain provenance) — are encoded as protocol-enforced invariants that regulators, auditors, and counterparties can read directly, without trusting any intermediary.</p>
-<p>Kern combines five primitives that together support this thesis. None of them is individually novel; the combination has not previously been delivered by any production Layer-1 protocol. Those primitives are: (1) a four-phase BFT consensus protocol with bonded Proof-of-Stake delegation (the KRN that secure the chain are locked in a protocol-held bond, slashable and released only after an unbonding period; see §3.2 and <a href="staking.md"><code>staking.md</code></a>); (2) the Skald contract language with first-class runtime-enforced invariants and a static type system; (3) dual-track on-chain governance with equivocation slashing; (4) the slashable attestation primitive — generalized equivocation detection for any signed claim about the world; (5) BN254 zk-SNARK verification precompiles enabling privacy-preserving compliance attestations.</p>
+<p>Kern combines five primitives that together support this thesis. None of them is individually novel; the combination has not previously been delivered by any production Layer-1 protocol. Those primitives are: (1) a four-phase BFT consensus protocol with bonded Proof-of-Stake delegation (the KRN that secure the chain are locked in a protocol-held bond, slashable and released only after an unbonding period; see §3.2 and <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/staking.md" target="_blank" rel="noopener"><code>staking.md</code></a>); (2) the Skald contract language with first-class runtime-enforced invariants and a static type system; (3) dual-track on-chain governance with equivocation slashing; (4) the slashable attestation primitive — generalized equivocation detection for any signed claim about the world; (5) BN254 zk-SNARK verification precompiles enabling privacy-preserving compliance attestations.</p>
 <p>We describe the protocol architecture, the four application verticals it enables (compliance-by-construction Security Token Offerings, public goods funding, generic data oracle networks, and ZK-claims-based identity), and the operational path from the v1.1-rc reference implementation to the Midgard mainnet. We are explicit about what Kern is not, what audits are required before launch, and which design decisions are deliberate trade-offs.</p>
 <p>The reference implementation is open-source under Apache-2.0 and ships with 483 passing tests. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.</p>
 <hr />
@@ -792,7 +792,7 @@
 <li><strong>A complete documentation set</strong> of 51 markdown files, including this whitepaper, nine role-specific setup guides (see §13), the four vertical specification documents, the API stability specification, the tokenomics specification, the governance specification, and the operational roadmap to mainnet.</li>
 <li><strong>An internal security review</strong> documenting seven findings (two Critical, two Major, two Medium, one Minor) all fixed prior to engaging the mandatory professional audit.</li>
 </ol>
-<p>The deliverables are reference-implementation-grade. Production deployment requires the professional audit (Phase 2 in the post-code roadmap), the Foundation incorporation (Phase 1), and the public testnet stability validation (Phase 3). See §12 for the security path and the <a href="post-code-roadmap.md">post-code roadmap</a> for the full operational timeline.</p>
+<p>The deliverables are reference-implementation-grade. Production deployment requires the professional audit (Phase 2 in the post-code roadmap), the Foundation incorporation (Phase 1), and the public testnet stability validation (Phase 3). See §12 for the security path and the <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/post-code-roadmap.md" target="_blank" rel="noopener">post-code roadmap</a> for the full operational timeline.</p>
 <hr />
 <h2 id="2-motivation"><span class="hash">§&nbsp;02</span><span class="htext">Motivation</span></h2>
 <h3 id="21-the-structural-gap-in-existing-layer-1-protocols">2.1 The structural gap in existing Layer-1 protocols</h3>
@@ -834,12 +834,12 @@
 <h3 id="31-persona-a-a-belgian-fintech-tokenizing-private-equity">3.1 Persona A — A Belgian fintech tokenizing private equity</h3>
 <p><strong>The actor</strong>: a Brussels-headquartered B2B fintech with ~50 employees raising a €15M Series B. They want to tokenize approximately 20% of their post-money equity (€3M) so secondary trading by employees and early backers becomes possible without an IPO.</p>
 <p><strong>Current state</strong>: they cannot do this because (a) the Prospectus Regulation requires a registered prospectus, (b) MiFID II Art. 16(9) requires custody segregation, and (c) MAR requires market-abuse controls. To address all three in Solidity would require a custom contract whose audit alone costs €80-150k and whose regulatory approval (from FSMA) is unpredictable because there is no template the regulator has previously approved.</p>
-<p><strong>With Kern</strong>: they deploy <a href="../kern/skald/examples/sto-startup-equity.skald"><code>sto-startup-equity.skald</code></a>, the canonical template encoding the EU securities regime (Prospectus Regulation, MiFID II, MAR) as Skald invariants — note security tokens are excluded from MiCA by Art. 2(4). The FSMA approval cycle may compress materially because the regulator reads the invariants directly. The audit perimeter shrinks (auditor only verifies that the deployment matches the template, not that the template itself is correct). Total cost to launch: ~€25-40k vs ~€150-300k via custom Solidity.</p>
+<p><strong>With Kern</strong>: they deploy <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-startup-equity.skald"><code>sto-startup-equity.skald</code></a>, the canonical template encoding the EU securities regime (Prospectus Regulation, MiFID II, MAR) as Skald invariants — note security tokens are excluded from MiCA by Art. 2(4). The FSMA approval cycle may compress materially because the regulator reads the invariants directly. The audit perimeter shrinks (auditor only verifies that the deployment matches the template, not that the template itself is correct). Total cost to launch: ~€25-40k vs ~€150-300k via custom Solidity.</p>
 <p><strong>Why this is unique to Kern</strong>: no other production L1 has runtime-enforced invariants + a regulator-readable contract language + a community of templates a regulator can accumulate familiarity with over time.</p>
 <h3 id="32-persona-b-an-eu-institutional-fund-tokenizing-a-private-debt-strategy">3.2 Persona B — An EU institutional fund tokenizing a private-debt strategy</h3>
 <p><strong>The actor</strong>: a Luxembourg-domiciled alternative investment fund (€200M AUM) tokenizing access to a private-debt portfolio. The fund manager (AIFM) is a regulated entity; the depositary is an independent bank.</p>
 <p><strong>Current state</strong>: AIFMD compliance has them publishing NAV quarterly via reports, with depositary co-signing. Token holders cannot redeem outside the quarterly NAV window. The operational cycle is heavy: NAV calculation, depositary validation, distribution document, regulator notice.</p>
-<p><strong>With Kern</strong>: they deploy <a href="../kern/skald/examples/sto-institutional-fund.skald"><code>sto-institutional-fund.skald</code></a>. The contract encodes:
+<p><strong>With Kern</strong>: they deploy <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-institutional-fund.skald"><code>sto-institutional-fund.skald</code></a>. The contract encodes:
 - AIFMD Art. 21 (depositary independence) as the invariant <code>aifm != depositary</code> — single-line, regulator-checkable
 - AIFMD Art. 22 (NAV staleness) as <code>current_level - nav_published_at_level &lt;= nav_max_staleness_levels</code>, runtime-enforced
 - AIFMD Art. 18 (concentration limits) as <code>largest_position_pct &lt;= concentration_cap_pct</code>
@@ -849,7 +849,7 @@
 <h3 id="33-persona-c-a-french-scpi-real-estate-investment-vehicle">3.3 Persona C — A French SCPI (real estate investment vehicle)</h3>
 <p><strong>The actor</strong>: a Paris-based real estate fund (SCPI) with €80M deployed across 12 commercial properties. Investors are mostly French retail (3,000+ holders), with secondary trading currently going through a paper-based broker process at quarterly intervals.</p>
 <p><strong>Current state</strong>: secondary liquidity is bad. Investors who need to exit before the quarterly window take significant haircuts. Acquisitions are slow (notary-attested title transfers take weeks). Tax distributions require manual reconciliation per investor jurisdiction.</p>
-<p><strong>With Kern</strong>: they deploy <a href="../kern/skald/examples/sto-real-estate.skald"><code>sto-real-estate.skald</code></a>. Key features:
+<p><strong>With Kern</strong>: they deploy <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-real-estate.skald"><code>sto-real-estate.skald</code></a>. Key features:
 - Notary attestations (<code>schema_id = "realestate.title-registered"</code>) — the notary signs once, the SPV&rsquo;s title is provable on-chain forever
 - The invariant <code>rental_income_distributed &lt;= rental_income_received</code> prevents any Ponzi-style behavior (a distribution can only happen if rent was actually collected); read directly by the AMF
 - Secondary market with floor price set by the compliance oracle, auto-paused if valuation staleness exceeds threshold
@@ -858,7 +858,7 @@
 <h3 id="34-persona-d-unesco-regional-office-running-heritage-preservation-grants">3.4 Persona D — UNESCO regional office running heritage preservation grants</h3>
 <p><strong>The actor</strong>: a UNESCO regional office (Africa or South Asia, for example) with a €10M annual budget for digital heritage preservation projects. The current grant process: applications submitted, expert committee reviews, allocations decided, disbursements made through traditional banking. Administrative overhead: ~15% of the budget.</p>
 <p><strong>Current state</strong>: the committee process is slow (6+ months from application to disbursement), opaque (no community signal on which projects matter most), and the administrative cost is significant relative to small grants (€10-50k size).</p>
-<p><strong>With Kern</strong>: they deploy quarterly Quadratic Funding rounds (<a href="../kern/skald/examples/quadratic-funding.skald"><code>quadratic-funding.skald</code></a>) for small grants and an annual Retroactive Public Goods Funding round (<a href="../kern/skald/examples/retroactive-pgf.skald"><code>retroactive-pgf.skald</code></a>) for proven-impact larger grants. Contributors include: affected communities, individual academics, partner foundations. Sybil resistance comes from <code>identity.proof-of-personhood</code> attestations (the UNESCO office signs these for verified individuals, with slashing). Administrative cost drops to ~2% (server infrastructure + badge-holder honoraria for RPGF).</p>
+<p><strong>With Kern</strong>: they deploy quarterly Quadratic Funding rounds (<a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/quadratic-funding.skald"><code>quadratic-funding.skald</code></a>) for small grants and an annual Retroactive Public Goods Funding round (<a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/retroactive-pgf.skald"><code>retroactive-pgf.skald</code></a>) for proven-impact larger grants. Contributors include: affected communities, individual academics, partner foundations. Sybil resistance comes from <code>identity.proof-of-personhood</code> attestations (the UNESCO office signs these for verified individuals, with slashing). Administrative cost drops to ~2% (server infrastructure + badge-holder honoraria for RPGF).</p>
 <p><strong>Why this is unique to Kern</strong>: Gitcoin demonstrates QF works at small scale, but suffers persistent Sybil attacks; Optimism demonstrates RPGF works but is a closed-ecosystem distribution. Kern provides both as native primitives with cryptoeconomic Sybil resistance (via slashable personhood attestations) as a first-class capability.</p>
 <h3 id="35-persona-e-an-eu-tso-transmission-system-operator-for-energy-settlement">3.5 Persona E — An EU TSO (Transmission System Operator) for energy settlement</h3>
 <p><strong>The actor</strong>: a national electricity grid operator (e.g., Elia in Belgium, RTE in France, TenneT in the Netherlands) participating in inter-TSO settlement under the EU Central Western Europe (CWE) market coupling. Settlement requires consensus on grid frequency, regional supply/demand, and clearing prices, computed every 15 minutes across the 7 CWE member states.</p>
@@ -1114,7 +1114,7 @@
 <li><strong>Validator accessibility</strong>: validators delegate operationally (run nodes, sign blocks) but operationally the burden is comparable to running a validator on any BFT proof-of-stake network.</li>
 </ul>
 <h3 id="32-validator-economics">3.2 Validator economics</h3>
-<p>Validators (Kern calls them <em>bakers</em>) stake KRN to participate. Holders can delegate without running a node: the delegated KRN leave their spendable balance and are held by the protocol in a bond to one validator, never by the validator itself. The bond counts toward the validator&rsquo;s consensus weight from the next epoch, earns a share of its rewards, and is slashed with it. Undelegating removes the weight at once and starts an unbonding period (86 400 blocks by default) during which the bond stays locked and slashable. This is <strong>bonded Proof-of-Stake delegation without liquid staking tokens</strong>: no Lido equivalent, no rehypothecation, no derivative token. The full rules are in <a href="staking.md"><code>staking.md</code></a>.</p>
+<p>Validators (Kern calls them <em>bakers</em>) stake KRN to participate. Holders can delegate without running a node: the delegated KRN leave their spendable balance and are held by the protocol in a bond to one validator, never by the validator itself. The bond counts toward the validator&rsquo;s consensus weight from the next epoch, earns a share of its rewards, and is slashed with it. Undelegating removes the weight at once and starts an unbonding period (86 400 blocks by default) during which the bond stays locked and slashable. This is <strong>bonded Proof-of-Stake delegation without liquid staking tokens</strong>: no Lido equivalent, no rehypothecation, no derivative token. The full rules are in <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/staking.md" target="_blank" rel="noopener"><code>staking.md</code></a>.</p>
 <p>Block rewards come from two sources: newly issued KRN per the adaptive issuance schedule, and transaction fees. The split between validator and delegators is determined by a per-validator commission rate (default 10%).</p>
 <p>Slashing applies to:
 - Consensus equivocation: two signed pre-endorsements, or two signed endorsements, by the same validator for different blocks at the same level and round.
@@ -1133,7 +1133,7 @@
    t = 0s            gather &gt;2/3          &gt;2/3 quorum         ~2s after creation
                      of stake             = endorsed
 </code></pre>
-<p>The <strong>&gt;2/3 stake</strong> quorum is what makes finality deterministic: as long as fewer than one-third of validators are malicious or offline, an endorsed block cannot be reverted. A failed round (proposer offline, or block fails to reach quorum before the round&rsquo;s timeout, which grows with the round number) hands off to the next proposer, selected via a round-incremented seed. Every level starts again at round 0. A validator that endorsed a block in one round is locked on it: it pre-endorses no other block at that level unless it sees a pre-endorsement quorum for that block from a later round, which is what keeps two rounds from finalizing two different blocks (see <a href="consensus-locking.md"><code>consensus-locking.md</code></a>).</p>
+<p>The <strong>&gt;2/3 stake</strong> quorum is what makes finality deterministic: as long as fewer than one-third of validators are malicious or offline, an endorsed block cannot be reverted. A failed round (proposer offline, or block fails to reach quorum before the round&rsquo;s timeout, which grows with the round number) hands off to the next proposer, selected via a round-incremented seed. Every level starts again at round 0. A validator that endorsed a block in one round is locked on it: it pre-endorses no other block at that level unless it sees a pre-endorsement quorum for that block from a later round, which is what keeps two rounds from finalizing two different blocks (see <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/consensus-locking.md" target="_blank" rel="noopener"><code>consensus-locking.md</code></a>).</p>
 <h3 id="54-the-block-reward-and-where-it-goes">5.4 The block reward, and where it goes</h3>
 <p>Each finalized block mints a fresh reward (the issuance — see §11) and splits it deterministically:</p>
 <pre><code>  Newly minted reward (100%)
@@ -1144,7 +1144,7 @@
 </code></pre>
 <p>In v1.1-rc the rewarded endorser set is the proposer alone, so the proposer receives the whole baker pool. Paying the endorsers of the network needs per-parent-block accounting, which is not implemented yet.</p>
 <p>At the 50% target staking ratio, the reward is ~0.079 KRN/block (79 220 mukrn). The proposer additionally keeps the <em>fees</em> of every successful transaction it includes; failed-transaction fees are burned. Delegators share their baker&rsquo;s rewards after the per-validator commission; their bonds are held by the protocol, not by the baker.</p>
-<p>The L1 transaction fee is a flat sender-chosen <code>tx.fee</code> paid in mukrn (Skald executes loop-free and non-recursive, so termination is structural and per-tx compute metering is not required at the L1 layer; the Yellow Paper-compliant gas metering applies inside the rollup Mini-EVM, §7). An <strong>optional, governance-gated fee floor and per-block size cap</strong> can be activated to add a compute-proportional fee component and a spam bound; it is off by default and detailed in <a href="fee-floor.md"><code>fee-floor.md</code></a>.</p>
+<p>The L1 transaction fee is a flat sender-chosen <code>tx.fee</code> paid in mukrn (Skald executes loop-free and non-recursive, so termination is structural and per-tx compute metering is not required at the L1 layer; the Yellow Paper-compliant gas metering applies inside the rollup Mini-EVM, §7). An <strong>optional, governance-gated fee floor and per-block size cap</strong> can be activated to add a compute-proportional fee component and a spam bound; it is off by default and detailed in <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/fee-floor.md" target="_blank" rel="noopener"><code>fee-floor.md</code></a>.</p>
 <blockquote>
 <p>An interactive, animated walk-through of the block lifecycle, the gas/fee flow, the reward split, the adaptive-issuance curve, and the attestation lifecycle is published at <strong>kern_site/how-it-works.html</strong>.</p>
 </blockquote>
@@ -1240,7 +1240,7 @@
 </tr>
 </tbody>
 </table>
-<p>Skald borrows decidability and no-reentrancy from Clarity, the make-bugs-unrepresentable philosophy from Move, and the small-surface discipline from Vyper. Its one original contribution is making the invariant a first-class language construct that the runtime enforces unconditionally — so the compliance statement and the protocol enforcement are the same artifact. The full comparison, including Skald&rsquo;s honest limitations (runtime enforcement is not formal proof; bounded expressiveness is a real cost; no ecosystem yet), is in <a href="skald-language.md"><code>skald-language.md</code></a>.</p>
+<p>Skald borrows decidability and no-reentrancy from Clarity, the make-bugs-unrepresentable philosophy from Move, and the small-surface discipline from Vyper. Its one original contribution is making the invariant a first-class language construct that the runtime enforces unconditionally — so the compliance statement and the protocol enforcement are the same artifact. The full comparison, including Skald&rsquo;s honest limitations (runtime enforcement is not formal proof; bounded expressiveness is a real cost; no ecosystem yet), is in <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/skald-language.md" target="_blank" rel="noopener"><code>skald-language.md</code></a>.</p>
 <h3 id="43-static-typing">4.3 Static typing</h3>
 <p>The Skald type checker validates contracts before deployment. Type-incorrect contracts cannot be originated. This catches most low-hanging Solidity-style bugs (integer overflow misuse, type confusion, accidental shadowing) at deployment, not at runtime.</p>
 <h3 id="44-the-kvm">4.4 The KVM</h3>
@@ -1392,16 +1392,16 @@
 </tbody>
 </table>
 <h3 id="92-issuance">9.2 Issuance</h3>
-<p>Block rewards come from KRN issuance per the adaptive issuance schedule (see <a href="adaptive-issuance.md"><code>adaptive-issuance.md</code></a>). Target initial annual issuance: ~5-7% of supply, decreasing as stake participation rises. Issuance is governance-amendable.</p>
+<p>Block rewards come from KRN issuance per the adaptive issuance schedule (see <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/adaptive-issuance.md" target="_blank" rel="noopener"><code>adaptive-issuance.md</code></a>). Target initial annual issuance: ~5-7% of supply, decreasing as stake participation rises. Issuance is governance-amendable.</p>
 <h3 id="93-slashing-economy">9.3 Slashing economy</h3>
 <p>The slashing of equivocators (consensus, governance, or attestation) reduces total supply via the burn portion (60-90% of slashed amounts). The reward portion (10%) provides whistleblower incentives. Together these create a deflationary pressure on misbehavior.</p>
 <h3 id="94-on-speculation-memecoins-and-fair-launch-mythology">9.4 On speculation, memecoins, and &ldquo;fair launch&rdquo; mythology</h3>
 <p>KRN is the native utility token of an institutional L1, not a speculative asset. We do not market it as a memecoin, do not run aggressive growth campaigns, do not airdrop retroactively, and do not court the audience that drives short-cycle token price action. The two markets — institutional adoption and memecoin speculation — are mutually exclusive, and Kern picks institutions.</p>
-<p>For the full reasoning (why no memecoin positioning, why no &ldquo;fair launch&rdquo; theatre, why no aggressive marketing, what the founder&rsquo;s relationship to token price actually is), see <a href="tokenomics.md"><code>tokenomics.md</code></a> §11, and the founder&rsquo;s <a href="manifesto.md"><code>manifesto.md</code></a> §V.</p>
+<p>For the full reasoning (why no memecoin positioning, why no &ldquo;fair launch&rdquo; theatre, why no aggressive marketing, what the founder&rsquo;s relationship to token price actually is), see <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/tokenomics.md" target="_blank" rel="noopener"><code>tokenomics.md</code></a> §11, and the founder&rsquo;s <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/manifesto.md" target="_blank" rel="noopener"><code>manifesto.md</code></a> §V.</p>
 <hr />
 <h2 id="12-security-review-and-audit-path"><span class="hash">§&nbsp;12</span><span class="htext">Security review and audit path</span></h2>
 <h3 id="101-internal-review-completed">10.1 Internal review (completed)</h3>
-<p class="lede"><span class="dropcap">T</span>he v1.1-rc release ships with an internal security review (see <a href="security-review-v11rc.md"><code>security-review-v11rc.md</code></a>) that surfaced and fixed seven vulnerabilities:</p>
+<p class="lede"><span class="dropcap">T</span>he v1.1-rc release ships with an internal security review (see <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/security-review-v11rc.md" target="_blank" rel="noopener"><code>security-review-v11rc.md</code></a>) that surfaced and fixed seven vulnerabilities:</p>
 <table>
 <thead>
 <tr>
@@ -1437,9 +1437,9 @@
 <h3 id="102-mandatory-professional-audit">10.2 Mandatory professional audit</h3>
 <p>A professional smart-contract audit by a specialized firm — recommended: Trail of Bits, OtterSec, Hashlock, Runtime Verification, or ChainSec — is mandatory before Midgard mainnet launch.</p>
 <p>Indicative scope: 6-12 weeks per cycle, €100-200k per audit, two cycles recommended.</p>
-<p>The Foundation contracts directly with the audit firm. See <a href="setup-auditor.md"><code>setup-auditor.md</code></a> for the engagement workflow.</p>
+<p>The Foundation contracts directly with the audit firm. See <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-auditor.md" target="_blank" rel="noopener"><code>setup-auditor.md</code></a> for the engagement workflow.</p>
 <h3 id="103-the-full-operational-path">10.3 The full operational path</h3>
-<p>See <a href="post-code-roadmap.md"><code>post-code-roadmap.md</code></a> for the detailed phase-by-phase plan. Summary:</p>
+<p>See <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/post-code-roadmap.md" target="_blank" rel="noopener"><code>post-code-roadmap.md</code></a> for the detailed phase-by-phase plan. Summary:</p>
 <table>
 <thead>
 <tr>
@@ -1497,7 +1497,7 @@
 <hr />
 <h2 id="13-from-whitepaper-to-running-node-technical-entry-points"><span class="hash">§&nbsp;13</span><span class="htext">From whitepaper to running node — technical entry points</span></h2>
 <p class="lede"><span class="dropcap">T</span>his whitepaper is intentionally vulgarized: it explains Kern&rsquo;s thesis and verticals in language a non-engineer institutional reader can follow. But Kern is a working reference implementation, not a position paper. If you want to <strong>actually run, build on, integrate, audit, or operate Kern</strong>, this section is your map.</p>
-<p>Nine <strong>setup guides</strong> live in <code>docs/setup-*.md</code>. Each is role-targeted and assumes only the prerequisites needed for that role. They are linked from a single index — <a href="setup-guides.md"><code>setup-guides.md</code></a> — and each is operationally exhaustive (copy-paste commands, exact version numbers, file paths). They are the technical vertical complementing the conceptual vertical of this whitepaper.</p>
+<p>Nine <strong>setup guides</strong> live in <code>docs/setup-*.md</code>. Each is role-targeted and assumes only the prerequisites needed for that role. They are linked from a single index — <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-guides.md" target="_blank" rel="noopener"><code>setup-guides.md</code></a> — and each is operationally exhaustive (copy-paste commands, exact version numbers, file paths). They are the technical vertical complementing the conceptual vertical of this whitepaper.</p>
 <h3 id="131-which-guide-is-for-me">13.1 Which guide is for me?</h3>
 <table>
 <thead>
@@ -1510,52 +1510,52 @@
 <tbody>
 <tr>
 <td>A protocol contributor or someone reading the code</td>
-<td><a href="setup-developer.md"><code>setup-developer.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-developer.md" target="_blank" rel="noopener"><code>setup-developer.md</code></a></td>
 <td>Clone, install dependencies, run tests, navigate the codebase, run a local devnet, modify Skald, build the docs site</td>
 </tr>
 <tr>
 <td>A KRN holder wanting to earn baking yield without running a node</td>
-<td><a href="setup-delegator.md"><code>setup-delegator.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-delegator.md" target="_blank" rel="noopener"><code>setup-delegator.md</code></a></td>
 <td>Wallet setup, choosing a validator, delegating (bonded, with an unbonding period), monitoring rewards, undelegating</td>
 </tr>
 <tr>
 <td>Someone planning to operate a validator on Yggdrasil testnet or Midgard mainnet</td>
-<td><a href="setup-validator.md"><code>setup-validator.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-validator.md" target="_blank" rel="noopener"><code>setup-validator.md</code></a></td>
 <td>Hardware requirements, key management (hot vs cold), node setup, monitoring, slashing avoidance, commission rate setup</td>
 </tr>
 <tr>
 <td>A dApp developer building on Kern (native Skald or EVM via rollup)</td>
-<td><a href="setup-dapp-developer.md"><code>setup-dapp-developer.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-dapp-developer.md" target="_blank" rel="noopener"><code>setup-dapp-developer.md</code></a></td>
 <td>Toolchain (Hardhat/Foundry for EVM rollup; Skald CLI for native), local testing, deploying to devnet/testnet, frontend integration</td>
 </tr>
 <tr>
 <td>A team running an Optimistic Smart Rollup on Kern</td>
-<td><a href="setup-rollup-operator.md"><code>setup-rollup-operator.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-rollup-operator.md" target="_blank" rel="noopener"><code>setup-rollup-operator.md</code></a></td>
 <td>Rollup framework, sequencer setup, state commitment posting, fraud proof bisection, forced inclusion handling</td>
 </tr>
 <tr>
 <td>Someone running a block explorer, indexer, or chain data service</td>
-<td><a href="setup-explorer-ops.md"><code>setup-explorer-ops.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-explorer-ops.md" target="_blank" rel="noopener"><code>setup-explorer-ops.md</code></a></td>
 <td>RPC endpoints, archival node setup, indexing patterns, public-facing APIs</td>
 </tr>
 <tr>
 <td>Someone running <strong>Heimdall</strong> (the official Kern explorer + monitoring stack)</td>
-<td><a href="setup-heimdall-operator.md"><code>setup-heimdall-operator.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-heimdall-operator.md" target="_blank" rel="noopener"><code>setup-heimdall-operator.md</code></a></td>
 <td>Heimdall installation, env vars, Prometheus scraping, vertical-specific dashboards</td>
 </tr>
 <tr>
 <td>A founding board member of the (to-be-incorporated) Kern Foundation</td>
-<td><a href="setup-foundation.md"><code>setup-foundation.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-foundation.md" target="_blank" rel="noopener"><code>setup-foundation.md</code></a></td>
 <td>Foundation legal setup, multisig key generation (3-of-5 / 2-of-3), genesis ceremony, treasury operations, regulatory dialogue</td>
 </tr>
 <tr>
 <td>A security auditor engaged by the Foundation for audit cycle 1</td>
-<td><a href="setup-auditor.md"><code>setup-auditor.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-auditor.md" target="_blank" rel="noopener"><code>setup-auditor.md</code></a></td>
 <td>Codebase walkthrough, threat model, where to focus (BFT, attestation, EVM, governance), reporting format, originality attestation</td>
 </tr>
 <tr>
 <td>Looking for the navigation index across all the above</td>
-<td><a href="setup-guides.md"><code>setup-guides.md</code></a></td>
+<td><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-guides.md" target="_blank" rel="noopener"><code>setup-guides.md</code></a></td>
 <td>One-page overview of each guide with a &ldquo;start here&rdquo; recommendation by role</td>
 </tr>
 </tbody>
@@ -1563,66 +1563,66 @@
 <h3 id="132-spec-documents-the-protocol-details">13.2 Spec documents (the protocol details)</h3>
 <p>Beyond the setup guides, the protocol&rsquo;s full specification is split across topic-specific documents. These are the source of truth that the setup guides reference :</p>
 <p><strong>Architecture &amp; consensus</strong>
-- <a href="architecture.md"><code>architecture.md</code></a> — component layout, module boundaries, data flow
-- <a href="consensus.md"><code>consensus.md</code></a> — BFT protocol detail, finality conditions, view changes
-- <a href="bft.md"><code>bft.md</code></a> — multi-validator BFT implementation specifics
-- <a href="staking.md"><code>staking.md</code></a> — bonded delegation mechanics</p>
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/architecture.md" target="_blank" rel="noopener"><code>architecture.md</code></a> — component layout, module boundaries, data flow
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/consensus.md" target="_blank" rel="noopener"><code>consensus.md</code></a> — BFT protocol detail, finality conditions, view changes
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/bft.md" target="_blank" rel="noopener"><code>bft.md</code></a> — multi-validator BFT implementation specifics
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/staking.md" target="_blank" rel="noopener"><code>staking.md</code></a> — bonded delegation mechanics</p>
 <p><strong>Smart contracts</strong>
-- <a href="skald-language.md"><code>skald-language.md</code></a> — Skald language reference (grammar, types, semantics)
-- <a href="typecheck.md"><code>typecheck.md</code></a> — static type system rules</p>
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/skald-language.md" target="_blank" rel="noopener"><code>skald-language.md</code></a> — Skald language reference (grammar, types, semantics)
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/typecheck.md" target="_blank" rel="noopener"><code>typecheck.md</code></a> — static type system rules</p>
 <p><strong>v1.1-rc verticals</strong> (the institutional applications)
-- <a href="attestations.md"><code>attestations.md</code></a> — slashable attestation primitive
-- <a href="sto-mica.md"><code>sto-mica.md</code></a> — STO compliance vertical
-- <a href="public-goods-funding.md"><code>public-goods-funding.md</code></a> — QF + RPGF vertical
-- <a href="oracle-network.md"><code>oracle-network.md</code></a> — oracle network + schema marketplace + ZK-claims vertical
-- <a href="v11rc-changes.md"><code>v11rc-changes.md</code></a> — consolidated v1.1-rc release notes</p>
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/attestations.md" target="_blank" rel="noopener"><code>attestations.md</code></a> — slashable attestation primitive
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/sto-mica.md" target="_blank" rel="noopener"><code>sto-mica.md</code></a> — STO compliance vertical
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/public-goods-funding.md" target="_blank" rel="noopener"><code>public-goods-funding.md</code></a> — QF + RPGF vertical
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/oracle-network.md" target="_blank" rel="noopener"><code>oracle-network.md</code></a> — oracle network + schema marketplace + ZK-claims vertical
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/v11rc-changes.md" target="_blank" rel="noopener"><code>v11rc-changes.md</code></a> — consolidated v1.1-rc release notes</p>
 <p><strong>Tooling shipping with v1.1-rc</strong>
-- <a href="setup-heimdall-operator.md"><code>setup-heimdall-operator.md</code></a> — Heimdall, the official block explorer + monitoring stack (FastAPI + SQLite indexer + Prometheus metrics, dedicated per-vertical pages)</p>
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-heimdall-operator.md" target="_blank" rel="noopener"><code>setup-heimdall-operator.md</code></a> — Heimdall, the official block explorer + monitoring stack (FastAPI + SQLite indexer + Prometheus metrics, dedicated per-vertical pages)</p>
 <p><strong>Governance &amp; economy</strong>
-- <a href="governance.md"><code>governance.md</code></a> — dual-track on-chain governance spec
-- <a href="tokenomics.md"><code>tokenomics.md</code></a> — KRN supply, distribution, sinks
-- <a href="contributors-program.md"><code>contributors-program.md</code></a> — contributor allocation policy
-- <a href="adaptive-issuance.md"><code>adaptive-issuance.md</code></a> — issuance schedule that responds to participation</p>
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/governance.md" target="_blank" rel="noopener"><code>governance.md</code></a> — dual-track on-chain governance spec
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/tokenomics.md" target="_blank" rel="noopener"><code>tokenomics.md</code></a> — KRN supply, distribution, sinks
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/contributors-program.md" target="_blank" rel="noopener"><code>contributors-program.md</code></a> — contributor allocation policy
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/adaptive-issuance.md" target="_blank" rel="noopener"><code>adaptive-issuance.md</code></a> — issuance schedule that responds to participation</p>
 <p><strong>API &amp; integration</strong>
-- <a href="api-stability.md"><code>api-stability.md</code></a> — frozen / stable / beta surface declarations per version
-- <a href="api.md"><code>api.md</code></a> — JSON-RPC endpoint reference
-- <a href="merkle-trie.md"><code>merkle-trie.md</code></a> — state trie format for light clients</p>
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/api-stability.md" target="_blank" rel="noopener"><code>api-stability.md</code></a> — frozen / stable / beta surface declarations per version
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/api.md" target="_blank" rel="noopener"><code>api.md</code></a> — JSON-RPC endpoint reference
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/merkle-trie.md" target="_blank" rel="noopener"><code>merkle-trie.md</code></a> — state trie format for light clients</p>
 <p><strong>Operations</strong>
-- <a href="post-code-roadmap.md"><code>post-code-roadmap.md</code></a> — Foundation → Audit → Sale → Mainnet operational plan
-- <a href="pre-mainnet-checklist.md"><code>pre-mainnet-checklist.md</code></a> — gating items before Midgard launch
-- <a href="release-tagging.md"><code>release-tagging.md</code></a> — versioning policy and tag conventions
-- <a href="security-review-v11rc.md"><code>security-review-v11rc.md</code></a> — internal security review (input to professional audit)</p>
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/post-code-roadmap.md" target="_blank" rel="noopener"><code>post-code-roadmap.md</code></a> — Foundation → Audit → Sale → Mainnet operational plan
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/pre-mainnet-checklist.md" target="_blank" rel="noopener"><code>pre-mainnet-checklist.md</code></a> — gating items before Midgard launch
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/release-tagging.md" target="_blank" rel="noopener"><code>release-tagging.md</code></a> — versioning policy and tag conventions
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/security-review-v11rc.md" target="_blank" rel="noopener"><code>security-review-v11rc.md</code></a> — internal security review (input to professional audit)</p>
 <p><strong>Originality &amp; legal</strong>
-- <a href="originality-and-attribution.md"><code>originality-and-attribution.md</code></a> — founder attribution policy + Belgian moral rights anchor</p>
+- <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/originality-and-attribution.md" target="_blank" rel="noopener"><code>originality-and-attribution.md</code></a> — founder attribution policy + Belgian moral rights anchor</p>
 <h3 id="133-start-here-for-each-common-scenario">13.3 Start here, for each common scenario</h3>
 <p>If you are a regulator (FSMA, AMF, BaFin, CSSF, CONSOB, equivalent) asked to assess Kern:</p>
 <ol>
 <li>Read this whitepaper §3 (use cases) and §4 (thesis)</li>
-<li>Read <a href="sto-mica.md"><code>sto-mica.md</code></a> section &ldquo;The compliance gap that Skald closes&rdquo;</li>
-<li>Read one of the STO templates (<a href="../kern/skald/examples/sto-startup-equity.skald"><code>kern/skald/examples/sto-startup-equity.skald</code></a> is the smallest; ~225 lines) noting the <code>invariant</code> blocks</li>
-<li>Read <a href="security-review-v11rc.md"><code>security-review-v11rc.md</code></a> to see the security posture honestly stated</li>
+<li>Read <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/sto-mica.md" target="_blank" rel="noopener"><code>sto-mica.md</code></a> section &ldquo;The compliance gap that Skald closes&rdquo;</li>
+<li>Read one of the STO templates (<a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-startup-equity.skald"><code>kern/skald/examples/sto-startup-equity.skald</code></a> is the smallest; ~225 lines) noting the <code>invariant</code> blocks</li>
+<li>Read <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/security-review-v11rc.md" target="_blank" rel="noopener"><code>security-review-v11rc.md</code></a> to see the security posture honestly stated</li>
 </ol>
 <p>This should give you, in roughly 4 hours of reading, a defensible position on whether Kern&rsquo;s compliance model is sound for your jurisdiction.</p>
 <p>If you are a foundation or institution evaluating Kern for a public-goods funding program:</p>
 <ol>
 <li>This whitepaper §1 (ambition) and §3 (use case D — UNESCO heritage preservation)</li>
-<li><a href="public-goods-funding.md"><code>public-goods-funding.md</code></a> end-to-end</li>
-<li>The two PGF templates (<a href="../kern/skald/examples/quadratic-funding.skald"><code>quadratic-funding.skald</code></a>, <a href="../kern/skald/examples/retroactive-pgf.skald"><code>retroactive-pgf.skald</code></a>)</li>
-<li><a href="setup-foundation.md"><code>setup-foundation.md</code></a> for the operational pattern of running a Foundation that operates Kern-based rounds</li>
+<li><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/public-goods-funding.md" target="_blank" rel="noopener"><code>public-goods-funding.md</code></a> end-to-end</li>
+<li>The two PGF templates (<a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/quadratic-funding.skald"><code>quadratic-funding.skald</code></a>, <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/retroactive-pgf.skald"><code>retroactive-pgf.skald</code></a>)</li>
+<li><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-foundation.md" target="_blank" rel="noopener"><code>setup-foundation.md</code></a> for the operational pattern of running a Foundation that operates Kern-based rounds</li>
 </ol>
 <p>If you are an institutional investor or compliance officer at a financial institution evaluating Kern for asset tokenization:</p>
 <ol>
 <li>This whitepaper §1 (ambition), §3.1-3.3 (your persona is likely one of A/B/C), §4 (what Kern provides)</li>
-<li><a href="sto-mica.md"><code>sto-mica.md</code></a> end-to-end</li>
+<li><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/sto-mica.md" target="_blank" rel="noopener"><code>sto-mica.md</code></a> end-to-end</li>
 <li>The relevant STO template</li>
-<li><a href="security-review-v11rc.md"><code>security-review-v11rc.md</code></a> + the post-code-roadmap §10-§12</li>
+<li><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/security-review-v11rc.md" target="_blank" rel="noopener"><code>security-review-v11rc.md</code></a> + the post-code-roadmap §10-§12</li>
 </ol>
 <p>If you are a software engineer about to write code on Kern:</p>
 <ol>
-<li><a href="setup-developer.md"><code>setup-developer.md</code></a> → get the chain running locally</li>
-<li><a href="setup-dapp-developer.md"><code>setup-dapp-developer.md</code></a> → deploy your first contract</li>
-<li><a href="skald-language.md"><code>skald-language.md</code></a> → language reference (or <a href="setup-rollup-operator.md"><code>setup-rollup-operator.md</code></a> if you&rsquo;re staying in EVM)</li>
-<li>The example contracts in <a href="../kern/skald/examples/"><code>kern/skald/examples/</code></a> as templates</li>
+<li><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-developer.md" target="_blank" rel="noopener"><code>setup-developer.md</code></a> → get the chain running locally</li>
+<li><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-dapp-developer.md" target="_blank" rel="noopener"><code>setup-dapp-developer.md</code></a> → deploy your first contract</li>
+<li><a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/skald-language.md" target="_blank" rel="noopener"><code>skald-language.md</code></a> → language reference (or <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-rollup-operator.md" target="_blank" rel="noopener"><code>setup-rollup-operator.md</code></a> if you&rsquo;re staying in EVM)</li>
+<li>The example contracts in <a href="https://github.com/vaneeckhoutnicolas/kern/tree/main/kern/skald/examples"><code>kern/skald/examples/</code></a> as templates</li>
 </ol>
 <h3 id="134-the-reference-implementation">13.4 The reference implementation</h3>
 <p>Quick start to run Kern locally:</p>
@@ -1703,14 +1703,14 @@ pytest tests/
 <hr />
 <h2 id="18-license"><span class="hash">§&nbsp;18</span><span class="htext">License</span></h2>
 <p class="lede"><span class="dropcap">T</span>his document is published under <strong>CC-BY-SA-4.0</strong> (Creative Commons Attribution-ShareAlike 4.0 International). Derivative documents must credit Nicolas Van Eeckhout and Kern contributors as authors.</p>
-<p>The reference implementation is published under <strong>Apache-2.0</strong> (the Apache License, Version 2.0). See <a href="../LICENSE"><code>LICENSE</code></a> for the full terms.</p>
-<p>The Kern name, the &ldquo;kn1&rdquo; address prefix, and the Skald language name are reserved as marks of authenticity by the project; they are not transferable to forks. Forks must use distinct names. See <a href="originality-and-attribution.md"><code>originality-and-attribution.md</code></a> for the full attribution and forking policy.</p>
+<p>The reference implementation is published under <strong>Apache-2.0</strong> (the Apache License, Version 2.0). See <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/LICENSE"><code>LICENSE</code></a> for the full terms.</p>
+<p>The Kern name, the &ldquo;kn1&rdquo; address prefix, and the Skald language name are reserved as marks of authenticity by the project; they are not transferable to forks. Forks must use distinct names. See <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/originality-and-attribution.md" target="_blank" rel="noopener"><code>originality-and-attribution.md</code></a> for the full attribution and forking policy.</p>
 <h2 id="19-disclaimer"><span class="hash">§&nbsp;19</span><span class="htext">Disclaimer</span></h2>
 <p class="lede"><span class="dropcap">T</span>he reference implementation, the Skald language, the Heimdall explorer, the documentation, this whitepaper, and all related artifacts are provided <strong>&ldquo;AS IS,&rdquo; without warranty of any kind</strong>. The author and contributors accept <strong>no liability</strong> for any direct, indirect, or consequential damages arising from use, misuse, or inability to use the Software, including any financial loss, regulatory consequence, or third-party claim. Discussion of EU regulation (MiCA, AIFMD, MiFID II, DORA) is <strong>informational, not a compliance assurance</strong>; no regulator has approved, endorsed, or certified the Software. The reference implementation is <strong>pre-audit</strong> as of this writing and unsuitable for production with material value at stake.</p>
-<p>Read the full disclaimer at <a href="disclaimer.md"><code>disclaimer.md</code></a> — by using the Software in any way, you accept it.</p>
+<p>Read the full disclaimer at <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/disclaimer.md" target="_blank" rel="noopener"><code>disclaimer.md</code></a> — by using the Software in any way, you accept it.</p>
 <hr />
 <p><em>This whitepaper accompanies the v1.1-rc reference implementation release. It will be revised for v1.0 (after audit cycle 1) and again at Midgard mainnet launch. The canonical version is at <code>docs/whitepaper.md</code> in the Kern repository.</em></p>
-<p><em>The full technical specification — including the nine role-specific setup guides, the four vertical specifications, the API stability declaration, the tokenomics document, and the operational roadmap — is indexed in §13 above. Start at <a href="setup-guides.md"><code>setup-guides.md</code></a> for role-based navigation.</em></p>
+<p><em>The full technical specification — including the nine role-specific setup guides, the four vertical specifications, the API stability declaration, the tokenomics document, and the operational roadmap — is indexed in §13 above. Start at <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/setup-guides.md" target="_blank" rel="noopener"><code>setup-guides.md</code></a> for role-based navigation.</em></p>
   </article>
 </div>
 </main>

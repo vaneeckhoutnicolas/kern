@@ -11,7 +11,7 @@ Plus, also shipped in the v1.1-rc cycle:
 
 5. **Heimdall** — the official block explorer and monitoring stack that surfaces the four verticals above. See [`setup-heimdall-operator.md`](setup-heimdall-operator.md) for installation, configuration, and the Prometheus metric surface. Heimdall is a separate Python sub-package (`kern_explorer`), built on FastAPI + SQLite + Jinja2 + Tailwind, with 69 tests and 13 HTML pages including dedicated views for the attestation registry, contract template classification (auto-detecting STO / PGF / oracle templates), and per-vertical statistics. Sessions 2-4 of the Heimdall delivery plan will add per-vertical drill-down dashboards, Grafana dashboards JSON for the monitoring stack, alerting rules, and production-grade UI polish.
 
-6. **Licence migration — LGPL-3.0-or-later → Apache-2.0 for the reference implementation.** Earlier v1.0-rc shipped under LGPL-3.0-or-later. v1.1-rc relicenses the reference implementation under Apache-2.0 — a permissive licence aligned with the broader L1 ecosystem (Solana, Cosmos SDK) — to remove copyleft friction for institutional adoption and to obtain Apache-2.0's express patent grant, which is meaningful protection for an L1 protocol. Documentation, whitepaper, and manifesto remain under CC-BY-SA-4.0 (see [`LICENSE-DOCS.md`](../LICENSE-DOCS.md)). The author's moral rights under Belgian law (Code of Economic Law, Art. XI.165) are preserved independently of the licence change, as noted in [`NOTICE`](../NOTICE).
+6. **Licence migration — LGPL-3.0-or-later → Apache-2.0 for the reference implementation.** Earlier v1.0-rc shipped under LGPL-3.0-or-later. v1.1-rc relicenses the reference implementation under Apache-2.0 — a permissive licence aligned with the broader L1 ecosystem (Solana, Cosmos SDK) — to remove copyleft friction for institutional adoption and to obtain Apache-2.0's express patent grant, which is meaningful protection for an L1 protocol. Documentation, whitepaper, and manifesto remain under CC-BY-SA-4.0 (see [`LICENSE-DOCS.md`](https://github.com/vaneeckhoutnicolas/kern/blob/main/LICENSE-DOCS.md)). The author's moral rights under Belgian law (Code of Economic Law, Art. XI.165) are preserved independently of the licence change, as noted in [`NOTICE`](https://github.com/vaneeckhoutnicolas/kern/blob/main/NOTICE).
 
 Together, these define Kern's positioning: **the L1 protocol where compliance, accountability, and verifiable data are first-class citizens** — not features bolted on top.
 
@@ -47,8 +47,8 @@ These four dimensions are not addressable on Ethereum (Solidity doesn't support 
 **API surface added to v1.1**: 3 new OpKinds (ATTEST, REVOKE_ATTESTATION, SLASH_ATTESTATION_EQUIVOCATION), declared as additive in [api-stability.md](api-stability.md).
 
 **Spec**: [`attestations.md`](attestations.md)
-**Code**: [`kern/attestation.py`](../kern/attestation.py)
-**Tests**: [`tests/test_attestations.py`](../tests/test_attestations.py) — 25 tests
+**Code**: [`kern/attestation.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/attestation.py)
+**Tests**: [`tests/test_attestations.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_attestations.py) — 25 tests
 
 ### 2.2 STO securities compliance
 
@@ -58,11 +58,11 @@ These four dimensions are not addressable on Ethereum (Solidity doesn't support 
 
 **Spec**: [`sto-mica.md`](sto-mica.md)
 **Templates**:
-- [`sto-startup-equity.skald`](../kern/skald/examples/sto-startup-equity.skald) — €5M-50M raises
-- [`sto-institutional-fund.skald`](../kern/skald/examples/sto-institutional-fund.skald) — €50M-500M AUM
-- [`sto-real-estate.skald`](../kern/skald/examples/sto-real-estate.skald) — €10M-100M property deals
+- [`sto-startup-equity.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-startup-equity.skald) — €5M-50M raises
+- [`sto-institutional-fund.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-institutional-fund.skald) — €50M-500M AUM
+- [`sto-real-estate.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/sto-real-estate.skald) — €10M-100M property deals
 
-**Tests**: [`tests/test_sto_templates.py`](../tests/test_sto_templates.py) — 13 tests
+**Tests**: [`tests/test_sto_templates.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_sto_templates.py) — 13 tests
 
 ### 2.3 Public goods funding
 
@@ -72,10 +72,10 @@ These four dimensions are not addressable on Ethereum (Solidity doesn't support 
 
 **Spec**: [`public-goods-funding.md`](public-goods-funding.md)
 **Templates**:
-- [`quadratic-funding.skald`](../kern/skald/examples/quadratic-funding.skald)
-- [`retroactive-pgf.skald`](../kern/skald/examples/retroactive-pgf.skald)
+- [`quadratic-funding.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/quadratic-funding.skald)
+- [`retroactive-pgf.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/retroactive-pgf.skald)
 
-**Tests**: [`tests/test_pgf_templates.py`](../tests/test_pgf_templates.py) — 21 tests
+**Tests**: [`tests/test_pgf_templates.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_pgf_templates.py) — 21 tests
 
 ### 2.4 Oracle network + ZK-claims
 
@@ -85,12 +85,12 @@ These four dimensions are not addressable on Ethereum (Solidity doesn't support 
 
 **Spec**: [`oracle-network.md`](oracle-network.md)
 **Templates**:
-- [`generic-data-oracle.skald`](../kern/skald/examples/generic-data-oracle.skald)
-- [`defi-price-oracle.skald`](../kern/skald/examples/defi-price-oracle.skald)
-- [`schema-marketplace.skald`](../kern/skald/examples/schema-marketplace.skald)
+- [`generic-data-oracle.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/generic-data-oracle.skald)
+- [`defi-price-oracle.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/defi-price-oracle.skald)
+- [`schema-marketplace.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/schema-marketplace.skald)
 
-**Code**: [`kern/zk_claims.py`](../kern/zk_claims.py)
-**Tests**: [`tests/test_oracle_and_zk.py`](../tests/test_oracle_and_zk.py) — 29 tests
+**Code**: [`kern/zk_claims.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/zk_claims.py)
+**Tests**: [`tests/test_oracle_and_zk.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_oracle_and_zk.py) — 29 tests
 
 ---
 

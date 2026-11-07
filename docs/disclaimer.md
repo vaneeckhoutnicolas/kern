@@ -104,4 +104,4 @@ This notice may be amended by the author or, after incorporation, by the Kern Fo
 ---
 
 *Last updated: May 2026. Original author: Nicolas Van Eeckhout (founder).*
-*License of this notice: [CC-BY-SA-4.0](../LICENSE-DOCS.md).*
+*License of this notice: [CC-BY-SA-4.0](https://github.com/vaneeckhoutnicolas/kern/blob/main/LICENSE-DOCS.md).*

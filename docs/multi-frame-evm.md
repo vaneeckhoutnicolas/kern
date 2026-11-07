@@ -1,12 +1,12 @@
 # Multi-frame EVM
 
-This document describes Kern's multi-frame EVM execution model, implemented in [`kern/evm/frames.py`](../kern/evm/frames.py). It extends the single-frame Mini-EVM from [`evm-fraud-proofs.md`](evm-fraud-proofs.md) to support inter-contract calls (CALL / STATICCALL / DELEGATECALL), contract deployment (CREATE / CREATE2), and precompiles.
+This document describes Kern's multi-frame EVM execution model, implemented in [`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py). It extends the single-frame Mini-EVM from [`evm-fraud-proofs.md`](evm-fraud-proofs.md) to support inter-contract calls (CALL / STATICCALL / DELEGATECALL), contract deployment (CREATE / CREATE2), and precompiles.
 
 ---
 
 ## Single-frame vs multi-frame
 
-The v0.3 Mini-EVM in [`kern/evm/vm.py`](../kern/evm/vm.py) handles **one** EVM execution context — a single contract, called once, with its own stack/memory/storage/gas. That's enough to demonstrate the bisection fraud-proof protocol with real EVM semantics, but it's not enough for real EVM applications: any non-trivial DApp involves multiple contracts calling each other.
+The v0.3 Mini-EVM in [`kern/evm/vm.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/vm.py) handles **one** EVM execution context — a single contract, called once, with its own stack/memory/storage/gas. That's enough to demonstrate the bisection fraud-proof protocol with real EVM semantics, but it's not enough for real EVM applications: any non-trivial DApp involves multiple contracts calling each other.
 
 The v0.5 multi-frame layer adds:
 
@@ -193,7 +193,7 @@ None of these patterns work without multi-frame execution. v0.5 brings them in.
 
 ## Reference
 
-[`kern/evm/frames.py`](../kern/evm/frames.py) (~330 lines) provides:
+[`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py) (~330 lines) provides:
 
 - `Account`, `WorldState` — global state
 - `Frame`, `FrameKind`, `CallResult` — frame abstractions
@@ -202,7 +202,7 @@ None of these patterns work without multi-frame execution. v0.5 brings them in.
 - `derive_create_address`, `derive_create2_address` — deterministic address derivation
 - Precompiles dict, `is_precompile`, `execute_precompile`
 
-Tested in [`tests/test_evm_frames.py`](../tests/test_evm_frames.py) (25 tests) covering:
+Tested in [`tests/test_evm_frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_frames.py) (25 tests) covering:
 
 - World state ops (get/transfer/snapshot/revert)
 - Precompile dispatch (SHA256, IDENTITY, ECRECOVER with valid Ed25519 sig)

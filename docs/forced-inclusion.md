@@ -1,6 +1,6 @@
 # Forced Inclusion — censorship resistance for Kern rollups
 
-This document specifies Kern's forced-inclusion mechanism, implemented in [`kern/forced_inclusion.py`](../kern/forced_inclusion.py). It guarantees that any user can transact on any Kern rollup eventually, even if the rollup's sequencer is malicious or unresponsive.
+This document specifies Kern's forced-inclusion mechanism, implemented in [`kern/forced_inclusion.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/forced_inclusion.py). It guarantees that any user can transact on any Kern rollup eventually, even if the rollup's sequencer is malicious or unresponsive.
 
 ---
 
@@ -12,7 +12,7 @@ Without a counter-mechanism, a censored user has no recourse: their transaction 
 
 ## The mechanism
 
-Kern's L1 hosts a **Forced Inclusion Mailbox** for each rollup. The mailbox is a Skald contract conceptually; the state-machine model is implemented in [`kern/forced_inclusion.py`](../kern/forced_inclusion.py).
+Kern's L1 hosts a **Forced Inclusion Mailbox** for each rollup. The mailbox is a Skald contract conceptually; the state-machine model is implemented in [`kern/forced_inclusion.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/forced_inclusion.py).
 
 Any user can post an L2 transaction directly to the mailbox by calling an L1 operation:
 
@@ -119,7 +119,7 @@ contract Mailbox {
 }
 ```
 
-The `solvent_bond` invariant is the protocol-level guarantee that the sequencer cannot be slashed more than they bonded. This is enforced by the runtime — there is no implementation bug that can violate it. The contract is in [`kern/forced_inclusion.py`](../kern/forced_inclusion.py) as `MAILBOX_SKALD`.
+The `solvent_bond` invariant is the protocol-level guarantee that the sequencer cannot be slashed more than they bonded. This is enforced by the runtime — there is no implementation bug that can violate it. The contract is in [`kern/forced_inclusion.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/forced_inclusion.py) as `MAILBOX_SKALD`.
 
 ## Workflow examples
 
@@ -158,14 +158,14 @@ These are inherent trade-offs in the rollup model. Forced inclusion brings censo
 
 ## Reference implementation
 
-[`kern/forced_inclusion.py`](../kern/forced_inclusion.py) (~250 lines) provides:
+[`kern/forced_inclusion.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/forced_inclusion.py) (~250 lines) provides:
 
 - `MailboxEntry` — a posted entry with hashing and deadline checking
 - `Mailbox` — the per-rollup state machine with `post`, `mark_included`, `overdue_entries`, `prove_omission`, `force_include` operations
 - `MAILBOX_SKALD` — the L1 Skald contract template
 - `get_mailbox_skald_source()` — accessor
 
-Tested in [`tests/test_forced_inclusion.py`](../tests/test_forced_inclusion.py) with 14 scenarios covering:
+Tested in [`tests/test_forced_inclusion.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_forced_inclusion.py) with 14 scenarios covering:
 
 - Mailbox posting (success, duplicates, wrong rollup ID)
 - Sequencer inclusion before deadline

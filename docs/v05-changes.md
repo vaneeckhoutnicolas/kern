@@ -15,7 +15,7 @@ The v0.5 release brings governance from spec to working code. Both tracks — pr
 
 ### What changed
 
-- **New module** [`kern/governance.py`](../kern/governance.py) (~450 lines):
+- **New module** [`kern/governance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/governance.py) (~450 lines):
   - `ProtocolGovernance` state machine — 5-phase cycle (Submitted, Exploration, Cooldown, Adoption, Activated)
   - `TreasuryGovernance` state machine — 2-phase cycle (Submitted, Voting)
   - Stake-weighted tallying with quorum (25%) and supermajority (80%) thresholds for protocol; simple majority (50%) for treasury
@@ -29,7 +29,7 @@ The v0.5 release brings governance from spec to working code. Both tracks — pr
 
 ### Observable behavior
 
-The integration test in [`tests/test_state_root_swap.py`](../tests/test_state_root_swap.py) drives a full 5-phase protocol amendment that swaps the state-root function. From submission to activation: 4 transitions (advance_phases) plus 2 voting rounds (unanimous yes both times). The chain's `state_root_hex(state)` returns different values before and after activation — same state, different commitment, governed by the chain's own rules.
+The integration test in [`tests/test_state_root_swap.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_state_root_swap.py) drives a full 5-phase protocol amendment that swaps the state-root function. From submission to activation: 4 transitions (advance_phases) plus 2 voting rounds (unanimous yes both times). The chain's `state_root_hex(state)` returns different values before and after activation — same state, different commitment, governed by the chain's own rules.
 
 ### What's not yet wired
 
@@ -60,7 +60,7 @@ The v0.3 Mini-EVM handled single-contract execution. v0.5 adds the call-frame la
 
 ### What changed
 
-- **New module** [`kern/evm/frames.py`](../kern/evm/frames.py) (~330 lines):
+- **New module** [`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py) (~330 lines):
   - `WorldState` and `Account` for global EVM state
   - `call_contract()` — top-level dispatch for CALL / STATICCALL / DELEGATECALL
   - `create_contract()` — CREATE and CREATE2 deployment

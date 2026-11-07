@@ -70,7 +70,7 @@ Adding a new OpKind in a v1.x minor release is an additive (non-breaking) change
 
 ### 2.2 Signed-payload computation
 
-The bytes signed by the sender's private key are the canonical JSON of the transaction *without* the signature field, with keys sorted alphabetically and no whitespace. This is the function `Transaction._signed_payload()` in [`kern/transaction.py`](../kern/transaction.py).
+The bytes signed by the sender's private key are the canonical JSON of the transaction *without* the signature field, with keys sorted alphabetically and no whitespace. This is the function `Transaction._signed_payload()` in [`kern/transaction.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/transaction.py).
 
 **Frozen**: the canonical encoding rule, the choice of fields included, the byte representation.
 
@@ -102,7 +102,7 @@ BlockHeader = {
 
 ### 2.4 State-root commitment
 
-The function `state_root_hex(state)` is governance-amendable (the `state_root_function` field in state, with values `"json"` or `"trie"`). For v1.0 mainnet, the default is `"trie"` — the binary Merkle trie implementation in [`kern/trie.py`](../kern/trie.py).
+The function `state_root_hex(state)` is governance-amendable (the `state_root_function` field in state, with values `"json"` or `"trie"`). For v1.0 mainnet, the default is `"trie"` — the binary Merkle trie implementation in [`kern/trie.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/trie.py).
 
 **Frozen**: the dispatch mechanism (state field → function selection). The trie implementation itself is **stable** — its keying, hashing, and proof format are part of the interoperability contract for any future light client.
 
@@ -142,13 +142,13 @@ All in-protocol hashing uses **blake2b-256** (32-byte output) with **domain-sepa
 
 ### 2.8 KVM (EVM rollup) opcode set
 
-The opcodes implemented by [`kern/evm/vm.py`](../kern/evm/vm.py) and [`kern/evm/frames.py`](../kern/evm/frames.py) are listed in [`docs/multi-frame-evm.md`](multi-frame-evm.md) (~60 opcodes; the same subset used by Solidity emit at the EVM London hardfork level).
+The opcodes implemented by [`kern/evm/vm.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/vm.py) and [`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py) are listed in [`docs/multi-frame-evm.md`](multi-frame-evm.md) (~60 opcodes; the same subset used by Solidity emit at the EVM London hardfork level).
 
 **Stable** (can be extended additively): new opcodes can be added in v1.x via protocol amendment. Existing opcodes' semantics are frozen.
 
 ### 2.9 Gas pricing
 
-The Yellow-Paper-equivalent gas costs in [`kern/evm/dynamic_gas.py`](../kern/evm/dynamic_gas.py).
+The Yellow-Paper-equivalent gas costs in [`kern/evm/dynamic_gas.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/dynamic_gas.py).
 
 **Stable**: constants can be tuned via protocol amendment based on operational data, but the *shape* of the pricing (memory expansion quadratic, SSTORE 3-case, etc.) is frozen.
 
@@ -170,7 +170,7 @@ The Yellow-Paper-equivalent gas costs in [`kern/evm/dynamic_gas.py`](../kern/evm
 
 ### 2.11 Governance state machine
 
-The phases and thresholds in [`kern/governance.py`](../kern/governance.py):
+The phases and thresholds in [`kern/governance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/governance.py):
 
 | Track | Phases | Threshold | Quorum |
 |---|---|---|---|
@@ -206,7 +206,7 @@ The 100M KRN distribution per [`tokenomics.md`](tokenomics.md) §4:
 
 ### 3.1 RPC API
 
-The 12 endpoints exposed by [`kern/rpc.py`](../kern/rpc.py):
+The 12 endpoints exposed by [`kern/rpc.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/rpc.py):
 
 ```
 GET  /chain/head
@@ -258,13 +258,13 @@ Internal helpers (`_apply_*`, `_credit`, `_debit`, etc., with leading underscore
 
 ### 3.3 Skald language
 
-The Skald lexer, parser, AST, and interpreter as of v1.0. The static type checker in [`kern/skald/typecheck.py`](../kern/skald/typecheck.py).
+The Skald lexer, parser, AST, and interpreter as of v1.0. The static type checker in [`kern/skald/typecheck.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/typecheck.py).
 
 **Stable**: existing contract source code that compiles in v1.0 will continue to compile in all v1.x.
 
 ### 3.4 Storage schema
 
-The SQLite schema in [`kern/storage.py`](../kern/storage.py) — blocks, state, mempool tables.
+The SQLite schema in [`kern/storage.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/storage.py) — blocks, state, mempool tables.
 
 **Stable**: existing columns and types are frozen. Migrations for added tables/columns are allowed in v1.x and will be transparent (auto-applied at node startup).
 

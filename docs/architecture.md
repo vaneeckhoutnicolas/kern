@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes how the reference Kern node is organized. The code is in [`kern/`](../kern/) and each module is small enough to read in one sitting.
+This document describes how the reference Kern node is organized. The code is in [`kern/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/kern) and each module is small enough to read in one sitting.
 
 ## Component map
 

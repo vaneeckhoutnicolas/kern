@@ -1,6 +1,6 @@
 # EVM Fraud Proofs — single-step verifier and bisection
 
-This document specifies Kern's fraud-proof framework for optimistic rollups, implemented in [`kern/evm/`](../kern/evm/). It is the v0.3 piece that makes the rollup framework from [`rollups.md`](rollups.md) trustless rather than trust-based.
+This document specifies Kern's fraud-proof framework for optimistic rollups, implemented in [`kern/evm/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/kern/evm). It is the v0.3 piece that makes the rollup framework from [`rollups.md`](rollups.md) trustless rather than trust-based.
 
 The implementation has three components: a step-wise **Mini-EVM**, an interactive **bisection protocol**, and an on-chain **single-step verifier**. Together they let any honest party prove on L1 that a sequencer's claimed state root is wrong — without re-executing the entire L2 batch on L1.
 
@@ -102,7 +102,7 @@ For a 1-million-instruction EVM batch with a 7-day challenge window:
 
 ## What's in the reference implementation
 
-The implementation in [`kern/evm/`](../kern/evm/) (~750 lines) provides:
+The implementation in [`kern/evm/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/kern/evm) (~750 lines) provides:
 
 - ✅ Mini-EVM with 30+ opcodes (arithmetic, comparison, stack, memory, control flow, termination)
 - ✅ Per-step state commitments via blake2b-256

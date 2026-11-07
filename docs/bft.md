@@ -1,6 +1,6 @@
 # Multi-validator BFT
 
-This document specifies Kern's multi-validator consensus protocol — the full three-phase BFT message exchange that the v0.2 reference implementation in [`kern/bft.py`](../kern/bft.py) realizes.
+This document specifies Kern's multi-validator consensus protocol — the full three-phase BFT message exchange that the v0.2 reference implementation in [`kern/bft.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/bft.py) realizes.
 
 The single-validator view (where the lone baker self-commits) lives in [`consensus.md`](consensus.md). This document picks up where that one stops.
 
@@ -178,7 +178,7 @@ Kern's design choices (3-phase, ~2s finality, double-X slashing) sit within the 
 
 ## Reference implementation
 
-[`kern/bft.py`](../kern/bft.py) provides:
+[`kern/bft.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/bft.py) provides:
 
 - `ConsensusMessage` — signed message with sign/verify methods
 - `QuorumCertificate` — collection of signatures with `verify(validator_set)` method
@@ -186,7 +186,7 @@ Kern's design choices (3-phase, ~2s finality, double-X slashing) sit within the 
 - `RoundState` — per-(level, round) state
 - `SlashingEvidence` — equivocation proof with `verify()` method
 
-Tested in [`tests/test_bft.py`](../tests/test_bft.py) with 9 scenarios covering:
+Tested in [`tests/test_bft.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_bft.py) with 9 scenarios covering:
 
 - Message sign/verify round-trips
 - Three-validator quorum reaching pre-endorsement → endorsement

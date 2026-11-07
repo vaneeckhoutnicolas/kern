@@ -335,7 +335,7 @@ The Foundation publishes:
 - The public summary on the Foundation blog
 - A response document addressing each finding
 
-Your name and firm name are credited in [AUTHORS](../AUTHORS) and in the public audit record.
+Your name and firm name are credited in [AUTHORS](https://github.com/vaneeckhoutnicolas/kern/blob/main/AUTHORS) and in the public audit record.
 
 ---
 
@@ -378,6 +378,6 @@ Payment may be in EUR, USD, or KRN (post-mainnet) at the Foundation's option per
 
 ## Next steps after engagement
 
-- Your firm joins the public record of Kern auditors at [AUTHORS](../AUTHORS) and on the docs site
+- Your firm joins the public record of Kern auditors at [AUTHORS](https://github.com/vaneeckhoutnicolas/kern/blob/main/AUTHORS) and on the docs site
 - You may be invited to future audit cycles for v1.x releases
 - You may participate in the Kern bug bounty program at higher-than-standard tier for previously-unfound issues

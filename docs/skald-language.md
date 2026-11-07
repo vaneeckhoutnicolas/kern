@@ -2,7 +2,7 @@
 
 > *Skald (Old Norse): a court poet, charged with composing sagas that outlive the kings they served.*
 
-Skald is the smart contract language of Kern. It is small, statically reasoned about, and designed to make formal verification approachable rather than aspirational. The reference compiler and interpreter live in [`kern/skald/`](../kern/skald/).
+Skald is the smart contract language of Kern. It is small, statically reasoned about, and designed to make formal verification approachable rather than aspirational. The reference compiler and interpreter live in [`kern/skald/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/kern/skald).
 
 ## Design principles
 

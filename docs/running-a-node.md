@@ -156,14 +156,14 @@ python scripts/send_transfer.py \
 
 ## Docker
 
-A `docker-compose.yml` is provided in [`docker/`](../docker/) for spinning up the three-node setup with one command:
+A `docker-compose.yml` is provided in [`docker/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/docker) for spinning up the three-node setup with one command:
 
 ```bash
 cd docker
 docker-compose up
 ```
 
-See [`docker/README.md`](../docker/README.md) for details.
+See [`docker/README.md`](https://github.com/vaneeckhoutnicolas/kern/blob/main/docker/README.md) for details.
 
 ## Common operations
 

@@ -1,6 +1,6 @@
 # Merkle-Patricia Trie — state commitments with proofs
 
-This document describes Kern's binary Merkle trie, implemented in [`kern/trie.py`](../kern/trie.py). It is the v0.4 piece that replaces the placeholder "hash the JSON of the state" with a real state commitment scheme that supports light-client proofs.
+This document describes Kern's binary Merkle trie, implemented in [`kern/trie.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/trie.py). It is the v0.4 piece that replaces the placeholder "hash the JSON of the state" with a real state commitment scheme that supports light-client proofs.
 
 ---
 
@@ -182,7 +182,7 @@ Kern's binary Merkle trie has the same security and verifiability properties as 
 
 ## Reference
 
-[`kern/trie.py`](../kern/trie.py) (~300 lines) provides the full implementation. [`tests/test_trie.py`](../tests/test_trie.py) (21 tests) covers:
+[`kern/trie.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/trie.py) (~300 lines) provides the full implementation. [`tests/test_trie.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_trie.py) (21 tests) covers:
 
 - Empty trie root determinism
 - Set/get round-trips, single and at scale

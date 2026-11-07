@@ -1,6 +1,6 @@
 # Adaptive Issuance — implementation
 
-The token economy document ([`tokenomics.md`](tokenomics.md)) describes adaptive issuance as a design property. This document describes the v0.3 implementation in [`kern/issuance.py`](../kern/issuance.py), with the actual formulas, parameter choices, and per-block accounting.
+The token economy document ([`tokenomics.md`](tokenomics.md)) describes adaptive issuance as a design property. This document describes the v0.3 implementation in [`kern/issuance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/issuance.py), with the actual formulas, parameter choices, and per-block accounting.
 
 ---
 
@@ -155,7 +155,7 @@ The full integration into `kern/chain.py` is straightforward (called once per ap
 
 ## Reference implementation
 
-[`kern/issuance.py`](../kern/issuance.py) (~180 lines) provides:
+[`kern/issuance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/issuance.py) (~180 lines) provides:
 
 - `IssuanceParams` — the parameter set
 - `issuance_rate(staking_ratio, params)` — the inflation curve
@@ -164,7 +164,7 @@ The full integration into `kern/chain.py` is straightforward (called once per ap
 - `distribute_baker_pool(baker_pool, proposer, endorsers, params)` — `{address: mukrn}`
 - `compute_block_rewards(...)` — end-to-end accounting (`BlockRewardAccounting`)
 
-Tested in [`tests/test_issuance.py`](../tests/test_issuance.py) with 18 scenarios covering:
+Tested in [`tests/test_issuance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_issuance.py) with 18 scenarios covering:
 
 - Curve endpoints (0% → max, target → min)
 - Above-target plateau at min

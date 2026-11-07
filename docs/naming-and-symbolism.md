@@ -169,4 +169,4 @@ The vocabulary is a memory aid for readers, a coherence anchor for the project, 
 
 ---
 
-*This document is part of the Kern reference documentation and is published under [CC-BY-SA-4.0](../LICENSE-DOCS.md). It will be updated as the protocol's vocabulary grows.*
+*This document is part of the Kern reference documentation and is published under [CC-BY-SA-4.0](https://github.com/vaneeckhoutnicolas/kern/blob/main/LICENSE-DOCS.md). It will be updated as the protocol's vocabulary grows.*

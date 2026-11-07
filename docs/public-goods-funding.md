@@ -9,8 +9,8 @@ The thesis: a multi-billion-euro annual market in foundations, ONGs, supranation
 
 This document is the design rationale and integration guide for:
 
-- [`quadratic-funding.skald`](../kern/skald/examples/quadratic-funding.skald) — QF round, one contract per project
-- [`retroactive-pgf.skald`](../kern/skald/examples/retroactive-pgf.skald) — RPGF nomination, one contract per nomination
+- [`quadratic-funding.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/quadratic-funding.skald) — QF round, one contract per project
+- [`retroactive-pgf.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/retroactive-pgf.skald) — RPGF nomination, one contract per nomination
 
 ---
 
@@ -290,7 +290,7 @@ These limitations are real but not blocking — the v1.1 model is operationally 
 
 ## 11. Reference
 
-- **Templates**: [`kern/skald/examples/quadratic-funding.skald`](../kern/skald/examples/quadratic-funding.skald), [`kern/skald/examples/retroactive-pgf.skald`](../kern/skald/examples/retroactive-pgf.skald)
+- **Templates**: [`kern/skald/examples/quadratic-funding.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/quadratic-funding.skald), [`kern/skald/examples/retroactive-pgf.skald`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/examples/retroactive-pgf.skald)
 - **Slashable attestations**: [`attestations.md`](attestations.md)
 - **Contributors program** (Kern's own use of RPGF): [`contributors-program.md`](contributors-program.md)
 - **Skald language**: [`skald-language.md`](skald-language.md)
