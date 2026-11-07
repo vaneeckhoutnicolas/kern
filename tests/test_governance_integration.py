@@ -67,7 +67,7 @@ def _bake_one_block(state, baker_kp, txs=None, level_override=None):
 
     # Use a minimal Block-like surrogate for propose_block's `parent`.
     parent_header = BlockHeader(
-        level=parent_level, round=0, timestamp=0,
+        level=parent_level, payload_round=0, timestamp=0,
         parent_hash="0" * 64 if parent_level == 0 else "1" * 64,
         state_root="dummy", txs_root="0" * 64,
         proposer=baker_kp.address,

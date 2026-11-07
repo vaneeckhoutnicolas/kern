@@ -42,7 +42,7 @@ def _genesis(baker_kp, balances, fee_cfg=None):
     if fee_cfg is not None:
         state["fee_params"] = dict(fee_cfg)
     header = BlockHeader(
-        level=0, round=0, timestamp=int(time.time()),
+        level=0, payload_round=0, timestamp=int(time.time()),
         parent_hash="0" * 64,
         state_root=state_root_hex(state),
         txs_root=txs_merkle_root_hex([]),

@@ -2,27 +2,33 @@
 
 Phase E answers the external review of Phase D (November 2026, not a professional security audit). Each point was confirmed in the code before being fixed, and each fix starts with a test that fails on the Phase D code.
 
-> **Consensus safety warning.** With several validators, the engine can finalize two blocks at the same level under message delay alone, with every validator honest (no lock, no nil vote). Phase E reproduces this in an automated harness and designs the fix in [consensus-locking.md](consensus-locking.md); the fix itself is **not implemented** and waits for review of that design. Until it lands, multi-validator safety is not established.
+> **Consensus safety status.** Phase E part 1 reproduced a fork between two rounds of one level with every validator honest. Part 2 (E1 step 3) implements the lock and valid round designed in [consensus-locking.md](consensus-locking.md). It is validated on the network simulator and on four node processes on one machine; it has not run on several machines with independent operators and has not been audited. No public testnet before both.
 
 | Point | Finding | Fix |
 |---|---|---|
 | E2 Undelegation weight | `UNDELEGATE_STAKE` removed the bond from `effective_stake` but left `state["consensus_set"]` unchanged, so the bond kept weighing in consensus until the next epoch boundary, contrary to what Phase D documented. | The validator's snapshot entry is lowered to `min(entry, effective_stake)` in the same transaction, as after a slash. No operation raises an entry inside an epoch. |
 | E3 Slashing exposure | A slash cut every bond present when the evidence landed, including bonds created after the offence; Tezos and CometBFT slash the stake that was exposed. | Each bond records tranches `{"level", "amount"}`, one per top-up. A slash for an offence at level `L` cuts 30% of the tranches bonded at or before `L`, in live bonds and in unbonding entries that started unbonding at or after `L`. `L` is the vote level for consensus equivocation and the level of the second vote for governance equivocation. Records written before Phase E read as one tranche at level 0. |
 | E4 Documentation | `staking.md` still described liquid, spendable delegation, a `register_validator` transaction, a 14-day validator unbonding and double-baking slashing, none of which exist in the code. The README, consensus, summary and index pages also described liquid delegation or guaranteed finality; the README delegation example omitted the now required amount. | `staking.md` rewritten from the code. README, `consensus.md`, `executive-summary.md`, `index.md` corrected; safety warning added to `consensus-wire.md`, `consensus.md`, `phase-d-changes.md`. Wallet usage text now shows `--amount`. |
-| E1 Consensus safety (step 1 and 2 of 3) | Fork between two rounds of one level without any faulty validator. | `tests/bft_sim.py`: deterministic network simulator driving real `BftEngine` instances with delays, losses and reordering. `tests/test_phase_e_consensus_harness.py`: the fork as `xfail(strict=True)` tests (scripted, and 200 random schedules: 41 forks today), plus a liveness test that must keep passing. Design for review: [consensus-locking.md](consensus-locking.md). |
+| E1 Consensus safety, steps 1 and 2 | Fork between two rounds of one level without any faulty validator. | `tests/bft_sim.py`: deterministic network simulator driving real `BftEngine` instances with delays, losses and reordering. `tests/test_phase_e_consensus_harness.py`: the fork as `xfail(strict=True)` tests (scripted, and 200 random schedules: 41 forks), plus a liveness test. Design reviewed: [consensus-locking.md](consensus-locking.md). |
+| E1 Consensus safety, step 3 | Same fork; also found while implementing: the proposer's self-commit was an endorsement signed before any pre-endorsement certificate (with unequal stakes, a 40% proposer plus 30% byzantine could finalize a block no honest validator was locked on); `validate_and_apply` did not check the designated proposer. | Header `payload_round` (hashed) and body `cert_round`; signed PROPOSE with `valid_round` and proof; lock and valid round; votes only in the current round; re-proposal of the valid block; finalization at any round; rounds restart at 0; growing timeouts; round skip on one third of the stake; persistent signing journal; proposal equivocation kept as evidence; chain checks the proposer of the payload round and verifies the quorum at `cert_round`; self-commit only for a proposer holding the quorum alone. The 5 `xfail` tests are regular tests again. Details: [consensus-locking.md](consensus-locking.md) section 10. |
 
 ## Behaviour changes
 
 - Undelegating lowers the validator's consensus weight in the same block.
 - A delegator who bonds after an offence, or who started unbonding before it, is not slashed for it.
 - Delegation and unbonding records gain `tranches` (and `unbonding_from` for unbonding entries): the state layout changes, so a running devnet must be reset.
-- The test suite now reports 5 expected failures (`xfailed`): the consensus safety tests that E1 step 3 must turn green.
+- The block format changes: the header field `round` becomes `payload_round`, the body gains `cert_round`, proposals travel as `{"block", "proposal", "proof"}`. A devnet must be reset.
+- Every level starts at round 0, and rounds last longer as they grow.
+- A validator node keeps `signing_journal.jsonl` in its data directory. Do not delete it while the node may restart: a validator without its journal does not sign at the level in progress. Never run two processes with the same validator key.
+- With several validators, blocks no longer carry the proposer's self-commit in `commits`.
+- The test suite has no expected failures any more (`xfailed` back to 0).
 
 ## Still open
 
-- E1 step 3: implement the design. The design was reviewed on 7 November 2026; the decisions (rounds restart at 0 at every level, persistent signing journal, proposal equivocation evidence, extended acceptance criteria) are in [consensus-locking.md](consensus-locking.md) section 9.
-- `validate_and_apply` checks that the proposer is a validator, not that it is the proposer `select_proposer` designates for the round; only the node checks that on proposals. Covered by the design (section 4.5).
+- Review of the E1 implementation, in particular the additions of [consensus-locking.md](consensus-locking.md) section 10.
+- Nil votes; slashing of proposal equivocation.
+- A devnet on several machines with independent validators, then a professional audit.
 - The website (`kern_site/`) and the white paper still use the term "Liquid Proof-of-Stake"; whether to keep that wording is a positioning decision.
-- Wire endorsers are still not rewarded. No multi-machine network with independent validators has run this code.
+- Wire endorsers are still not rewarded.
 
-Rules for client implementers: [go-port-breakpoints.md](go-port-breakpoints.md) §10.
+Rules for client implementers: [go-port-breakpoints.md](go-port-breakpoints.md) §10 (E2, E3) and §11 (E1).

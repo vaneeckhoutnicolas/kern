@@ -10,7 +10,9 @@ Each peer connection is a length-prefixed JSON message stream. Message
 kinds on the wire (see docs/consensus-wire.md for the full protocol):
 
     {"kind": "hello",      "level": N}
-    {"kind": "proposal",   "block": {...}}          candidate block (pre-quorum)
+    {"kind": "proposal",   "block": {...},          candidate block (pre-quorum),
+                           "proposal": {...},       signed PROPOSE message and,
+                           "proof": {...} | null}   for a re-proposal, its proof
     {"kind": "consensus",  "msg": {...}}            propose/preendorse/endorse
     {"kind": "block",      "block": {...}}          finalized block (with QC)
     {"kind": "transaction","tx": {...}}
@@ -174,7 +176,7 @@ class Network:
                                               "from": rng[0], "to": rng[1]})
         elif kind == "proposal":
             if self.on_proposal is not None:
-                await self.on_proposal(msg.get("block") or {})
+                await self.on_proposal({k: v for k, v in msg.items() if k != "kind"})
         elif kind == "consensus":
             if self.on_consensus is not None:
                 await self.on_consensus(msg.get("msg") or {})
@@ -202,8 +204,9 @@ class Network:
     async def broadcast_block(self, block_dict: dict) -> None:
         await self._broadcast({"kind": "block", "block": block_dict})
 
-    async def broadcast_proposal(self, block_dict: dict) -> None:
-        await self._broadcast({"kind": "proposal", "block": block_dict})
+    async def broadcast_proposal(self, envelope: dict) -> None:
+        """Phase E: `envelope` is {"block", "proposal", "proof"}."""
+        await self._broadcast({"kind": "proposal", **envelope})
 
     async def broadcast_consensus(self, msg_dict: dict) -> None:
         await self._broadcast({"kind": "consensus", "msg": msg_dict})

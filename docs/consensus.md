@@ -2,11 +2,11 @@
 
 Kern uses a simplified BFT consensus algorithm in the four-phase family (propose, prevote, precommit, commit). This document describes the protocol as designed. The reference implementation runs the vote exchange over the network ([`bft.py`](../kern/bft.py), [`consensus-wire.md`](consensus-wire.md)); it has not yet run on a network of independent machines.
 
-> **Safety warning (Phase E).** The current engine has no lock and no nil vote. Under message delay alone, with every validator honest, two rounds of the same level can each gather two thirds of the endorsements for two different blocks, so two blocks can be finalized at the same level. The fix (a Tendermint-style lock with a valid round) is designed in [consensus-locking.md](consensus-locking.md) and is not implemented yet. Until it is, multi-validator safety is not established.
+> **Safety status (Phase E).** Before Phase E the engine had no lock: under message delay alone, with every validator honest, two rounds of the same level could finalize two different blocks. Phase E adds a Tendermint-style lock and valid round, signed proposals and a persistent signing journal ([consensus-locking.md](consensus-locking.md), [consensus-wire.md](consensus-wire.md)). Validated on the network simulator and on four node processes on one machine; not yet run on several machines with independent operators, not audited.
 
 ## Goals
 
-- **Deterministic finality** under partial synchrony: an endorsed block cannot be reverted. *Target, not yet met: see the safety warning above.*
+- **Deterministic finality** under partial synchrony: an endorsed block cannot be reverted. *Implemented in Phase E; field validation and audit pending, see the status above.*
 - **Fast finality** under good network conditions: ≤ 2 blocks (~ 2 seconds).
 - **Stake-weighted** participation: voting power is proportional to staked KRN.
 - **Accessible validation**: any holder can delegate or self-stake without specialized hardware.
@@ -79,4 +79,4 @@ The slashable consensus offence is **double voting**: signing two PREENDORSE or 
 
 ## Single-validator mode
 
-With a single validator, proposer selection always returns that validator and its own votes form the quorum, so each block is final as soon as it is produced (about 1 second by default; about 500 ms with `--block-time 0.5`). The multi-validator path exchanges pre-endorsements and endorsements over the network ([`network.py`](../kern/network.py), [`bft.py`](../kern/bft.py)) and is subject to the safety warning above.
+With a single validator, proposer selection always returns that validator and its own votes form the quorum, so each block is final as soon as it is produced (about 1 second by default; about 500 ms with `--block-time 0.5`). The multi-validator path exchanges pre-endorsements and endorsements over the network ([`network.py`](../kern/network.py), [`bft.py`](../kern/bft.py)) and is subject to the status above.

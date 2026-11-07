@@ -119,7 +119,7 @@ def test_node_no_longer_drops_the_conflicting_vote(tmp_path):
     keys = _keys(4)
     me, evil = keys[0], keys[3]
     st = _state(keys)
-    header = BlockHeader(level=0, round=0, timestamp=int(time.time()), parent_hash="0" * 64,
+    header = BlockHeader(level=0, payload_round=0, timestamp=int(time.time()), parent_hash="0" * 64,
                          state_root=state_root_hex(st), txs_root=txs_merkle_root_hex([]),
                          proposer=me.address, proposer_pubkey=me.public_key_b58)
     header.sign(me)
@@ -149,7 +149,7 @@ def test_chain_validators_follow_state_and_delegation_waits_for_the_epoch():
     delegator = KernKeypair.from_seed(bytes([0x99]) * 32)
     st = _state(keys, epoch_blocks=3, extra_balances={delegator.address: 5 * STAKE})
     st["_current_level"] = 0
-    header = BlockHeader(level=0, round=0, timestamp=0, parent_hash="0" * 64,
+    header = BlockHeader(level=0, payload_round=0, timestamp=0, parent_hash="0" * 64,
                          state_root=state_root_hex(st), txs_root=txs_merkle_root_hex([]),
                          proposer=v0.address, proposer_pubkey=v0.public_key_b58)
     header.sign(v0)
@@ -160,19 +160,27 @@ def test_chain_validators_follow_state_and_delegation_waits_for_the_epoch():
         return next(v["stake"] for v in chain.validators if v["address"] == addr)
 
     assert weight(v1.address) == STAKE
+
+    def round_for(kp):
+        # Phase E: the block must come from the proposer selected for its
+        # payload round; pick the first round where that is v0.
+        from kern.consensus import select_proposer
+        return next(r for r in range(64) if select_proposer(
+            chain.head.hash_hex(), chain.validators, r)["address"] == kp.address)
+
     deleg = make_delegate_stake(delegator, v1.address, nonce=0, amount=5 * STAKE - 10_000)
     # Blocks 1 and 2: the delegation is recorded but consensus weight is unchanged.
     for lvl in (1, 2):
         txs = [deleg] if lvl == 1 else []
         blk = propose_block(parent=chain.head, mempool=txs, proposer_keypair=v0,
                             proposer_pubkey_b58=v0.public_key_b58, state_before=chain.state,
-                            round_=chain.head.header.round + 1)
+                            round_=round_for(v0))
         chain.append(blk)
         assert weight(v1.address) == STAKE
     # Block 3 is an epoch boundary: the delegated balance now counts.
     blk = propose_block(parent=chain.head, mempool=[], proposer_keypair=v0,
                         proposer_pubkey_b58=v0.public_key_b58, state_before=chain.state,
-                        round_=chain.head.header.round + 1)
+                        round_=round_for(v0))
     chain.append(blk)
     assert weight(v1.address) > STAKE + 4 * STAKE
 

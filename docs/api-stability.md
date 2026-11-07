@@ -80,12 +80,14 @@ The bytes signed by the sender's private key are the canonical JSON of the trans
 Block = {
     "header": BlockHeader,
     "transactions": [Transaction, ...],
-    "commits": [Commit, ...]    # endorsement signatures
+    "commits": [Commit, ...],      # self-commit of a proposer holding the quorum alone
+    "endorsements": [Commit, ...], # endorsement certificate gathered on the wire
+    "cert_round": int              # round of that certificate (not hashed)
 }
 
 BlockHeader = {
     "level":              int (height, monotonic),
-    "round":              int (BFT round, monotonic per level),
+    "payload_round":      int (round at which the payload was first proposed; each level starts at 0),
     "timestamp":          int (unix seconds),
     "parent_hash":        string (hex, 64 chars),
     "state_root":         string (hex, 64 chars),
@@ -96,7 +98,7 @@ BlockHeader = {
 }
 ```
 
-**Frozen**: the field set, types, and serialization order for hashing.
+**Frozen**: the field set, types, and serialization order for hashing. Changed once before v1.1 final, in Phase E: the header field `round` became `payload_round` and the body gained `cert_round` (see [consensus-wire.md](consensus-wire.md)).
 
 ### 2.4 State-root commitment
 

@@ -42,7 +42,7 @@ def _genesis(baker, balances):
         }],
     }
     header = BlockHeader(
-        level=0, round=0, timestamp=int(time.time()),
+        level=0, payload_round=0, timestamp=int(time.time()),
         parent_hash="0" * 64,
         state_root=state_root_hex(state),
         txs_root=txs_merkle_root_hex([]),
@@ -138,7 +138,7 @@ def test_block_containing_poison_tx_validates_deterministically(actors):
     genesis, state = _genesis(baker, {attacker.address: FUNDS})
     poison = _poison_txs(attacker)
     header = BlockHeader(
-        level=1, round=0, timestamp=int(time.time()),
+        level=1, payload_round=0, timestamp=int(time.time()),
         parent_hash=genesis.hash_hex(), state_root="",
         txs_root=txs_merkle_root_hex(poison),
         proposer=baker.address, proposer_pubkey=baker.public_key_b58,

@@ -5,12 +5,13 @@ travels over the peer-to-peer network (`kern/network.py`) and how the node
 (`kern/node.py`) drives it. It is the normative reference for any second
 client implementation (see `docs/go-port-breakpoints.md`).
 
-Status: implemented in v1.1-rc Phase A hardening. Every block accepted by
-a live node — self-baked, gossiped, or synced — is validated with
-`require_quorum=True`: a cryptographically verified endorsement quorum of
-strictly more than 2/3 of validator stake.
+Status: implemented in v1.1-rc Phase A hardening, with the lock and
+valid round of Phase E (E1). Every block accepted by a live node,
+self-baked, gossiped, or synced, is validated with `require_quorum=True`:
+a cryptographically verified endorsement quorum of strictly more than 2/3
+of validator stake, at the block's `cert_round`.
 
-> **Safety warning (Phase E).** A verified quorum is necessary but not sufficient for safety. The engine has no lock and no nil vote: under message delay alone, with every validator honest, round 0 can finalize block B on one node while round 1 finalizes block C on the others, at the same level. The fix is designed in [consensus-locking.md](consensus-locking.md) and is not implemented yet. Until it is, multi-validator safety is not established; `tests/test_phase_e_consensus_harness.py` reproduces the fork.
+> **Safety status (Phase E).** Before E1, a verified quorum was not enough: under message delay alone, with every validator honest, round 0 could finalize block B on one node while round 1 finalized block C on the others. E1 adds the Tendermint lock and valid round ([consensus-locking.md](consensus-locking.md)), described in the section "Phase E: lock, valid round, signed proposals" below. It is validated on the network simulator (`tests/test_phase_e_consensus_harness.py`: no fork in any scenario, including one quarter of the stake byzantine) and on four real node processes on one machine (`tests/test_phase_e_multiprocess.py`). It has not yet run on several machines with independent operators, and has not been audited. No public testnet should start before both.
 
 ## Message kinds
 
@@ -20,7 +21,7 @@ message stream. Seven kinds exist:
 | Kind          | Payload                          | Purpose                              |
 |---------------|----------------------------------|--------------------------------------|
 | `hello`       | `{"level": N}`                   | Sent by both sides on connect        |
-| `proposal`    | `{"block": {...}}`               | Candidate block, pre-quorum          |
+| `proposal`    | `{"block", "proposal", "proof"}` | Candidate block, its signed PROPOSE message, and for a re-proposal the certificate that justifies it |
 | `consensus`   | `{"msg": {...}}`                 | Signed PREENDORSE / ENDORSE          |
 | `block`       | `{"block": {...}}`               | Finalized block carrying its quorum  |
 | `transaction` | `{"tx": {...}}`                  | Mempool gossip                       |
@@ -33,26 +34,43 @@ connection; a handler error on one message is logged and does not kill
 the connection.
 
 All inner payloads are decoded by the strict typed `from_dict`
-constructors (`Transaction`, `BlockHeader`, `Block`, `ConsensusMessage`),
+constructors (`Transaction`, `BlockHeader`, `Block`, `ConsensusMessage`,
+`QuorumCertificate`),
 which raise field-specific `ValueError`s on any type or bounds violation.
 The network layer never interprets payloads itself.
 
 ## Proposals travel as full blocks
 
-The BFT engine defines a PROPOSE message kind, but PROPOSE never rides
-the consensus channel. Proposals are broadcast as full blocks on the
-`proposal` channel, and a validator only calls `BftEngine.on_proposal`
-— which emits its pre-endorsement — after fully validating the proposal:
-header signature, parent linkage, proposer legitimacy for the claimed
-round, txs root, fee rules, and state root, via
-`validate_and_apply(..., require_quorum=False)`. Bare PROPOSE messages
-arriving on the wire are dropped. This guarantees no validator ever
-pre-endorses a hash whose block it has not executed.
+Proposals are broadcast on the `proposal` channel as an envelope:
 
-Proposer legitimacy: the proposal's `header.round` must be at least
-`parent.round + 1`, and `select_proposer(parent_hash, validators, round)`
-must return the block's proposer. Anything else is discarded before
-validation.
+```
+{"block":    {... the full block, endorsements empty ...},
+ "proposal": PROPOSE {level, round, block_hash, valid_round, validator, validator_pubkey, signature},
+ "proof":    null, or a PREENDORSE certificate for block_hash at valid_round}
+```
+
+A validator only calls `BftEngine.on_proposal`, which may emit its
+pre-endorsement, after these checks, in this order (`Node._on_proposal_msg`):
+
+1. Everything decodes strictly; the block is for the next level; the
+   PROPOSE message is for the same level and the block's hash.
+2. The round is inside the engine window; the PROPOSE signature is valid
+   and its signer is `select_proposer(parent_hash, validators, round)`.
+3. `valid_round = -1` (a new payload): `header.payload_round == round`.
+   `valid_round >= 0` (a payload proposed again):
+   `header.payload_round <= valid_round < round`, and `proof` is a
+   PREENDORSE certificate for this block at `(level, valid_round)` that
+   verifies against the validator set.
+4. Full validation of the block with
+   `validate_and_apply(..., require_quorum=False)`: header signature,
+   parent linkage, header proposer equal to
+   `select_proposer(parent_hash, validators, payload_round)`, txs root,
+   fee rules and state root.
+
+Bare PROPOSE messages on the `consensus` channel are dropped: no
+validator ever pre-endorses a hash whose block it has not executed. Valid
+proposals are re-gossiped, so a proposer that sends two different blocks
+for one round to two halves of the network is seen by everyone.
 
 ## commits vs endorsements
 
@@ -62,11 +80,16 @@ schema, both verified by `bft.verify_commits` and counted together for
 the quorum:
 
 - `commits` — endorse-schema signatures known to the proposer **at
-  proposal time**. In practice this is the proposer's own
-  self-endorsement. Phase B: reward accounting no longer reads `commits`
-  at all (see below).
+  proposal time**: the proposer's own self-endorsement, signed for the
+  payload round. Phase E: the proposer signs it only when it holds more
+  than two thirds of the consensus stake on its own (single-validator
+  operation); with several validators `commits` is empty, because an
+  endorsement signed before any pre-endorsement certificate would bypass
+  the lock rules. Phase B: reward accounting does not read `commits` at
+  all (see below).
 - `endorsements` — the endorsement quorum certificate gathered **on the
-  wire after** the header was signed. Excluded from the header hash and
+  wire after** the header was signed, for the round `cert_round` (a body
+  field, not hashed, never below `payload_round`). Excluded from the header hash and
   from reward accounting: including them in either would be circular,
   because endorsers sign the block hash, which covers the state root,
   which would then depend on the endorsement set. Entries are sorted for
@@ -75,15 +98,20 @@ the quorum:
   is the header hash, which is unaffected.
 
 Verification (`chain.validate_and_apply` with `require_quorum=True`):
-every entry across both lists is reconstructed as an ENDORSE
-`ConsensusMessage` over `(level, round, block_hash)` with the validator's
+every entry is reconstructed as an ENDORSE `ConsensusMessage` over
+`(level, round, block_hash)`, where `round` is `cert_round` for
+`endorsements` and `payload_round` for `commits`, with the validator's
 registered public key and its signature verified. Any malformed or forged
 entry is a hard rejection. Duplicate addresses count once. The verified
-stake must satisfy `stake * 3 > total_stake * 2`.
+stake must satisfy `stake * 3 > total_stake * 2`. The two lists are
+counted together only when `cert_round == payload_round`; otherwise
+`commits` must still verify, and `endorsements` alone must hold the
+quorum, since a certificate is made of endorsements of one round.
 
 Solo mode: a single validator holds 100% of stake, so its self-commit
-alone satisfies the strict quorum — one schema, one verifier, no special
-case.
+alone satisfies the strict quorum — one schema, one verifier. The node
+still routes that self-commit through its engine and signing journal
+before showing the block (`BftEngine.adopt_self_commit`).
 
 Known limitation, deliberate: the proposer is the sole rewarded endorser.
 Phase B (audit 2, point 4) made this explicit in `_apply_block_rewards`:
@@ -98,22 +126,31 @@ future protocol version.
 
 ## Node flow
 
-Proposer (its turn per `select_proposer`, cadence `block_time`):
+Proposer (its turn per `select_proposer(parent_hash, validators, round)`,
+cadence `block_time`):
 
-1. Build the block from the mempool (`propose_block`, which trial-applies
-   and skips failing transactions; the mempool read is non-destructive).
-2. Store it in the pending map, broadcast it on `proposal`.
-3. Self-deliver to its own engine: `on_proposal` emits its PREENDORSE,
-   which loops through `_ingest_consensus` exactly like a wire message.
+1. If the engine has a valid round for this level (it saw a
+   pre-endorsement certificate for block X at `valid_round`) and the node
+   holds X, propose X again with that `valid_round` and the certificate
+   as `proof`. Otherwise build a new payload from the mempool
+   (`propose_block` with `payload_round = round`; the mempool read is
+   non-destructive).
+2. Sign the PROPOSE message through the engine (`make_proposal`, which
+   writes the signing journal first; a refusal skips the proposal).
+3. Store the block in the pending map, broadcast the envelope.
+4. Self-deliver to its own engine: `on_proposal` may emit its
+   PREENDORSE, which loops through `_ingest_consensus` exactly like a
+   wire message.
 
 Every validator, on a valid proposal or consensus message:
 
-1. Deduplicate by `(kind, level, round, validator)`.
+1. Deduplicate by `(kind, level, round, validator, block_hash)`.
 2. Feed `BftEngine.on_message`; broadcast and self-ingest any outbound
-   messages it returns (PREENDORSE quorum → own ENDORSE).
+   messages it returns.
 3. Re-gossip newly seen wire messages for mesh propagation.
-4. Try to finalize: if `get_endorse_qc(level, round)` matches a pending
-   block's hash, set `endorsements` from the QC, then
+4. Try to finalize: if `find_endorse_qc(level, hash)` returns an
+   endorsement certificate at any round for a pending block, set
+   `endorsements` from it and `cert_round` to its round, then
    `chain.append(block, require_quorum=True)`, persist, purge included
    transactions from the mempool, prune engine state, broadcast the
    finalized block.
@@ -123,14 +160,18 @@ finalized blocks, which carry their quorum with them.
 
 ## Rounds and timeouts
 
-The node tracks one current round for the level being decided,
-initialized to `parent.round + 1`. If no block finalizes within
-`max(2 s, 4 × block_time)`, the round advances and the proposer of the
-new round may propose. A valid proposal for a higher round adopts that
-round and resets the deadline. Rounds never move backwards. Equivocation
-(two conflicting signed messages of the same kind at the same level and
-round) is detected by the engine and is slashable evidence
-(`SlashingEvidence`).
+Every level starts at round 0 (Phase E). Round `r` lasts
+`round_timeout(base, r) = base + r * base / 2`, with
+`base = max(2 s, 4 × block_time)`. The node moves to a later round when
+the round times out, when validators holding more than one third of the
+stake have already voted in a later round (`round_to_skip_to`), or when
+it accepts a valid proposal for a later round within the engine window
+(8 rounds). Rounds never move backwards inside a level. Nothing about the
+next level is derived from the round at which a block was finalized.
+Equivocation (two conflicting signed votes of the same kind at the same
+level and round) is slashable evidence (`SlashingEvidence`); two
+different PROPOSE messages from one proposer for one (level, round) are
+kept as `ProposalEquivocation` evidence, not slashable yet.
 
 ## Catch-up sync
 
@@ -158,6 +199,10 @@ root function and is bounded by the governance-swappable `trie` root
 
 ## Test coverage
 
+`tests/test_phase_e_locking.py` pins the Phase E rules below, and
+`tests/test_phase_e_consensus_harness.py` and
+`tests/test_phase_e_multiprocess.py` check safety and liveness on the
+simulator and on real node processes.
 `tests/test_consensus_wire.py` pins this contract: solo strict quorum,
 forged-commit hard rejection, non-validator rejection, 3-validator
 engine round trip to an accepted QC, 2-of-3 equal-stake insufficiency,
@@ -200,3 +245,61 @@ refreshed at the end of every block whose level is a multiple of
 `epoch_blocks` (default 120, genesis override). Proposer selection, BFT
 vote weights, quorum verification and block validation all read it from
 the parent state, so every node uses the same set for the same height.
+
+
+## Phase E: lock, valid round, signed proposals
+
+These rules close the fork described in
+[consensus-locking.md](consensus-locking.md) section 1. They are
+consensus rules; kern-go must port them (see
+[go-port-breakpoints.md](go-port-breakpoints.md) §11).
+
+**Block identity.** The header field `round` is replaced by
+`payload_round`, the round at which the payload was first proposed; the
+header proposer is the proposer of that round, and the chain checks it.
+A payload proposed again in a later round keeps its hash. The round of
+the certificate that finalized it is the body field `cert_round`. Two
+honest nodes may store different `cert_round` values for the same block.
+
+**Engine state per level.** `locked_round` and `locked_hash` (the block
+this validator last endorsed), `valid_round` and `valid_hash` (the most
+recent pre-endorsement certificate it has seen, never above its current
+round).
+
+**Voting rules.**
+
+1. A validator signs votes only for its current round. Votes for other
+   rounds are recorded and count toward certificates and evidence.
+2. It pre-endorses the proposal X of the current round if it is not
+   locked, or is locked on X, or the proposal carries
+   `valid_round > locked_round` with a proof for X at `valid_round`
+   (the proof that came with the proposal, or a certificate the engine
+   saw itself).
+3. On a pre-endorsement certificate for X in the current round, with the
+   proposal for X seen, it endorses X and locks on (round, X). Once per
+   round.
+4. The proposer of a round proposes the valid block again when there is
+   one; otherwise a new payload.
+5. An endorsement certificate for X at any round finalizes X.
+
+**Signing journal.** Before any signature (PROPOSE, PREENDORSE, ENDORSE,
+the solo self-commit), the node appends a record to
+`<data-dir>/signing_journal.jsonl` and syncs it to disk. A record holds
+`chain_id`, `kind`, `level`, `round`, `block_hash` and the lock and valid
+state after the step. At start, the node restores the lock, the valid
+round and the round of the level in progress, and refuses to sign any
+(kind, level, round) already recorded for another block. A journal that
+cannot be read is moved aside, and a missing journal on a chain past
+genesis is treated the same way: the validator does not sign at the
+level in progress and resumes once that level is finalized by others. A
+final line cut by a crash is ignored, because the signature it announced
+was never produced. Records below the finalized height are compacted
+every 64 levels.
+
+**Limits.** No nil votes yet: a round that cannot gather a certificate
+ends by timeout, which costs time, not safety. Proposal equivocation is
+detected and kept, not slashed. A proposer that restarts after signing a
+PROPOSE but without the block body cannot propose again in that round
+(the journal refuses a second block); the next round's proposer takes
+over.
+

@@ -1,6 +1,6 @@
 # Consensus locking: design for review (Phase E, E1)
 
-Status: **design reviewed on 7 November 2026, not implemented.** The reviewer's answers and additions are in section 9; where they change sections 4 to 7, section 9 prevails.
+Status: **design reviewed and implemented on 7 November 2026** (E1 step 3). The reviewer's answers and additions are in section 9; where they change sections 4 to 7, section 9 prevails. Section 10 records what the implementation adds to the reviewed text and the results. Not yet run on several machines with independent operators, not audited.
 
 ## 1. The defect
 
@@ -182,4 +182,43 @@ The five tests now marked `xfail(strict=True)` become normal regression tests. I
 | New node syncing from scratch | Verifies finality of every block independently |
 
 `tests/bft_sim.py` drives real `BftEngine` instances but models the node and the network itself. The simulated results must be confirmed by a multi-process integration test that runs complete `Node` processes over the real network layer.
+
+## 10. Implementation (7 November 2026)
+
+The code follows sections 4 and 9. Four points were added or made precise while implementing; they are submitted to the reviewer with this delivery.
+
+### 10.1 The proposer's self-commit was an endorsement outside the lock rules
+
+`propose_block` signed an ENDORSE over its own block at proposal time, before any pre-endorsement certificate, and the block carried it in `commits`. That signature is an ordinary endorsement: anyone can copy it into a certificate. With unequal stakes it breaks safety without any lock being involved: a proposer holding 40% of the stake signs its block B, a byzantine validator holding 30% adds its endorsement, and B has 70% of endorsements in that round while no honest validator is locked on B. The honest validators can then finalize another block later.
+
+Fix: the self-commit is signed only when the proposer alone holds more than two thirds of the consensus stake, so that it is a complete certificate on its own (single-validator operation). With several validators, `commits` is empty and the quorum always comes from the wire. When the self-commit is signed, the node passes it through the engine (`adopt_self_commit`: journal, lock) before the block is shown. In validation, `commits` are verified at the payload round and counted with `endorsements` only when `cert_round == payload_round`.
+
+### 10.2 Round skip on one third of the stake
+
+The node also moves to a later round when validators holding more than one third of the stake have already voted there (Tendermint's rule). At least one honest validator is in that round, so a byzantine minority cannot make honest nodes jump. A valid proposal for a later round moves the node only within the engine window (8 rounds), so a byzantine proposer of a far round cannot push timeouts up.
+
+### 10.3 Details fixed by the implementation
+
+- Timeout: `base + r * base / 2`, `base = max(2 s, 4 × block_time)`.
+- Proposals travel as an envelope `{"block", "proposal", "proof"}` on the existing `proposal` channel; `valid_round` is inside the PROPOSE signature, vote signatures are unchanged.
+- Rounds are bounded by `2**32 - 1` at decoding (proposer selection encodes the round on 4 bytes).
+- The engine accepts a proof for a re-proposal either from the envelope or from a pre-endorsement certificate it saw itself.
+- Proposals are re-gossiped by every node, which is what makes proposal equivocation visible to everyone.
+- A missing journal on a chain past genesis is treated like an unreadable one (no signature at the level in progress). A fresh validator joining a running chain therefore waits one level.
+- The proposer re-proposes the valid block only if it holds the block body; otherwise it proposes a new payload, which costs liveness for that round, not safety.
+
+### 10.4 Results
+
+| Scenario (`tests/test_phase_e_consensus_harness.py`) | Before E1 | Lock only (section 2) | E1 |
+|---|---|---|---|
+| Endorsements of round 0 reach one node only (4 variants) | 4 forks | no fork, 3 nodes stuck | no fork, all finalize the same block |
+| 200 random schedules (delays, 10% loss, then stabilization) | 41 forks, 0 stuck | 22 forks, 8 stuck | 0 forks, 0 stuck |
+| Round 1 proposer missed the round 0 certificate | | | no fork |
+| Reordering, 40% loss before stabilization, one quarter byzantine (equivocating or silent), unequal stakes with 30% byzantine, 7 validators with 2 byzantine, five consecutive levels, crash and restart with journal | | | no fork, all finalize |
+
+Each rule was checked to matter: allowing votes in any round brings back forks in the random schedules, and removing the lock forks the "round 1 proposer missed the certificate" scenario. Without its journal, a restarted validator loses its lock.
+
+`tests/test_phase_e_multiprocess.py` runs four complete `kern.node` processes over the real network layer on one machine: all agree on every block, a fresh verifier checks every quorum from the blocks alone, three validators keep finalizing while the fourth is stopped, and the fourth restarts from its journal and catches up, with no equivocation.
+
+What this does not establish: behaviour on several machines with independent operators and real network conditions, and an external audit of the implementation. Nil votes (Q2) and slashing of proposal equivocation (Q5) remain later steps.
 

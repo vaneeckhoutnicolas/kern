@@ -1,6 +1,6 @@
 # v1.1-rc Phase D: consensus weight backed by slashable collateral
 
-> **Superseded in part by [Phase E](phase-e-changes.md).** The table below says `UNDELEGATE_STAKE` "removes the weight at once"; in the Phase D code it removed the bond from `effective_stake` but left the epoch snapshot unchanged until the next boundary. Phase E fixes that and limits slashing to the stake exposed at the offence. **Consensus safety warning:** with several validators, the engine can finalize two blocks at the same level under message delay alone (no lock, no nil vote); multi-validator safety is not established until the fix designed in [consensus-locking.md](consensus-locking.md) is delivered.
+> **Superseded in part by [Phase E](phase-e-changes.md).** The table below says `UNDELEGATE_STAKE` "removes the weight at once"; in the Phase D code it removed the bond from `effective_stake` but left the epoch snapshot unchanged until the next boundary. Phase E fixes that and limits slashing to the stake exposed at the offence. **Consensus safety:** the Phase D engine could finalize two blocks at the same level under message delay alone (no lock); Phase E adds the lock and valid round of [consensus-locking.md](consensus-locking.md).
 
 Phase D answers a fourth independent external review (November 2026, not
 a professional security audit) of the Phase C code. Its main finding was

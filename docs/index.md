@@ -61,7 +61,7 @@ Modeled on the Ethereum 2014 ICO template with modern vesting practices. See [To
 
 This documentation reflects **v1.0-rc** (release candidate). The reference implementation is feature-complete:
 
-- ⚠️ Multi-validator BFT consensus with bonded delegation (safety not yet established, see [consensus-locking.md](consensus-locking.md))
+- ⚠️ Multi-validator BFT consensus with bonded delegation (lock and valid round since Phase E; multi-machine devnet and audit pending, see [consensus-locking.md](consensus-locking.md))
 - ✅ Skald language + static type checker + invariant runtime enforcement
 - ✅ Multi-frame EVM with fraud-proof bisection
 - ✅ Real BN254 pairing for zkSNARK verification
