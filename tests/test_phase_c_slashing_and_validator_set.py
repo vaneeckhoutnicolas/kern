@@ -160,7 +160,7 @@ def test_chain_validators_follow_state_and_delegation_waits_for_the_epoch():
         return next(v["stake"] for v in chain.validators if v["address"] == addr)
 
     assert weight(v1.address) == STAKE
-    deleg = make_delegate_stake(delegator, v1.address, nonce=0)
+    deleg = make_delegate_stake(delegator, v1.address, nonce=0, amount=5 * STAKE - 10_000)
     # Blocks 1 and 2: the delegation is recorded but consensus weight is unchanged.
     for lvl in (1, 2):
         txs = [deleg] if lvl == 1 else []

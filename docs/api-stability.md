@@ -184,7 +184,7 @@ The phases and thresholds in [`kern/governance.py`](../kern/governance.py):
 - **Default validator commission**: 10% (stable; per-validator override frozen)
 - **Slashing penalty**: 30% of stake (stable)
 - **Whistleblower reward**: 10% of slashed amount (stable)
-- **Delegation mechanism**: Liquid PoS, custody preserved, no lockup (frozen — this is the user-facing contract)
+- **Delegation mechanism**: bonded delegation with an unbonding period, no LST derivative. Changed in v1.1-rc Phase D from the earlier liquid, unlocked model, which let consensus weight exist without slashable collateral (see [phase-d-changes.md](phase-d-changes.md)).
 
 ### 2.13 Genesis distribution
 

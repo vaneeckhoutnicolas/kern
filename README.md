@@ -12,7 +12,7 @@
 
 This repository is the **v1.1 release candidate** — building on the v1.0-rc audit-frozen foundation with **slashable attestations** as a new L1 primitive, three **tokenized-securities Skald templates** for the EU securities regime — MiFID II / Prospectus Regulation / AIFMD, *not* MiCA, which excludes financial instruments under Art. 2(4) (startup equity, institutional fund, real estate; see [docs/sto-mica.md](docs/sto-mica.md)), **public goods funding primitives** (Quadratic Funding + Retroactive PGF), an **oracle network** (generic data + DeFi prices + schema marketplace), **ZK-claims** for privacy-preserving attestations (a Groth16 verifier over BN254 against registered verifier keys; no circuits, trusted setup or prover are shipped), and **Heimdall** — the official block explorer + monitoring stack that surfaces the institutional-legibility features Kern was built to support. See [docs/v11rc-changes.md](docs/v11rc-changes.md) for the full vertical and [docs/setup-heimdall-operator.md](docs/setup-heimdall-operator.md) for the explorer.
 
-The v1.0-rc foundation includes: the Skald language with static type checker, a multi-validator BFT consensus engine, an optimistic rollup framework with a multi-frame Mini-EVM and bisection-based fraud proofs, **Liquid PoS delegation with no LSTs and no lockups**, **EVM Yellow Paper-compliant gas metering in the rollup Mini-EVM** (the L1 native layer uses a flat per-transaction fee and a non-recursive, loop-free Skald execution model that terminates by construction — see [docs/skald-language.md](docs/skald-language.md), with an optional governance-gated [fee floor + per-block size cap](docs/fee-floor.md) that is off by default), **real BN254 pairing via py_ecc**, and a complete on-chain governance system with slashing.
+The v1.0-rc foundation includes: the Skald language with static type checker, a multi-validator BFT consensus engine, an optimistic rollup framework with a multi-frame Mini-EVM and bisection-based fraud proofs, **bonded PoS delegation (no LST derivative; delegated KRN are locked and slashable, with an unbonding period)**, **EVM Yellow Paper-compliant gas metering in the rollup Mini-EVM** (the L1 native layer uses a flat per-transaction fee and a non-recursive, loop-free Skald execution model that terminates by construction — see [docs/skald-language.md](docs/skald-language.md), with an optional governance-gated [fee floor + per-block size cap](docs/fee-floor.md) that is off by default), **real BN254 pairing via py_ecc**, and a complete on-chain governance system with slashing.
 
 The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad public distribution (70% public sale / 10% founder vested 4 years / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake), and a documented **API stability spec** declaring what's frozen at v1.0. The distribution is a design, not a launched economy: no sale has taken place, and a mainnet genesis can only be built from real multisig keys in a separate ceremony.
 
@@ -71,7 +71,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~50 markdown specifications, 845 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~50 markdown specifications, 857 tests passing.**
 
 ```
 kern/
@@ -123,7 +123,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 845 tests, none skipped
+├── tests/                      # 857 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -184,7 +184,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 845 passed in ~25s
+# 857 passed in ~25s
 ```
 
 ### Open the block explorer (Heimdall)
@@ -272,7 +272,7 @@ req = urllib.request.Request(
 print(urllib.request.urlopen(req).read().decode())
 ```
 
-Alice's KRN stays in her account, fully spendable. The validator counts it toward effective stake. Rewards flow back proportionally minus the validator's commission (10% default). To stop: `make_undelegate_stake(alice, nonce=...)`. No lockup, no LST.
+The `amount` passed to `make_delegate_stake` is bonded: it leaves Alice's spendable balance, counts toward the validator's effective stake from the next epoch, earns rewards proportionally minus the validator's commission (10% default), and is slashed with the validator. To stop: `make_undelegate_stake(alice, nonce=...)`; the bond stays locked and slashable for the unbonding period (86 400 blocks by default), then returns to her balance. No LST derivative.
 
 See [`docs/staking.md`](docs/staking.md) for full mechanics.
 
@@ -345,7 +345,8 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | **v1.1-rc** | **Slashable attestations + STO securities templates + QF/RPGF + oracle network + ZK-claims** | **✅ (this version)** |
 | **v1.1-rc Phase A** | **Hardening: consensus on the wire (verified > 2/3 quorum on every networked block), strict ingress decoding, integer-only issuance, periodic snapshots + replay, catch-up sync, mypy clean** | **✅** |
 | **v1.1-rc Phase B** | **Fixes from two independent external reviews (not a professional security audit): exception boundary, attestation bond unbonding, current level, single delegation truth, chain_id enforcement, genesis checks, real Groth16 verifier, executed-step rollup challenges, portable precompiles ([details](docs/phase-b-changes.md))** | **✅** |
-| **v1.1-rc Phase C** | **Consensus hardening from a third external review: quorum certificates bound to the proposed block, on-chain slashing of consensus equivocation, one effective validator set per epoch ([details](docs/phase-c-changes.md))** | **✅ (this version)** |
+| **v1.1-rc Phase C** | **Consensus hardening from a third external review: quorum certificates bound to the proposed block, on-chain slashing of consensus equivocation, one effective validator set per epoch ([details](docs/phase-c-changes.md))** | **✅** |
+| **v1.1-rc Phase D** | **Consensus weight backed by slashable collateral: bonded own stake and delegations with an unbonding period, evidence window, bounded BFT state ([details](docs/phase-d-changes.md))** | **✅ (this version)** |
 | kern-go | Go client in a sibling repo — this repo remains the executable specification; kern-go becomes the operator reference after differential testing ([details](docs/roadmap.md)) | 🔵 announced |
 | v1.0 | First stable release after audit cycle 1 | 🔵 |
 | Yggdrasil testnet | Public testnet, permissionless validators | 🔵 |

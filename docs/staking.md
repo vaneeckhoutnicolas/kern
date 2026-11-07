@@ -2,7 +2,9 @@
 
 This document is the canonical reference for how staking works in Kern. It complements [`tokenomics.md`](tokenomics.md) §6 with deeper detail on the mechanics, the math, and the user flows.
 
-Kern uses **Liquid Proof-of-Stake** — the Tezos design. The fundamental property: **delegators keep custody of their KRN**. There is no lockup, no derivative token, no smart-contract counterparty risk. This is the same model Tezos has used in production since 2018 and the same model Cosmos, NEAR, and most of the modern PoS ecosystem have converged on.
+Kern uses **bonded Proof-of-Stake delegation**. Delegated KRN leave the delegator's spendable balance and are held, at protocol level, in a bond to one validator: they count toward that validator's consensus weight, earn a share of its rewards, and are slashed with it. Undelegating starts an unbonding period during which the bond carries no weight but stays slashable. There is no derivative token and no smart-contract counterparty.
+
+> **Changed in v1.1-rc Phase D.** Earlier versions counted the delegator's *liquid* balance, which stayed spendable. An external review showed that this let consensus weight exist without collateral behind it: a holder could delegate just before an epoch snapshot and move the funds away the next block. Sections below that describe liquid balances are superseded by this paragraph and by [phase-d-changes.md](phase-d-changes.md).
 
 This document covers:
 
@@ -170,15 +172,21 @@ Final:
 
 Sum: 190 + 810 + 0 = 1 000 ✓
 
-### Why proportional to balance (not delegated_amount)?
+### Why proportional to the bonded amount?
 
-Some PoS systems track a separate `delegated_amount` per (delegator, validator) pair, locked in place. Kern doesn't. The delegation just declares an intent ("count my balance toward V's effective stake"); the actual amount counted is whatever the delegator's balance is at reward time.
+Since v1.1-rc Phase D, Kern tracks a bonded `amount` per delegator, held in
+the delegation record and locked with the validator. Rewards, consensus
+weight and slashing all use that amount, never the delegator's liquid
+balance. Earlier versions counted the liquid balance at reward time; that
+made consensus weight movable at will and not slashable, which an external
+review identified as consensus power without collateral.
 
-This has implications:
-
-- **You can't game it.** If Alice tries to triple-count her balance by splitting into three accounts each delegating to V, she still has the same total balance, which still gets counted once.
-- **Drift matters.** A delegator who keeps a lot of liquid balance benefits the validator more. A delegator who drains their account stops contributing.
-- **No surprise unbonding.** A validator who loses a delegator (because the delegator drained their account or switched) sees the change immediately in the next block's effective stake. No 21-day delay.
+- **Weight follows locked funds only.** Splitting a balance across several
+  accounts changes nothing: only what is bonded counts.
+- **Exit is delayed on purpose.** `UNDELEGATE_STAKE` removes the weight at
+  once but keeps the funds locked and slashable for the unbonding period,
+  so a fault committed while they weighed in consensus can still be
+  punished.
 
 ---
 

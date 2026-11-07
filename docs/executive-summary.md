@@ -109,7 +109,7 @@ A foundation's treasury is held by a Skald contract with declared spending invar
 Kern has a native token, **KRN**, because the protocol genuinely needs one:
 
 - **Gas / fees.** Every transaction pays a fee in KRN to the producing baker.
-- **Staking collateral.** Validators stake KRN; delegators delegate it Liquid PoS — balances stay liquid and in the holder's custody, no LST derivative, no lockup.
+- **Staking collateral.** Validators bond KRN; delegators bond KRN to a validator. Bonded funds are slashable and pass through an unbonding period on exit; no LST derivative is minted.
 - **Governance weight.** Voting on protocol amendments and treasury allocations is weighted by stake; quadratic weighting on treasury votes to dampen whales.
 - **Storage rent.** Originating a contract and growing its storage consumes KRN, preventing state bloat.
 - **Treasury funding.** A fraction of block rewards (default 5%) flows to the on-chain treasury for ecosystem grants.

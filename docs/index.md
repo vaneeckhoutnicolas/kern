@@ -67,7 +67,7 @@ This documentation reflects **v1.0-rc** (release candidate). The reference imple
 - ✅ Real BN254 pairing for zkSNARK verification
 - ✅ EVM Yellow Paper-compliant gas pricing
 - ✅ Two-track on-chain governance with quadratic + delegated voting + slashing
-- ✅ Liquid PoS baking delegation (no LST, no lockup)
+- ✅ Bonded PoS delegation (no LST; delegated KRN locked and slashable, unbonding period on exit)
 - ✅ Adaptive issuance + treasury
 - ✅ 368 tests passing
 

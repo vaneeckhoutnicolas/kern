@@ -287,19 +287,23 @@ def cmd_delegate(args):
     kp = load_keypair(args.keyfile)
     nonce = get_nonce(kp.address)
 
+    amount_mukrn = krn_to_mukrn(args.amount)
     tx = make_delegate_stake(
         sender_kp=kp,
         validator=args.validator,
         nonce=nonce,
         fee=args.fee,
+        amount=amount_mukrn,
     )
 
-    print(f"Delegating to {args.validator}")
+    print(f"Delegating {args.amount} KRN ({amount_mukrn} mukrn) to {args.validator}")
     print(f"  From: {kp.address}")
     print(f"  Fee:  {args.fee} mukrn")
     print(f"  Nonce: {nonce}")
     print()
-    print("Your KRN remains in your custody. Only the delegation pointer changes.")
+    print("The amount is BONDED: it leaves your spendable balance and is slashed")
+    print("if the validator misbehaves. Undelegating starts an unbonding period")
+    print("(86 400 blocks by default) before the KRN return to your balance.")
 
     if not args.yes:
         confirm = input("Proceed? [y/N] ").strip().lower()
@@ -462,6 +466,7 @@ def build_parser() -> argparse.ArgumentParser:
     pd = sub.add_parser("delegate", help="Delegate baking to a validator")
     pd.add_argument("keyfile", help="Delegator keypair")
     pd.add_argument("--validator", required=True, help="Validator kn1... address")
+    pd.add_argument("--amount", required=True, help="KRN to bond (decimal)")
     pd.add_argument("--fee", type=int, default=2_000, help="Fee in mukrn (default: 2000)")
     pd.add_argument("--yes", "-y", action="store_true")
     pd.set_defaults(func=cmd_delegate)

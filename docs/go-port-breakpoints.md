@@ -144,7 +144,7 @@ The source of truth is the code and the named tests; see
 | Transaction field types are checked at construction (`Transaction.__post_init__`), not only in `from_dict`. | `transaction.Transaction.__post_init__` | same |
 | `_current_level` is set to the block level before the first transaction. | `chain.apply_block`, `consensus.propose_block` | `tests/test_phase_b_state_rules.py` |
 | Rewarded endorser set = `{proposer}`; `commits` are never read for rewards. | `chain._apply_block_rewards` | `tests/test_phase_b_exception_boundary.py::test_extra_commit_entries_do_not_change_rewards` |
-| Staking ratio and both governance tracks use effective stake (own stake + delegated liquid balances); the treasury track has no delegation copy. | `chain._compute_staked`, `chain._governance_validator_set` | `tests/test_phase_b_state_rules.py` |
+| Staking ratio and both governance tracks use effective stake (bonded own stake + bonded delegations since Phase D); the treasury track has no delegation copy. | `chain._compute_staked`, `chain._governance_validator_set` | `tests/test_phase_b_state_rules.py` |
 | If state carries `chain_id`, a transaction must carry the same `chain_id` (null rejected); checked before any mutation. | `chain._check_signature_and_nonce` | same |
 | Genesis: declared `total_supply` must equal the sum of balances; `chain_id` is copied into state. | `chain.initial_state_from_genesis` | same |
 | Attestation revoke starts an unbonding period (`attestation_unbonding_blocks`, default 86 400); bonds are released at the end of the block, after rewards and before the governance tick, in ascending release level then insertion order. A slash resolves both bonds. | `chain._apply_revoke_attestation`, `chain._release_matured_attestation_bonds`, `chain._apply_slash_attestation_equivocation` | `tests/test_phase_b_bond_lifecycle.py` |
@@ -160,3 +160,15 @@ The source of truth is the code and the named tests; see
 | New operation `slash_consensus_equivocation` with params `{msg_a, msg_b}` (ConsensusMessage dicts); offence key `"<addr>|<kind>|<level>|<round>"` in `state["consensus_slashes"]` | `chain._apply_slash_consensus_equivocation`, `chain._slash_validator` | same |
 | `state["consensus_set"]` written at genesis and at the end of each block with `level % epoch_blocks == 0` (after the governance tick); a slash lowers the offender's entry to `min(entry, effective_stake)` immediately | `chain.compute_consensus_set`, `chain._epoch_tick`, `chain._slash_validator` | same |
 | The consensus set for block N is the one in the state after block N-1 | `chain.Chain.validators` | same |
+
+
+## 9. Phase D consensus rule changes
+
+| Rule | Python reference | Pinned by |
+|---|---|---|
+| Genesis bonds each validator's stake out of its balance (refused if insufficient); `delegation_unbonding_blocks >= epoch_blocks` | `chain.initial_state_from_genesis` | `tests/test_phase_d_bonded_stake.py` |
+| Delegation records are `{"validator", "amount"}`; `DELEGATE_STAKE` debits `tx.amount` (must be > 0, same validator only); `UNDELEGATE_STAKE` queues the bond in `delegation_unbonding[str(level + unbonding)]` | `chain._apply_delegate_stake`, `chain._apply_undelegate_stake` | same |
+| Unbonding releases run at the end of the block, after attestation releases, before the governance tick | `chain._release_matured_delegation_bonds` | same |
+| effective_stake counts bonded amounts only | `chain.effective_stake`, `chain.delegators_of` | same |
+| Slash: 30% of own stake (10% of it to the reporter, rest burned) and 30% of each bond and unbonding entry to the offender (burned); refused only if all are zero | `chain._slash_validator` | same |
+| Consensus equivocation evidence older than `delegation_unbonding_blocks` is rejected | `chain._apply_slash_consensus_equivocation` | same |
