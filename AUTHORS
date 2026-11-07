@@ -6,7 +6,7 @@ This file recognizes the people who designed and built Kern.
 
 ## Founder and original author
 
-**Nicolas Van Eeckhout** — founder, lead architect, and original author of the Kern protocol and reference implementation. Designed the dual-track on-chain governance, the integration of Ethereum-style developer ecosystem with Liquid Proof-of-Stake delegation, the Skald contract language with declared invariants, the multi-frame EVM with bisection fraud proofs, and the v1.0 economy structure (100M KRN, Ethereum-template distribution with modern vesting).
+**Nicolas Van Eeckhout** — founder, lead architect, and original author of the Kern protocol and reference implementation. Designed the dual-track on-chain governance, the integration of Ethereum-style developer ecosystem with bonded Proof-of-Stake delegation, the Skald contract language with declared invariants, the multi-frame EVM with bisection fraud proofs, and the v1.0 economy structure (100M KRN, Ethereum-template distribution with modern vesting).
 
 The repository, every commit, and the v1.0 design decisions originate with Nicolas Van Eeckhout. The Norse-themed naming convention (Kern, Skald, Yggdrasil, Midgard) is part of the original conception.
 
@@ -46,7 +46,7 @@ See [docs/contributors-program.md](docs/contributors-program.md) for the full pr
 
 The Kern reference implementation is licensed under [Apache-2.0](LICENSE). Every Python file in this repository carries a `SPDX-License-Identifier: Apache-2.0` header and a copyright line crediting "Nicolas Van Eeckhout (founder) and Kern contributors".
 
-The implementation is **original work**, not a fork. Where external public specifications are cited (Ethereum EIPs, the Yellow Paper, the BN128/BN254 curve parameters) those are public standards anyone may implement. Where design patterns are credited to Tezos (Liquid PoS delegation, dual-track governance, baker terminology), those are noted in code comments and documentation as design *influence*, not copied code.
+The implementation is **original work**, not a fork. Where external public specifications are cited (Ethereum EIPs, the Yellow Paper, the BN128/BN254 curve parameters) those are public standards anyone may implement. Where design patterns are credited to Tezos (baking delegation, dual-track governance, baker terminology), those are noted in code comments and documentation as design *influence*, not copied code.
 
 The single external library dependency at v1.0-rc is `py_ecc` (Ethereum Foundation's reference Python BN128 library, MIT-licensed) used for the BN254 elliptic-curve pairing precompile. This is imported and called via Python's import mechanism, not vendored.
 

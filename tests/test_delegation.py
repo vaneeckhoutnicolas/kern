@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2026-2036 Nicolas Van Eeckhout and Kern contributors
-"""Tests for v1.0-rc Liquid PoS baking delegation."""
+"""Tests for stake delegation (v1.0-rc, bonded since v1.1-rc Phase D)."""
 
 import sys
 from pathlib import Path

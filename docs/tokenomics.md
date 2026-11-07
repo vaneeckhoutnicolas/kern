@@ -160,44 +160,36 @@ This deposit is held by the protocol for as long as the contract exists. Calling
 
 ## 6. Staking and delegation
 
-Kern uses **Liquid Proof-of-Stake**, the Tezos design: balances stay liquid and in the holder's custody, but can be delegated to a validator who counts them toward their effective stake. This is the opposite of Ethereum's 32-ETH-locked model, and the opposite of pool-based LSTs (liquid staking derivatives like Lido's stETH) — there is no derivative token, no smart-contract counterparty risk, and no minimum deposit.
+Kern uses **bonded Proof-of-Stake delegation**. Delegated KRN leave the holder's spendable balance and are held by the protocol in a bond to one validator, never by the validator itself. There is no derivative token, no smart-contract counterparty and no minimum deposit. The trade-off is liquidity: bonded KRN cannot be spent until the unbonding period ends. Before v1.1-rc Phase D, delegated KRN stayed liquid and spendable; an external review showed that this let consensus weight exist without collateral behind it, and delegation was bonded.
 
-For a complete reference see [`staking.md`](staking.md). The summary:
+For the complete reference, with the exact rules of the code, see [`staking.md`](staking.md). The summary:
 
-### 6.1 Becoming a validator (baking)
+### 6.1 Validators (baking)
 
-Any account holding ≥ 10 000 KRN may register as a validator. Registration consists of:
+In v1.1-rc the validator set is fixed by the genesis file. Each genesis validator declares an own stake, which is taken out of its genesis balance and bonded. There is no transaction yet to register a new validator or to exit as one; both are on the roadmap. A validator runs a node that proposes blocks when selected and takes part in the two voting steps (pre-endorsement and endorsement).
 
-1. Calling the protocol's `register_validator` operation with a stake amount.
-2. Maintaining a node that participates in consensus rounds (proposal + endorsement).
+### 6.2 Delegation
 
-A validator who voluntarily exits is subject to a 14-day unbonding period before staked funds become transferable again.
+Any account holding KRN may delegate to an active validator with the `DELEGATE_STAKE` transaction, which names the amount to bond:
 
-### 6.2 Delegation (Liquid PoS baking delegation)
-
-Any account holding any KRN may delegate it to an active validator using the `DELEGATE_STAKE` transaction. The delegation has the following Liquid PoS properties:
-
-- **Bonded, not liquid (since v1.1-rc Phase D).** The delegated amount leaves the delegator's balance and is held in a protocol-level bond. No LST token is minted.
-- **Unbonding period.** `UNDELEGATE_STAKE` starts an unbonding period (86 400 blocks by default) during which the bond is still slashable; switching validator requires undelegating first.
-- **No minimum.** Even 1 mukrn can be delegated. This is the main user-experience difference vs Ethereum's 32-ETH minimum.
-- **One validator at a time.** Each delegator picks one validator. To split, the delegator splits balances across multiple addresses.
-- **Effective stake = bonded own stake + sum of bonded delegations.** The validator's chance of being elected to propose a block, and their share of rewards, depends on this effective stake.
-- **Reward split.** Block rewards earned by a validator are split: a `commission` (default 10%) goes to the validator off the top; the remainder is distributed to the validator and delegators in proportion to their share of effective stake.
-- **Slashing exposure.** If the validator is slashed for equivocation or double-baking, delegators are slashed proportionally to their delegated balance. This is "skin in the game" — picking a validator carelessly has real cost.
-
-The commission rate is set per validator and visible on-chain. Delegators can shop for low-commission validators, but should weigh that against the validator's uptime and reputation.
+- **Bonded.** The amount leaves the delegator's balance and is held in a protocol-level bond. No LST is minted.
+- **Weight from the next epoch.** A new or increased bond counts toward the validator's consensus weight from the next epoch boundary (120 blocks by default); a slash or an undelegation lowers it at once.
+- **Unbonding period.** `UNDELEGATE_STAKE` starts an unbonding period (86 400 blocks by default) during which the bond carries no weight, earns nothing, and stays slashable for offences committed before the undelegation. Switching validator requires undelegating first.
+- **No minimum.** Even 1 mukrn can be delegated.
+- **One validator at a time.** Each delegator picks one validator; to split, use several addresses.
+- **Effective stake = bonded own stake + bonded delegations.** It determines the chance of proposing a block and the share of rewards.
+- **Reward split.** A `commission` (default 10%) goes to the validator off the top; the remainder is shared between the validator and its delegators in proportion to their share of effective stake.
+- **Slashing exposure.** If the validator is slashed, every delegated tranche that was backing it at the offence loses 30%. A tranche bonded after the offence, or a bond that started unbonding before it, is not touched.
 
 ### 6.3 Slashing
 
-Three slashable offenses:
+Slashable offences:
 
-- **Double-baking** — producing two distinct blocks at the same level. Penalty: 30% of stake.
-- **Double-endorsing** — signing two contradictory endorsement messages at the same level. Penalty: 30% of stake.
-- **Governance equivocation** — voting differently on the same proposal in the same phase (introduced in v0.8). Penalty: 30% of stake; reportable via `SLASH_EQUIVOCATION` transaction by anyone with the evidence.
+- **Consensus equivocation**: two signed pre-endorsements, or two signed endorsements, from the same validator for different blocks at the same level and round (`SLASH_CONSENSUS_EQUIVOCATION`). Proposing two different blocks is not slashable on its own; only the votes are.
+- **Governance equivocation**: two different votes on the same proposal in the same phase (`SLASH_EQUIVOCATION`).
+- **Attestation equivocation**: two contradictory attestations, which slash the attestation bond (see [attestations](attestations.md)).
 
-Of every slashed amount: a whistleblower reward (10%) is paid to the reporter, and the rest is burned (reduces total supply).
-
-Delegators are slashed proportionally — see §6.2.
+A validator slash removes 30% of its own stake, of which 10% goes to the reporter and the rest is burned, and burns 30% of every exposed delegated tranche (§6.2). Evidence older than the unbonding period is rejected, and the same offence is slashed only once.
 
 ## 7. Governance and the treasury
 

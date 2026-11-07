@@ -107,7 +107,7 @@ def empty_state() -> dict:
             "protocol": {"proposals": {}, "activated_changes": [], "bonds": {}},
             "treasury": {"proposals": {}, "executions": [], "bonds": {}},
         },
-        # v1.0-rc: Liquid PoS baking delegation. Maps delegator address
+        # v1.0-rc: stake delegation (bonded since v1.1-rc Phase D). Maps delegator address
         # to validator address. Delegators retain custody of their KRN;
         # the delegation just lets the validator count the balance toward
         # their effective stake at reward time. See kern.issuance.
@@ -493,7 +493,7 @@ def _apply_block_rewards(state: dict, block: Block) -> None:
         _credit(state, treasury_addr, acc.treasury_credit)
 
     # Credit each validator — but first split their share with delegators
-    # (v1.0-rc: Liquid PoS baking delegation). Validators keep a commission
+    # (v1.0-rc: stake delegation, bonded since Phase D). Validators keep a commission
     # and pro-rata share of their own stake; delegators receive the rest in
     # proportion to their delegated balances. If a validator has no
     # delegators, they keep their full share (backward-compatible).
@@ -911,7 +911,7 @@ def _apply_slash_consensus_equivocation(state: dict, tx: Transaction) -> ApplyRe
                        extra={"offender": offender, "offence": key})
 
 
-# --- Stake delegation (v1.0-rc, Liquid PoS) ------------------------------
+# --- Stake delegation (v1.0-rc, bonded since Phase D) --------------------
 
 # Default validator commission as percent of delegator rewards. Validators
 # can override per-validator via state["commission_rates"][address].

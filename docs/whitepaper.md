@@ -12,7 +12,7 @@
 
 We present Kern, a Layer-1 blockchain protocol designed around a specific thesis we call **institutional legibility**: the property that the rules an institution must follow — whether regulatory (MiCA, AIFMD, MiFID II), procedural (grant-making, funding allocation), or evidentiary (oracle attestations, supply chain provenance) — are encoded as protocol-enforced invariants that regulators, auditors, and counterparties can read directly, without trusting any intermediary.
 
-Kern combines five primitives that together support this thesis. None of them is individually novel; the combination has not previously been delivered by any production Layer-1 protocol. Those primitives are: (1) a four-phase BFT consensus protocol with Liquid Proof-of-Stake delegation; (2) the Skald contract language with first-class runtime-enforced invariants and a static type system; (3) dual-track on-chain governance with equivocation slashing; (4) the slashable attestation primitive — generalized equivocation detection for any signed claim about the world; (5) BN254 zk-SNARK verification precompiles enabling privacy-preserving compliance attestations.
+Kern combines five primitives that together support this thesis. None of them is individually novel; the combination has not previously been delivered by any production Layer-1 protocol. Those primitives are: (1) a four-phase BFT consensus protocol with bonded Proof-of-Stake delegation (the KRN that secure the chain are locked in a protocol-held bond, slashable and released only after an unbonding period; see §3.2 and [`staking.md`](staking.md)); (2) the Skald contract language with first-class runtime-enforced invariants and a static type system; (3) dual-track on-chain governance with equivocation slashing; (4) the slashable attestation primitive — generalized equivocation detection for any signed claim about the world; (5) BN254 zk-SNARK verification precompiles enabling privacy-preserving compliance attestations.
 
 We describe the protocol architecture, the four application verticals it enables (compliance-by-construction Security Token Offerings, public goods funding, generic data oracle networks, and ZK-claims-based identity), and the operational path from the v1.1-rc reference implementation to the Midgard mainnet. We are explicit about what Kern is not, what audits are required before launch, and which design decisions are deliberate trade-offs.
 
@@ -24,7 +24,7 @@ The reference implementation is open-source under Apache-2.0 and ships with 483 
 2. **Motivation** — the structural gap in existing L1s
 3. **Use cases envisioned** — nine personae across compliance, public goods, oracles, identity
 4. **The core thesis: institutional legibility** — what Kern provides that other L1s don't (5 rows)
-5. **Consensus** — four-phase BFT finality with LPoS, validator economics, slashing
+5. **Consensus** — four-phase BFT finality with bonded delegation, validator economics, slashing
 6. **Skald and the KVM** — first-class invariants, static typing, deterministic interpreter
 7. **EVM compatibility via Optimistic Smart Rollups** — Solidity gets a home without compromising L1 design
 8. **The slashable attestation primitive** — the new L1 primitive in v1.1-rc
@@ -297,7 +297,7 @@ The comparison table below lists five dimensions critical to institutional legib
 
 **Significance**: A foundation operating Kern treasury can allocate €millions/year through transparent on-chain proposals without ever requiring an off-chain committee. The protocol can adopt new features through governance without forking, which is the property that lets the protocol evolve over decade-plus time horizons.
 
-#### Row 3 — Liquid Proof-of-Stake without Liquid Staking Tokens
+#### Row 3 — Bonded Proof-of-Stake delegation without liquid staking tokens
 
 | L1 | What they offer | Gap |
 |---|---|---|
@@ -305,9 +305,9 @@ The comparison table below lists five dimensions critical to institutional legib
 | Tezos | Native LPoS with delegation; delegator keeps custody | Operationally smooth; no LST risk |
 | Solana | Validator stake locked; delegation requires lockup with cooldown | Capital inefficiency; same UX issues as ETH |
 | Cosmos | Similar to Solana — delegated stake with cooldown | Capital inefficiency |
-| **Kern** | **Liquid PoS LPoS: delegators keep custody of KRN, the delegation is a pointer. No LSTs, no rehypothecation, no Lido equivalent. EVM compatibility via rollups, so this protocol-level property is preserved even when EVM applications run on top.** | **Institutional staking participants (insurance funds, pensions) can stake KRN without introducing a third-party LST counterparty. Custodians can offer staking-as-a-service without rehypothecation risk.** |
+| **Kern** | **Bonded delegation: delegated KRN are held by the protocol in a bond to one validator, never by the validator itself; the bond weighs in consensus, earns rewards, is slashed with the validator and is released after an unbonding period. No LSTs, no rehypothecation, no Lido equivalent. EVM compatibility via rollups, so this protocol-level property is preserved even when EVM applications run on top.** | **Institutional staking participants (insurance funds, pensions) can stake KRN without introducing a third-party LST counterparty: the bond and its slashing are protocol rules. The trade-off is liquidity: bonded KRN cannot be spent until the unbonding period ends.** |
 
-**Significance**: Insurance regulators in many EU jurisdictions cannot approve staking products that rely on LSTs (counterparty risk too opaque). Kern's LPoS model is the only design where regulated insurance balance sheets can stake at scale.
+**Significance**: Staking products that rely on LSTs add a counterparty whose risk is hard to assess for regulated balance sheets. In Kern, as in other bonded designs, delegation needs no such counterparty: the bond, the unbonding period and the slashing are protocol rules that anyone can verify on-chain.
 
 #### Row 4 — Slashable attestations as L1 primitive
 
@@ -368,7 +368,7 @@ This composition is not coincidental — it falls out naturally from having the 
 
 ## 5. Consensus
 
-Kern's consensus engine is a Python implementation of a BFT finality protocol in the four-phase family (propose → prevote → precommit → commit) with Liquid Proof-of-Stake delegation.
+Kern's consensus engine is a Python implementation of a BFT finality protocol in the four-phase family (propose → prevote → precommit → commit) with bonded Proof-of-Stake delegation, a lock and valid round in the Tendermint style, and a persistent signing journal on every validator.
 
 ### 3.1 Design goals
 
@@ -381,16 +381,15 @@ The consensus engine optimizes for:
 
 ### 3.2 Validator economics
 
-Validators (Kern calls them *bakers*) stake KRN to participate. Delegators can lend their stake without giving up custody — the KRN remains in the delegator's account; the delegation is a pointer to a validator that the validator's effective stake includes. This is **Liquid Proof-of-Stake without Liquid Staking Tokens**: no Lido equivalent, no rehypothecation, no LST risk.
+Validators (Kern calls them *bakers*) stake KRN to participate. Holders can delegate without running a node: the delegated KRN leave their spendable balance and are held by the protocol in a bond to one validator, never by the validator itself. The bond counts toward the validator's consensus weight from the next epoch, earns a share of its rewards, and is slashed with it. Undelegating removes the weight at once and starts an unbonding period (86 400 blocks by default) during which the bond stays locked and slashable. This is **bonded Proof-of-Stake delegation without liquid staking tokens**: no Lido equivalent, no rehypothecation, no derivative token. The full rules are in [`staking.md`](staking.md).
 
 Block rewards come from two sources: newly issued KRN per the adaptive issuance schedule, and transaction fees. The split between validator and delegators is determined by a per-validator commission rate (default 10%).
 
 Slashing applies to:
-- Double-baking (signing two distinct blocks at the same level): -100% of bond
-- Double-endorsing (signing two distinct endorsements for the same block at the same round): -50% of bond
-- Governance equivocation (voting both sides of the same proposal in the same phase): -30% of bond
+- Consensus equivocation: two signed pre-endorsements, or two signed endorsements, by the same validator for different blocks at the same level and round.
+- Governance equivocation: voting both sides of the same proposal in the same phase.
 
-The slashing math is consistent across all surfaces: 30% slash, 10% whistleblower reward, 60% burn (see attestation primitive in §8 for the same numbers applied to off-chain claims).
+Proposing two different blocks is not slashable on its own; only the votes are. For an offence at level L, the slash removes 30% of the validator's own stake (10% of the slashed amount goes to the reporter, the rest is burned) and burns 30% of every delegated tranche that was backing the validator at L. The validator's consensus weight drops at once. The attestation primitive (§8) applies the same 30% rate to attestation bonds.
 
 ### 5.3 The block lifecycle, step by step
 
@@ -409,7 +408,7 @@ A block is produced in a four-move round. Most blocks settle in round 0; rounds 
                      of stake             = endorsed
 ```
 
-The **>2/3 stake** quorum is what makes finality deterministic: as long as fewer than one-third of validators are malicious or offline, an endorsed block cannot be reverted. A failed round (proposer offline, or block fails to reach quorum within `1 + n` seconds) hands off to the next proposer, selected via a round-incremented seed.
+The **>2/3 stake** quorum is what makes finality deterministic: as long as fewer than one-third of validators are malicious or offline, an endorsed block cannot be reverted. A failed round (proposer offline, or block fails to reach quorum before the round's timeout, which grows with the round number) hands off to the next proposer, selected via a round-incremented seed. Every level starts again at round 0. A validator that endorsed a block in one round is locked on it: it pre-endorses no other block at that level unless it sees a pre-endorsement quorum for that block from a later round, which is what keeps two rounds from finalizing two different blocks (see [`consensus-locking.md`](consensus-locking.md)).
 
 ### 5.4 The block reward, and where it goes
 
@@ -423,7 +422,9 @@ Each finalized block mints a fresh reward (the issuance — see §11) and splits
              └── 90% of pool → Endorsers, pro-rata by stake
 ```
 
-At the 50% target staking ratio, the reward is ~0.079 KRN/block (79 220 mukrn). The proposer additionally keeps the *fees* of every successful transaction it includes; failed-transaction fees are burned. Delegators share their baker's rewards via the per-validator commission (Liquid PoS — custody stays with the delegator).
+In v1.1-rc the rewarded endorser set is the proposer alone, so the proposer receives the whole baker pool. Paying the endorsers of the network needs per-parent-block accounting, which is not implemented yet.
+
+At the 50% target staking ratio, the reward is ~0.079 KRN/block (79 220 mukrn). The proposer additionally keeps the *fees* of every successful transaction it includes; failed-transaction fees are burned. Delegators share their baker's rewards after the per-validator commission; their bonds are held by the protocol, not by the baker.
 
 The L1 transaction fee is a flat sender-chosen `tx.fee` paid in mukrn (Skald executes loop-free and non-recursive, so termination is structural and per-tx compute metering is not required at the L1 layer; the Yellow Paper-compliant gas metering applies inside the rollup Mini-EVM, §7). An **optional, governance-gated fee floor and per-block size cap** can be activated to add a compute-proportional fee component and a spam bound; it is off by default and detailed in [`fee-floor.md`](fee-floor.md).
 
@@ -626,7 +627,7 @@ Two governance tracks run in parallel on-chain, each with its own cycle and para
 
 ### 8.1 Protocol amendment track
 
-For changes to consensus rules, gas pricing, the KVM, Skald itself, or any other protocol parameter. Follows a four-phase Liquid PoS cycle (Proposal → Exploration → Cooldown → Adoption) over approximately 25 days. Activation requires 80% supermajority of validator-weighted stake and 25% quorum.
+For changes to consensus rules, gas pricing, the KVM, Skald itself, or any other protocol parameter. Follows a four-phase cycle (Proposal → Exploration → Cooldown → Adoption) over approximately 25 days. Activation requires 80% supermajority of validator-weighted stake and 25% quorum.
 
 The protocol amendment can swap function implementations (the on-chain code is upgradable via a coordinated vote), change gas pricing constants, and modify any documented governance-amendable parameter.
 
@@ -745,7 +746,7 @@ Beyond the setup guides, the protocol's full specification is split across topic
 - [`architecture.md`](architecture.md) — component layout, module boundaries, data flow
 - [`consensus.md`](consensus.md) — BFT protocol detail, finality conditions, view changes
 - [`bft.md`](bft.md) — multi-validator BFT implementation specifics
-- [`staking.md`](staking.md) — Liquid PoS LPoS delegation mechanics
+- [`staking.md`](staking.md) — bonded delegation mechanics
 
 **Smart contracts**
 - [`skald-language.md`](skald-language.md) — Skald language reference (grammar, types, semantics)
@@ -821,7 +822,7 @@ Quick start to run Kern locally:
 git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
 cd kern
 pip install -e ".[dev,explorer,docs]"
-pytest tests/                # 857 tests should pass in ~20 seconds
+pytest tests/                # 969 tests should pass in about 2 minutes
 python networks/devnet_bootstrap.py    # local 3-validator devnet
 python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 ```
@@ -910,7 +911,7 @@ python networks/devnet_bootstrap.py
 
 This work draws on, and explicitly acknowledges, intellectual debt to:
 
-- **Tezos** for the LPoS delegation model, on-chain self-amendment, and Tenderbake consensus design
+- **Tezos** for baking delegation without liquid staking tokens, on-chain self-amendment, and Tenderbake consensus design
 - **Ethereum** for the BN254 precompiles, the rollup architecture pattern, the foundational ideas of "decentralized applications," and the Yellow Paper that we use for EVM compatibility
 - **Optimism** for the Retroactive Public Goods Funding mechanism and the trusted-setup approach to ZK infrastructure
 - **Vitalik Buterin, Zoë Hitzig, and Glen Weyl** for Quadratic Funding (Liberal Radicalism, 2018)

@@ -131,7 +131,7 @@ class SimNode:
             j = SigningJournal(self.journal_path, "sim")
             rec = j.restore(self.level)
             self.engine.restore_lock(self.level, rec.locked_round, rec.locked_hash,
-                                     rec.valid_round, rec.valid_hash)
+                                     rec.valid_round, rec.valid_hash, rec.valid_qc)
             self.round = max(0, rec.max_round)
             self.engine.journal = j
         self.engine.current_round = self.round

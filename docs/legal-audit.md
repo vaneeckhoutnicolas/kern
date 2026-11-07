@@ -53,7 +53,7 @@ The reference implementation implements **public specifications** that anyone ma
 | Base58check encoding | Originally Bitcoin (Andresen) | `kern/crypto.py` | Standard algorithm |
 | BN254 / alt_bn128 curve | Pereira et al., Aranha & Barreto papers; standardised in EIP-197 | `kern/precompiles.py` via `py_ecc` | Standard curve, library imported |
 | Tenderbake (4-phase BFT family) | Astefanoaei et al. 2021 (academic paper) | `kern/consensus.py` | Cited as "BFT consensus algorithm in the four-phase family" |
-| Liquid Proof-of-Stake (delegated PoS without LST) | Class of mechanisms with multiple prior implementations | `kern/baking.py`, `kern/delegation.py` | Documented as "Liquid PoS" generic class |
+| Delegated Proof-of-Stake without LST (bonded since v1.1-rc Phase D) | Class of mechanisms with multiple prior implementations | `kern/chain.py` (delegation and slashing), `kern/issuance.py` (reward split) | Documented as the generic class "bonded Proof-of-Stake delegation" |
 
 **Verdict**: every external specification implemented is cited in the documentation. No specification is implemented as if it were original.
 

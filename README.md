@@ -8,6 +8,8 @@
 
 **Kern** is a Layer-1 blockchain protocol that combines EVM tooling and developer-ecosystem compatibility with native on-chain governance, formal verifiability, and bonded Proof-of-Stake with delegation. Smart contracts are written in **Skald**, a small statically typed language (scalar types `int`, `bool`, `string`, `address`; no recursion, no loops) with declared invariants that the runtime re-checks after every entry call.
 
+**Bonded Proof-of-Stake** means that the KRN securing the chain are locked in the protocol while they do so. Validators bond their own stake, and holders who do not run a node can delegate by bonding KRN to a validator; the protocol holds the bond, never the validator. A bond gives consensus weight and a share of rewards, can be slashed if its validator signs conflicting votes, and returns to its owner only after an unbonding period. There is no derivative token. Unlike liquid staking, bonded KRN cannot be spent while they secure the chain. Details: [`docs/staking.md`](docs/staking.md).
+
 > **Status.** Kern is a Layer-1 protocol with a Python reference implementation, at devnet stage; no public network is in operation. The repository's `genesis.json` is a devnet file whose keys are public placeholders. Nothing here has been professionally audited, and nothing here has monetary value (see [docs/disclaimer.md](docs/disclaimer.md)).
 
 This repository is the **v1.1 release candidate** — building on the v1.0-rc audit-frozen foundation with **slashable attestations** as a new L1 primitive, three **tokenized-securities Skald templates** for the EU securities regime — MiFID II / Prospectus Regulation / AIFMD, *not* MiCA, which excludes financial instruments under Art. 2(4) (startup equity, institutional fund, real estate; see [docs/sto-mica.md](docs/sto-mica.md)), **public goods funding primitives** (Quadratic Funding + Retroactive PGF), an **oracle network** (generic data + DeFi prices + schema marketplace), **ZK-claims** for privacy-preserving attestations (a Groth16 verifier over BN254 against registered verifier keys; no circuits, trusted setup or prover are shipped), and **Heimdall** — the official block explorer + monitoring stack that surfaces the institutional-legibility features Kern was built to support. See [docs/v11rc-changes.md](docs/v11rc-changes.md) for the full vertical and [docs/setup-heimdall-operator.md](docs/setup-heimdall-operator.md) for the explorer.
@@ -63,7 +65,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 | [v0.5 changes](docs/v05-changes.md) | What was new in v0.5 |
 | [v0.6 changes](docs/v06-changes.md) | What was new in v0.6 |
 | [v0.7-v0.9 changes](docs/v07-v08-v09-changes.md) | BN254 + dynamic gas + voting + observability + fuzzing |
-| [v1.0-rc changes](docs/v10rc-changes.md) | Genesis 100M + Liquid PoS delegation + real pairing + API freeze |
+| [v1.0-rc changes](docs/v10rc-changes.md) | Genesis 100M + PoS delegation (bonded since Phase D) + real pairing + API freeze |
 | [**v1.1-rc changes**](docs/v11rc-changes.md) | **Slashable attestations + STO securities templates + public goods funding + oracle network + ZK-claims (this version)** |
 | [Pre-mainnet checklist](docs/pre-mainnet-checklist.md) | Everything that must complete before Midgard launches |
 
@@ -71,7 +73,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~50 markdown specifications, 857 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~50 markdown specifications, 969 tests passing.**
 
 ```
 kern/
@@ -123,7 +125,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 857 tests, none skipped
+├── tests/                      # 969 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -184,7 +186,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 857 passed in ~25s
+# 969 passed in about 2 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### Open the block explorer (Heimdall)
@@ -343,13 +345,13 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | v0.7 | BN254 scaffolding + dynamic gas constants (Yellow Paper) | ✅ |
 | v0.8 | Quadratic + delegated voting + equivocation tracking | ✅ |
 | v0.9 | Observability + property-based fuzzing + devnet bootstrap | ✅ |
-| **v1.0-rc** | Genesis 100M + Liquid PoS delegation + dynamic gas wired + real BN254 + slashing tx + API freeze | ✅ |
+| **v1.0-rc** | Genesis 100M + PoS delegation (bonded since Phase D) + dynamic gas wired + real BN254 + slashing tx + API freeze | ✅ |
 | **v1.1-rc** | **Slashable attestations + STO securities templates + QF/RPGF + oracle network + ZK-claims** | **✅** |
 | **v1.1-rc Phase A** | **Hardening: consensus on the wire (verified > 2/3 quorum on every networked block), strict ingress decoding, integer-only issuance, periodic snapshots + replay, catch-up sync, mypy clean** | **✅** |
 | **v1.1-rc Phase B** | **Fixes from two independent external reviews (not a professional security audit): exception boundary, attestation bond unbonding, current level, single delegation truth, chain_id enforcement, genesis checks, real Groth16 verifier, executed-step rollup challenges, portable precompiles ([details](docs/phase-b-changes.md))** | **✅** |
 | **v1.1-rc Phase C** | **Consensus hardening from a third external review: quorum certificates bound to the proposed block, on-chain slashing of consensus equivocation, one effective validator set per epoch ([details](docs/phase-c-changes.md))** | **✅** |
 | **v1.1-rc Phase D** | **Consensus weight backed by slashable collateral: bonded own stake and delegations with an unbonding period, evidence window, bounded BFT state ([details](docs/phase-d-changes.md))** | **✅** |
-| **v1.1-rc Phase E** | **Undelegation lowers weight at once, slashing limited to exposed stake; consensus fork reproduced in a network harness and closed by a Tendermint-style lock and valid round with a persistent signing journal, validated on the simulator and on four node processes on one machine ([details](docs/phase-e-changes.md), [design](docs/consensus-locking.md))** | **🟡 in progress (this version): review of the implementation, multi-machine devnet** |
+| **v1.1-rc Phase E** | **Undelegation lowers weight at once, slashing limited to exposed stake; consensus fork reproduced in a network harness and closed by a Tendermint-style lock and valid round with a persistent signing journal; crash recovery of the journal, the locked blocks and their pre-endorsement certificates, after review of the implementation; validated on the simulator and on real node processes on one machine, including crashes of a dominant validator and of the whole cluster ([details](docs/phase-e-changes.md), [design](docs/consensus-locking.md))** | **🟡 in progress (this version): multi-machine devnet** |
 | kern-go | Go client in a sibling repo — this repo remains the executable specification; kern-go becomes the operator reference after differential testing ([details](docs/roadmap.md)) | 🔵 announced |
 | v1.0 | First stable release after audit cycle 1 | 🔵 |
 | Yggdrasil testnet | Public testnet, permissionless validators | 🔵 |
@@ -361,7 +363,7 @@ This is a **reference implementation and protocol specification**, not yet a pro
 
 ## After v1.1-rc — what's next
 
-**Multi-validator consensus is not yet proven in the field.** Phase E found that the engine could finalize two blocks at the same level under message delay alone, and fixed it with a Tendermint-style lock and valid round ([consensus-locking.md](docs/consensus-locking.md)). The fix passes every scenario of the network simulator, including one quarter of the stake byzantine, and runs on four node processes on one machine. It has not run on several machines with independent operators and has not been audited; no public testnet should start before both. Beyond that, what remains is mostly execution work that cannot be solved by writing more code. See [`docs/post-code-roadmap.md`](docs/post-code-roadmap.md) for the detailed plan. In summary:
+**Multi-validator consensus is not yet proven in the field.** Phase E found that the engine could finalize two blocks at the same level under message delay alone, and fixed it with a Tendermint-style lock and valid round ([consensus-locking.md](docs/consensus-locking.md)). The fix passes every scenario of the network simulator, including one quarter of the stake byzantine, and runs on real node processes on one machine, including crashes of a validator holding 90% of the stake and of all validators at once, followed by a restart. It has not run on several machines with independent operators and has not been audited; no public testnet should start before both. Beyond that, what remains is mostly execution work that cannot be solved by writing more code. See [`docs/post-code-roadmap.md`](docs/post-code-roadmap.md) for the detailed plan. In summary:
 
 | Phase | What | Indicative time | Indicative cost |
 |---|---|---|---:|

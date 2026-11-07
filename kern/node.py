@@ -301,8 +301,10 @@ class Node:
         if suspend:
             self.bft.no_signing_through_level = level
         rec = journal.restore(level)
-        self.bft.restore_lock(level, rec.locked_round, rec.locked_hash,
-                              rec.valid_round, rec.valid_hash)
+        if self.bft.restore_lock(level, rec.locked_round, rec.locked_hash,
+                                 rec.valid_round, rec.valid_hash, rec.valid_qc):
+            LOG.info("restored the pre-endorsement certificate of round %d at level %d "
+                     "from the signing journal", rec.valid_round, level)
         self._round = max(0, rec.max_round)
         self.bft.journal = journal
         self.journal = journal
@@ -352,6 +354,9 @@ class Node:
                           block.header.level)
             return False
         return True
+
+    def _own_address(self) -> Optional[str]:
+        return self.baker.keypair.address if self.baker is not None else None
 
     def _base_timeout(self) -> float:
         return max(2.0, self.block_time * 4)
@@ -551,6 +556,8 @@ class Node:
 
     async def _emit_consensus(self, msgs: List[ConsensusMessage]) -> None:
         for m in msgs:
+            if m.kind == MsgKind.ENDORSE and m.validator == self._own_address():
+                failpoints.hit("before_endorse_broadcast", m.level)
             if self.network:
                 await self.network.broadcast_consensus(m.to_dict())
             await self._ingest_consensus(m, from_wire=False)
