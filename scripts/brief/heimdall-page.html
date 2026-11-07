@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face { font-family: 'Fraunces'; src: url('fonts/Fraunces.ttf'); }
+  @font-face { font-family: 'Instrument Sans'; src: url('fonts/InstrumentSans.ttf'); }
+  @font-face { font-family: 'JetBrains Mono'; src: url('fonts/JetBrainsMono.ttf'); }
+  @font-face { font-family: 'Noto Sans Runic'; src: url('fonts/NotoSansRunic.ttf'); }
+
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --ink: #0E1A2B;
+    --amber: #C2885E;
+    --amber-deep: #A56B42;
+    --paper: #FAFAF7;
+    --rule: #E4E0D8;
+    --muted: #6B7280;
+  }
+  body {
+    font-family: 'Instrument Sans', sans-serif;
+    background: #FFFFFF;
+    color: var(--ink);
+    width: 210mm; height: 297mm;
+    padding: 14mm 13mm 0 13mm;
+    font-size: 9.2pt;
+    line-height: 1.45;
+  }
+
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt; font-weight: 600;
+    letter-spacing: 0.28em;
+    color: var(--amber-deep);
+    text-transform: uppercase;
+    padding-bottom: 2.4mm;
+    border-bottom: 0.4pt solid var(--rule);
+    margin-bottom: 3.2mm;
+  }
+  .lede {
+    font-size: 9.4pt;
+    margin-bottom: 2.6mm;
+  }
+  .lede strong { font-weight: 600; }
+  .lede .runic { font-family: 'Noto Sans Runic'; color: var(--amber-deep); }
+  .note {
+    font-size: 8pt; color: var(--muted);
+    margin-bottom: 4.5mm;
+  }
+  .note .mono { font-family: 'JetBrains Mono', monospace; font-size: 7.2pt; }
+
+  /* ── Browser frame ───────────────────────────── */
+  .browser {
+    border: 0.6pt solid #D7D3CA;
+    border-radius: 2.4mm;
+    overflow: hidden;
+    box-shadow: 0 1.2mm 3mm rgba(14,26,43,0.10);
+    background: #fff;
+  }
+  .browser-bar {
+    background: var(--ink);
+    color: #B9C2CE;
+    padding: 2.1mm 3.4mm;
+    display: flex; align-items: center; gap: 2mm;
+  }
+  .dot { width: 2.3mm; height: 2.3mm; border-radius: 50%; background: #3A4A60; display: inline-block; }
+  .browser-url {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6.6pt;
+    background: rgba(255,255,255,0.07);
+    border-radius: 1mm;
+    padding: 0.8mm 2.6mm;
+    margin-left: 1.6mm;
+    color: #D5DBE3;
+  }
+
+  /* ── Explorer header (mirrors kern_explorer/templates/base.html) ── */
+  .exp-head {
+    background: var(--ink); color: #EDEAE2;
+    padding: 2.6mm 4mm;
+    display: flex; align-items: baseline; justify-content: space-between;
+  }
+  .exp-brand { font-family: 'Fraunces', serif; font-weight: 600; font-size: 10.5pt; }
+  .exp-brand .runic { font-family: 'Noto Sans Runic'; color: var(--amber); margin-right: 1.4mm; }
+  .exp-nav { font-size: 6.8pt; color: #A8B2BF; }
+  .exp-nav span { margin-left: 2.6mm; }
+  .exp-nav .active { color: var(--amber); border-bottom: 0.5pt solid var(--amber); padding-bottom: 0.6mm; }
+
+  .exp-body { background: #F7F6F2; padding: 3.6mm 4mm 4mm 4mm; }
+  .exp-h1 { font-size: 11pt; font-weight: 700; }
+  .exp-sub { font-size: 7pt; color: var(--muted); margin-bottom: 3mm; }
+
+  /* stat cards (home.html stat_cards) */
+  .stats { display: flex; gap: 1.8mm; margin-bottom: 3.2mm; }
+  .stat {
+    flex: 1; background: #fff; border: 0.5pt solid #E2DFD7;
+    border-radius: 1.6mm; padding: 1.8mm 2.2mm;
+  }
+  .stat .k { font-size: 5.4pt; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .stat .v { font-size: 10pt; font-weight: 700; margin-top: 0.6mm; }
+
+  /* vertical cards (home.html vertical_cards) */
+  .vert-label { font-size: 6.2pt; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 1.6mm; }
+  .verts { display: flex; gap: 1.8mm; margin-bottom: 3.4mm; }
+  .vert {
+    flex: 1; background: linear-gradient(135deg, #FFFFFF, #F2F0EA);
+    border: 0.5pt solid #E2DFD7; border-radius: 1.6mm; padding: 2.2mm 2.6mm;
+  }
+  .vert .row { display: flex; justify-content: space-between; align-items: baseline; }
+  .vert .name { font-size: 7.6pt; font-weight: 600; }
+  .vert .num { font-size: 11pt; font-weight: 700; color: var(--amber-deep); }
+  .vert .desc { font-size: 6.2pt; color: var(--muted); margin-top: 0.8mm; }
+
+  /* tables (home.html recent blocks / attestations registry) */
+  .tables { display: flex; gap: 3mm; }
+  .tbl-wrap { flex: 1; }
+  .tbl-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1.4mm; }
+  .tbl-title h3 { font-size: 8.2pt; font-weight: 600; }
+  .tbl-title .more { font-size: 6pt; color: var(--amber-deep); }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 0.5pt solid #E2DFD7; border-radius: 1.6mm; overflow: hidden; }
+  thead { background: #EFEDE7; }
+  th { font-size: 5.6pt; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 1.4mm 2mm; font-weight: 600; }
+  th.r, td.r { text-align: right; }
+  td { font-size: 6.8pt; padding: 1.3mm 2mm; border-top: 0.4pt solid #EEEBE4; }
+  .hash { font-family: 'JetBrains Mono', monospace; font-size: 6.2pt; color: #44506B; }
+  .lvl { color: var(--amber-deep); font-weight: 600; }
+  .pill { font-size: 5.4pt; font-weight: 600; border-radius: 2mm; padding: 0.4mm 1.6mm; letter-spacing: 0.04em; }
+  .ok { background: #E5EFE4; color: #2F6B3A; }
+  .zk { background: #E9E7F4; color: #4A4380; }
+  .slashed { background: #F6E2DC; color: #9C3D22; }
+  .age { color: var(--muted); font-size: 6.2pt; }
+
+  /* metrics strip */
+  .metrics {
+    margin-top: 3.2mm;
+    background: var(--ink); border-radius: 1.6mm;
+    padding: 2.2mm 3mm;
+    font-family: 'JetBrains Mono', monospace; font-size: 6.2pt; color: #9FB3A6;
+    line-height: 1.7;
+  }
+  .metrics .c { color: #5E7287; }
+  .metrics .n { color: #E8C9A8; }
+
+  .caption {
+    font-size: 7pt; color: var(--muted);
+    margin-top: 3mm; padding-top: 2.2mm;
+    border-top: 0.4pt solid var(--rule);
+  }
+  .caption strong { color: var(--ink); font-weight: 600; }
+
+  /* facts row, brief style (like STATUS section p.2) */
+  .facts { display: flex; gap: 2.6mm; margin-top: 4.5mm; }
+  .fact { flex: 1; border: 0.5pt solid var(--rule); background: var(--paper); padding: 2.6mm 3mm; }
+  .fact .k { font-family: 'JetBrains Mono', monospace; font-size: 5.8pt; letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); margin-bottom: 1.2mm; }
+  .fact .v { font-family: 'Fraunces', serif; font-size: 9.5pt; font-weight: 600; margin-bottom: 0.8mm; }
+  .fact .d { font-size: 6.6pt; color: var(--muted); line-height: 1.4; }
+
+  /* footer, matching brief navy band */
+  .pagefoot {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--ink); color: #B9C2CE;
+    padding: 4mm 13mm;
+    font-size: 6.8pt;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .pagefoot .runic { font-family: 'Noto Sans Runic'; color: var(--amber); font-size: 9pt; }
+</style>
+</head>
+<body>
+
+  <div class="section-label">The Explorer — Heimdall</div>
+
+  <p class="lede"><strong>Legibility needs a window.</strong> Heimdall is Kern's official block explorer and monitoring stack — it surfaces what generic explorers cannot: the live securities-compliance state of each STO, oracle health per feed, the active attestation registry, and the slashing economy. It ships with the v1.1-rc reference implementation and runs against a local node out of the box.</p>
+  <p class="note">FastAPI + SQLite indexer · 19 HTML pages · 12 JSON API endpoints · 7 Grafana dashboards · 10 Prometheus alerting rules · <span class="mono" style="white-space:nowrap;">pip install -e ".[explorer]" &amp;&amp; heimdall</span></p>
+
+  <div class="browser">
+    <div class="browser-bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="browser-url">http://127.0.0.1:8800 — local devnet</span>
+    </div>
+
+    <div class="exp-head">
+      <div class="exp-brand"><span class="runic">ᚴ</span>Heimdall</div>
+      <div class="exp-nav">
+        <span class="active">Home</span><span>Blocks</span><span>Transactions</span><span>Validators</span><span>Contracts</span><span>Attestations</span><span>STO</span><span>Public goods</span><span>Oracles</span><span>Governance</span>
+      </div>
+    </div>
+
+    <div class="exp-body">
+      <div class="exp-h1">Kern network at a glance</div>
+      <div class="exp-sub">Surfacing the institutional-legibility features Kern was built to support.</div>
+
+      <div class="stats">
+        <div class="stat"><div class="k">Head level</div><div class="v">41,237</div></div>
+        <div class="stat"><div class="k">Transactions</div><div class="v">128,402</div></div>
+        <div class="stat"><div class="k">Validators</div><div class="v">3</div></div>
+        <div class="stat"><div class="k">Accounts</div><div class="v">214</div></div>
+        <div class="stat"><div class="k">Contracts</div><div class="v">10</div></div>
+        <div class="stat"><div class="k">Attestations</div><div class="v">86</div></div>
+        <div class="stat"><div class="k">Proposals</div><div class="v">4</div></div>
+      </div>
+
+      <div class="vert-label">v1.1-rc verticals</div>
+      <div class="verts">
+        <div class="vert">
+          <div class="row"><span class="name">STO compliance</span><span class="num">3</span></div>
+          <div class="desc">Securities contracts · all invariants holding · 0 blocked transitions pending</div>
+        </div>
+        <div class="vert">
+          <div class="row"><span class="name">Oracle feeds</span><span class="num">5</span></div>
+          <div class="desc">4 healthy · 1 circuit breaker tripped on divergence (auto-halted)</div>
+        </div>
+        <div class="vert">
+          <div class="row"><span class="name">Public goods</span><span class="num">2</span></div>
+          <div class="desc">1 quadratic funding round open · 1 retroactive PGF nomination window</div>
+        </div>
+      </div>
+
+      <div class="tables">
+        <div class="tbl-wrap">
+          <div class="tbl-title"><h3>Recent blocks</h3><span class="more">View all →</span></div>
+          <table>
+            <thead><tr><th>Level</th><th>Hash</th><th>Baker</th><th class="r">Txs</th><th class="r">Age</th></tr></thead>
+            <tbody>
+              <tr><td class="lvl">41,237</td><td class="hash">9f3a1c…d24e</td><td class="hash">kn1q8w…f4a3</td><td class="r">4</td><td class="r age">1 s</td></tr>
+              <tr><td class="lvl">41,236</td><td class="hash">c071be…883f</td><td class="hash">kn1m4r…e1bc</td><td class="r">2</td><td class="r age">2 s</td></tr>
+              <tr><td class="lvl">41,235</td><td class="hash">5de92a…6b07</td><td class="hash">kn1x9t…3d77</td><td class="r">7</td><td class="r age">3 s</td></tr>
+              <tr><td class="lvl">41,234</td><td class="hash">e84f00…91ca</td><td class="hash">kn1q8w…f4a3</td><td class="r">0</td><td class="r age">4 s</td></tr>
+              <tr><td class="lvl">41,233</td><td class="hash">27b6dd…405e</td><td class="hash">kn1m4r…e1bc</td><td class="r">3</td><td class="r age">5 s</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="tbl-wrap">
+          <div class="tbl-title"><h3>Attestation registry</h3><span class="more">View all →</span></div>
+          <table>
+            <thead><tr><th>Schema</th><th>Issuer</th><th>Status</th><th class="r">Bond</th></tr></thead>
+            <tbody>
+              <tr><td class="hash">kyc.over_18_v1</td><td class="hash">kn1q8w…f4a3</td><td><span class="pill ok">active</span></td><td class="r">1,000 KRN</td></tr>
+              <tr><td class="hash">nav.daily_v2</td><td class="hash">kn1m4r…e1bc</td><td><span class="pill ok">active</span> <span class="pill zk">zk</span></td><td class="r">5,000 KRN</td></tr>
+              <tr><td class="hash">price.btc_eur_v3</td><td class="hash">kn1k2j…a9e0</td><td><span class="pill ok">active</span></td><td class="r">2,500 KRN</td></tr>
+              <tr><td class="hash">energy.grid_freq</td><td class="hash">kn1x9t…3d77</td><td><span class="pill slashed">slashed</span></td><td class="r">300 KRN</td></tr>
+              <tr><td class="hash">carbon.scope3_v1</td><td class="hash">kn1p7h…b621</td><td><span class="pill ok">active</span> <span class="pill zk">zk</span></td><td class="r">800 KRN</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="metrics">
+        <span class="c"># curl http://127.0.0.1:8800/metrics</span><br>
+        kern_attestations_active <span class="n">86</span>&nbsp;&nbsp;·&nbsp;&nbsp;kern_sto_contracts_compliant <span class="n">3</span>&nbsp;&nbsp;·&nbsp;&nbsp;kern_governance_proposals_active <span class="n">4</span><br>kern_oracle_feeds_circuit_breaker_tripped <span class="n">1</span>&nbsp;&nbsp;·&nbsp;&nbsp;kern_slashings_total <span class="n">1</span>&nbsp;&nbsp;·&nbsp;&nbsp;kern_attestation_bond_locked_krn <span class="n">9600</span>
+      </div>
+    </div>
+  </div>
+
+  <p class="caption"><strong>What is shown.</strong> The Heimdall home view as shipped in the v1.1-rc reference implementation, populated with illustrative local-devnet data. The interface, navigation, metric names, and table structures are those of the actual software; figures are representative of a development network, not a live public chain. Operator guide: <span style="font-family:'JetBrains Mono'; font-size:6.4pt;">docs/setup-heimdall-operator.md</span>.</p>
+
+  <div class="facts">
+    <div class="fact">
+      <div class="k">Compliance, live</div>
+      <div class="v">Per-contract dashboards</div>
+      <div class="d">Each STO contract is auto-classified by Skald template; its invariants are displayed with their current truth value, block by block.</div>
+    </div>
+    <div class="fact">
+      <div class="k">Accountability, priced</div>
+      <div class="v">The slashing economy</div>
+      <div class="d">Active bonds, equivocation evidence, and slashing events are first-class objects — the cost of lying on-chain is a queryable figure.</div>
+    </div>
+    <div class="fact">
+      <div class="k">Operations, monitored</div>
+      <div class="v">Prometheus → Grafana</div>
+      <div class="d">~36 exported metrics, 7 dashboards, 10 alerting rules — the same observability surface an institutional operator would demand.</div>
+    </div>
+  </div>
+
+  <div class="pagefoot">
+    <span>kern.brussels · github.com/vaneeckhoutnicolas/kern — Heimdall ships under Apache-2.0 with the reference implementation.</span>
+    <span class="runic">ᚴ</span>
+  </div>
+
+</body>
+</html>
