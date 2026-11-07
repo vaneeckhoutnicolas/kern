@@ -117,7 +117,14 @@ def test_effective_stake_no_delegators_equals_own():
 
 
 def _b(validator, amount):
+    """Bond record in the pre-Phase E format (no tranches)."""
     return {"validator": validator, "amount": amount}
+
+
+def _bt(validator, amount, level=0):
+    """Bond record as written since Phase E: one tranche bonded at `level`."""
+    return {"validator": validator, "amount": amount,
+            "tranches": [{"level": level, "amount": amount}]}
 
 
 def test_effective_stake_counts_bonded_amounts_only():
@@ -192,7 +199,7 @@ def test_delegate_bonds_the_amount():
     tx = make_delegate_stake(del_kp, validator=val_kp.address, nonce=0, amount=400_000)
     result = apply_transaction(state, tx, baker=val_kp.address)
     assert result.ok, result.error
-    assert state["delegations"][del_kp.address] == _b(val_kp.address, 400_000)
+    assert state["delegations"][del_kp.address] == _bt(val_kp.address, 400_000)
     assert state["balances"][del_kp.address] == before - 400_000 - tx.fee
 
 
@@ -240,7 +247,7 @@ def test_delegate_switches_validator():
     assert apply_transaction(state, make_undelegate_stake(del_kp, nonce=2), baker=val_kp.address).ok
     assert apply_transaction(state, make_delegate_stake(del_kp, val2_kp.address, nonce=3, amount=100),
                              baker=val_kp.address).ok
-    assert state["delegations"][del_kp.address] == _b(val2_kp.address, 100)
+    assert state["delegations"][del_kp.address] == _bt(val2_kp.address, 100)
 
 
 def test_undelegate_starts_unbonding_then_releases():

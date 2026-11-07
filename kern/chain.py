@@ -416,7 +416,7 @@ def _compute_staked(state: dict) -> int:
 def _governance_validator_set(state: dict) -> List[dict]:
     """The validator set as governance must weigh it: same addresses and
     order as state["validators"], with `stake` replaced by the effective
-    stake (own stake plus delegated liquid balances).
+    stake (own stake plus bonded delegations, Phase D).
 
     Phase B (audit 1, findings 5 and 6): there used to be three views of
     delegation (state["delegations"] for rewards, a separate copy inside
@@ -533,10 +533,11 @@ def _apply_block_rewards(state: dict, block: Block) -> None:
 
 # Length of a consensus epoch, in blocks. The validator set the consensus
 # uses (proposer selection, vote weights, quorum and block validation) is a
-# snapshot of EFFECTIVE stake (own stake after slashing + delegated liquid
-# balances) taken at each epoch boundary. Delegation changes therefore move
-# consensus weight only at the next boundary, so nobody can shift weight
-# into a validator just before a vote. Slashing lowers weight at once.
+# snapshot of EFFECTIVE stake (own stake after slashing + bonded
+# delegations) taken at each epoch boundary. A new delegation therefore adds
+# weight only at the next boundary, so nobody can shift weight into a
+# validator just before a vote. Slashing and undelegation lower weight at
+# once (Phase E); inside an epoch weight never goes up.
 # A chain may override it at genesis through state["epoch_blocks"].
 DEFAULT_EPOCH_BLOCKS = 120
 
@@ -748,7 +749,13 @@ def _apply_slash_equivocation(state: dict, tx: Transaction) -> ApplyResult:
     if evidence is None:
         return ApplyResult(ok=False, error="no unconsumed equivocation for this voter")
 
-    err = _slash_validator(state, equivocator, reporter=tx.sender)
+    # The offence is the second, conflicting vote (governance.py records
+    # its level as "second_at_level").
+    offence_level = evidence[1].get("second_at_level", _current_level(state))
+    if not isinstance(offence_level, int) or isinstance(offence_level, bool):
+        offence_level = _current_level(state)
+    err = _slash_validator(state, equivocator, reporter=tx.sender,
+                           offence_level=offence_level)
     if err is not None:
         return ApplyResult(ok=False, error=err)
 
@@ -761,16 +768,51 @@ def _apply_slash_equivocation(state: dict, tx: Transaction) -> ApplyResult:
     return ApplyResult(ok=True, gas_used=tx.gas_limit)
 
 
-def _slash_validator(state: dict, offender: str, reporter: str) -> Optional[str]:
-    """Apply the validator slashing rule to `offender`.
+def _lower_consensus_weight(state: dict, validator: str) -> None:
+    """Bring the validator's entry in the epoch snapshot down to its
+    current effective stake, if that is lower. Never raises it: weight
+    only grows at an epoch boundary. Used after a slash (Phase C) and
+    after an undelegation (Phase E, E2)."""
+    snap = state.get("consensus_set")
+    if snap is None:
+        return
+    now = effective_stake(state, validator)
+    for item in snap:
+        if item["address"] == validator:
+            item["stake"] = min(item["stake"], now)
+
+
+def _cut_exposed_tranches(entry: dict, offence_level: int) -> int:
+    """Slash SLASHING_PERCENTAGE of every tranche of `entry` bonded at or
+    before `offence_level`. Updates the tranches and entry["amount"];
+    returns the amount cut."""
+    tranches = _tranches(entry)
+    total_cut = 0
+    for t in tranches:
+        if t["level"] <= offence_level and t["amount"] > 0:
+            cut = t["amount"] * SLASHING_PERCENTAGE // 100
+            t["amount"] -= cut
+            total_cut += cut
+    entry["tranches"] = tranches
+    entry["amount"] = sum(t["amount"] for t in tranches)
+    return total_cut
+
+
+def _slash_validator(state: dict, offender: str, reporter: str,
+                     offence_level: int) -> Optional[str]:
+    """Apply the validator slashing rule to `offender` for an offence
+    committed at `offence_level`.
 
     - SLASHING_PERCENTAGE of the validator's own stake is removed;
       WHISTLEBLOWER_REWARD_PCT of that goes to `reporter`, the rest is
       burned.
-    - The same percentage of every amount BONDED to the offender, and of
-      every amount still UNBONDING from it, is burned (Phase D: these are
-      locked funds, so they cannot have left before the slash; liquid
-      balances are never touched).
+    - The same percentage of every bond that was EXPOSED at the offence
+      is burned (Phase E, E3): the tranches bonded at or before
+      `offence_level`, in live delegations and in unbonding entries that
+      started unbonding at or after `offence_level`. A bond created after
+      the offence, or one that had already started unbonding before it,
+      was not backing the offender and is not touched. Liquid balances
+      are never touched.
     - The offender's consensus weight drops at once.
 
     Returns an error string if nothing at all can be slashed, else None.
@@ -788,15 +830,16 @@ def _slash_validator(state: dict, offender: str, reporter: str) -> Optional[str]
     for entry in state.get("delegations", {}).values():
         target, amount = _bond(entry)
         if target == offender and amount > 0 and isinstance(entry, dict):
-            cut = amount * SLASHING_PERCENTAGE // 100
-            entry["amount"] = amount - cut
-            delegated_slash += cut
+            delegated_slash += _cut_exposed_tranches(entry, offence_level)
     for entries in state.get("delegation_unbonding", {}).values():
         for entry in entries:
-            if entry["validator"] == offender and entry["amount"] > 0:
-                cut = entry["amount"] * SLASHING_PERCENTAGE // 100
-                entry["amount"] -= cut
-                delegated_slash += cut
+            if entry["validator"] != offender or entry["amount"] <= 0:
+                continue
+            # Entries written before Phase E carry no start level: treat
+            # them as exposed, as Phase D did.
+            if int(entry.get("unbonding_from", offence_level)) < offence_level:
+                continue
+            delegated_slash += _cut_exposed_tranches(entry, offence_level)
 
     if own_slash == 0 and delegated_slash == 0:
         return "no stake to slash"
@@ -807,12 +850,7 @@ def _slash_validator(state: dict, offender: str, reporter: str) -> Optional[str]
 
     # The offender's CONSENSUS weight drops at once, without waiting for
     # the epoch boundary (it can only go down here).
-    snap = state.get("consensus_set")
-    if snap is not None:
-        now = effective_stake(state, offender)
-        for item in snap:
-            if item["address"] == offender:
-                item["stake"] = min(item["stake"], now)
+    _lower_consensus_weight(state, offender)
     return None
 
 
@@ -864,10 +902,11 @@ def _apply_slash_consensus_equivocation(state: dict, tx: Transaction) -> ApplyRe
     if key in done:
         return ApplyResult(ok=False, error="offence already slashed")
 
-    err = _slash_validator(state, offender, reporter=tx.sender)
+    err = _slash_validator(state, offender, reporter=tx.sender,
+                           offence_level=msg_a.level)
     if err is not None:
         return ApplyResult(ok=False, error=err)
-    done[key] = {"reporter": tx.sender, "slashed_at_level": _current_level(state)}
+    done[key] ={"reporter": tx.sender, "slashed_at_level": _current_level(state)}
     return ApplyResult(ok=True, gas_used=tx.gas_limit,
                        extra={"offender": offender, "offence": key})
 
@@ -907,6 +946,17 @@ def _bond(entry) -> Tuple[Optional[str], int]:
     return None, 0
 
 
+def _tranches(entry: dict) -> List[dict]:
+    """Copy of the bonded slices of a delegation or unbonding record, each
+    {"level": bonded_at_level, "amount": int} (Phase E, E3). A record
+    written before Phase E has no slices: its whole amount is one slice
+    bonded at level 0, so it stays exposed to any offence, as in Phase D."""
+    raw = entry.get("tranches")
+    if isinstance(raw, list):
+        return [{"level": int(t["level"]), "amount": int(t["amount"])} for t in raw]
+    return [{"level": 0, "amount": int(entry.get("amount", 0))}]
+
+
 def _apply_delegate_stake(state: dict, tx: Transaction) -> ApplyResult:
     """Bond `tx.amount` KRN from the sender's balance to a validator.
 
@@ -936,23 +986,40 @@ def _apply_delegate_stake(state: dict, tx: Transaction) -> ApplyResult:
     err = _debit(state, tx.sender, amount)
     if err:
         return ApplyResult(ok=False, error=err)
-    delegations[tx.sender] = {"validator": validator, "amount": bonded + amount}
+    # Phase E (E3): remember when each slice was bonded, so a slash only
+    # reaches the slices that were exposed at the offence.
+    level = _current_level(state)
+    previous = delegations.get(tx.sender)
+    tranches = _tranches(previous) if isinstance(previous, dict) and bonded > 0 else []
+    if tranches and tranches[-1]["level"] == level:
+        tranches[-1]["amount"] += amount
+    else:
+        tranches.append({"level": level, "amount": amount})
+    delegations[tx.sender] = {"validator": validator, "amount": bonded + amount,
+                              "tranches": tranches}
     return ApplyResult(ok=True, gas_used=tx.gas_limit,
                        extra={"delegated_to": validator, "bonded": bonded + amount})
 
 
 def _apply_undelegate_stake(state: dict, tx: Transaction) -> ApplyResult:
     """End the sender's delegation. The bond stops counting in consensus
-    and rewards at once, but stays locked and slashable for the unbonding
-    period, then returns to the sender's balance."""
+    and rewards at once (Phase E, E2: the epoch snapshot is lowered in the
+    same transaction), but stays locked for the unbonding period, slashable
+    for offences committed up to the level it started unbonding, then
+    returns to the sender's balance."""
     delegations = state.setdefault("delegations", {})
-    validator, bonded = _bond(delegations.pop(tx.sender, None))
+    record = delegations.pop(tx.sender, None)
+    validator, bonded = _bond(record)
     release_at = None
     if validator is not None and bonded > 0:
-        release_at = _current_level(state) + delegation_unbonding_blocks(state)
+        level = _current_level(state)
+        release_at = level + delegation_unbonding_blocks(state)
         queue = state.setdefault("delegation_unbonding", {})
         queue.setdefault(str(release_at), []).append(
-            {"delegator": tx.sender, "validator": validator, "amount": bonded})
+            {"delegator": tx.sender, "validator": validator, "amount": bonded,
+             "tranches": _tranches(record) if isinstance(record, dict) else [],
+             "unbonding_from": level})
+        _lower_consensus_weight(state, validator)
     return ApplyResult(ok=True, gas_used=tx.gas_limit,
                        extra={"undelegated_from": validator, "unbonding": bonded,
                               "release_level": release_at})

@@ -10,6 +10,8 @@ a live node — self-baked, gossiped, or synced — is validated with
 `require_quorum=True`: a cryptographically verified endorsement quorum of
 strictly more than 2/3 of validator stake.
 
+> **Safety warning (Phase E).** A verified quorum is necessary but not sufficient for safety. The engine has no lock and no nil vote: under message delay alone, with every validator honest, round 0 can finalize block B on one node while round 1 finalizes block C on the others, at the same level. The fix is designed in [consensus-locking.md](consensus-locking.md) and is not implemented yet. Until it is, multi-validator safety is not established; `tests/test_phase_e_consensus_harness.py` reproduces the fork.
+
 ## Message kinds
 
 Each peer connection is a length-prefixed (4-byte big-endian) JSON

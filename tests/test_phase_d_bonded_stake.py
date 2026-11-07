@@ -124,7 +124,9 @@ def test_delegate_then_flee_leaves_funds_slashable():
     assert apply_transaction(st, make_undelegate_stake(whale, nonce=1), "x").ok
     flee = apply_transaction(st, make_transfer(whale, reporter.address, 100 * STAKE, nonce=2), "x")
     assert not flee.ok                                      # the funds are not liquid
-    # 4. The validator equivocates while that weight is still in the snapshot.
+    # 4. The validator equivocates at level 11, while those funds still backed it
+    #    (Phase E: the undelegation lowers the weight at once, but the bond was
+    #    still exposed at the offence level).
     ev = make_slash_consensus_equivocation(reporter, _vote(v1, "aa" * 32, 11).to_dict(),
                                            _vote(v1, "bb" * 32, 11).to_dict(), nonce=0)
     assert apply_transaction(st, ev, "x").ok

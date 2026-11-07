@@ -113,6 +113,7 @@ nav:
       - Slashable attestations: attestations.md
       - Fee floor: fee-floor.md
       - Consensus on the wire: consensus-wire.md
+      - Consensus locking (design): consensus-locking.md
       - State-machine invariants: state-machine-invariants.md
       - Go port breakpoints: go-port-breakpoints.md
   - Smart contracts (Skald):
@@ -146,6 +147,7 @@ nav:
   - Authorship & attribution:
       - Originality & attribution: originality-and-attribution.md
   - Change history:
+      - v1.1-rc Phase E: phase-e-changes.md
       - v1.1-rc Phase D: phase-d-changes.md
       - v1.1-rc Phase C: phase-c-changes.md
       - v1.1-rc Phase B: phase-b-changes.md

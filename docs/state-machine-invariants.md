@@ -101,7 +101,7 @@ Pinned by `tests/test_consensus_wire.py` and
 The validator set used for block N (proposer selection, vote weights,
 quorum, validation) is `consensus_validator_set(state after N-1)`. It
 changes only at epoch boundaries or, downwards only, when a validator is
-slashed. A quorum certificate only ever contains verified votes for the
+slashed or a bond to it is undelegated (Phase E). A quorum certificate only ever contains verified votes for the
 block it certifies.
 
 Pinned by `tests/test_phase_c_bft_quorum.py` and
@@ -115,4 +115,11 @@ no weight. Funds that leave a bond stay slashable for the unbonding
 period, which is never shorter than an epoch, and slashing evidence is
 accepted for that same period.
 
-Pinned by `tests/test_phase_d_bonded_stake.py`.
+A slash for an offence at level `L` reaches exactly the stake exposed at
+`L` (Phase E): the validator's own stake, and every delegated tranche
+bonded at or before `L` whose bond had not started unbonding before `L`.
+For every delegation and unbonding record,
+`amount == sum(t["amount"] for t in tranches)`.
+
+Pinned by `tests/test_phase_d_bonded_stake.py` and
+`tests/test_phase_e_bond_timing.py`.

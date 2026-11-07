@@ -32,7 +32,7 @@ If you're building **alternative client software** → [API stability spec](api-
 |---|---|---|---|
 | EVM compatibility | Native L1 | None at L1 | Via optimistic rollups |
 | Smart contract language safety | Solidity (no native invariants) | Michelson + LIGO | **Skald with declared, runtime-enforced invariants** |
-| Staking model | 32 ETH locked or LST | Liquid PoS, custody preserved | **Liquid PoS: Liquid PoS, no LST needed** |
+| Staking model | 32 ETH locked or LST | Liquid PoS, custody preserved | **Bonded delegation with unbonding, no LST needed** |
 | Governance | Off-chain, hard forks | On-chain, self-amending | **On-chain, transactional, dual-track (protocol + treasury)** |
 | zkSNARK precompiles | BN254 + KZG | None | **BN254 (via py_ecc)** |
 | Light-client proofs | Merkle-Patricia trie | Patricia tree | **Binary Merkle trie with O(log n) proofs** |
@@ -61,7 +61,7 @@ Modeled on the Ethereum 2014 ICO template with modern vesting practices. See [To
 
 This documentation reflects **v1.0-rc** (release candidate). The reference implementation is feature-complete:
 
-- ✅ Multi-validator BFT consensus with Liquid PoS
+- ⚠️ Multi-validator BFT consensus with bonded delegation (safety not yet established, see [consensus-locking.md](consensus-locking.md))
 - ✅ Skald language + static type checker + invariant runtime enforcement
 - ✅ Multi-frame EVM with fraud-proof bisection
 - ✅ Real BN254 pairing for zkSNARK verification
