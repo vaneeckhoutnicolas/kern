@@ -221,6 +221,8 @@ class Node:
         # e67ed17: the entry is kept even when that first block turns out
         # to be invalid, so a later block of the round is never voted on
         # unvalidated and the two signed messages stay available as evidence.
+        # Review of 7e005a6: only that signed message can go further; any
+        # other one for the round, even for the same block, is evidence.
         self._round_proposal: Dict[Tuple[int, int], Tuple[str, ConsensusMessage, dict]] = {}
         # (level, hash) of proposed blocks that failed validation: checked once.
         self._invalid_proposals: Set[Tuple[int, str]] = set()
@@ -759,16 +761,17 @@ class Node:
         # even when the first one fails those checks (as section 10.8 does
         # for a block that fails validation).
         first = self._round_proposal.setdefault((level, r), (h, pmsg, envelope))
-        if first[1] is not pmsg and self.bft is not None:
-            # Same proposer, same (level, round), another signed message
-            # (another block, or the same block with another valid round):
-            # evidence. Never a vote (review of e67ed17).
-            self.bft.record_proposal_equivocation(first[1], pmsg)
-        if first[0] != h:
-            # A second, different block from the proposer of this round:
-            # relay both signed proposals once so that other nodes can keep
-            # the same evidence, and never validate, store, keep or vote on
-            # this block, whether or not the first one was valid.
+        if first[1] is not pmsg and first[1].to_dict() != pmsg.to_dict():
+            # Review of 7e005a6: another signed PROPOSE for this (level,
+            # round), whether for another block or for the same block with
+            # another valid round. Only the message that occupies the round
+            # can go further (it may come back with a valid proof, which the
+            # proposer does not sign); this one is evidence, relayed once
+            # with the first so that other nodes keep it too, and never
+            # validated, stored, kept or voted on (reviews of e67ed17 and
+            # 7e005a6).
+            if self.bft is not None:
+                self.bft.record_proposal_equivocation(first[1], pmsg)
             if self.network and (level, r) not in self._relayed_conflicts:
                 self._relayed_conflicts.add((level, r))
                 for env in (first[2], envelope):

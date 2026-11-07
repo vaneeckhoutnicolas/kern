@@ -73,10 +73,13 @@ before step 3, and only it can go through step 4. The node remembers it
 whether or not it passes steps 3 and 4. One exception: a proof that does
 not verify is not signed by the proposer and a relay may have damaged it,
 so the same signed PROPOSE arriving later with a valid proof still goes
-on. A different block for the same (level,
-round) is never validated, kept or voted on, even when the first block
-was invalid: the two signed PROPOSE messages are recorded as proposal
-equivocation evidence, and both proposals are relayed once. A block that
+on. Any other signed PROPOSE for the same (level, round), for a
+different block or for the same block with another valid round, is
+never validated, kept or voted on, even when the first one was invalid:
+the two signed PROPOSE messages are recorded as proposal equivocation
+evidence, and both proposals are relayed once. A node that receives the
+two through the relay keeps the first one it sees, valid or not, and
+behaves the same way. A block that
 fails step 4 is not validated again. Only a block that passed step 4
 reaches the engine as a proposal it may vote on.
 
