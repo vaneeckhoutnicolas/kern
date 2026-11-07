@@ -728,9 +728,10 @@ class BftEngine:
                     proof: Optional[QuorumCertificate] = None,
                     proposal_msg: Optional[ConsensusMessage] = None) -> List[ConsensusMessage]:
         """Called when this node has validated a proposal for (level, round)
-        (received over the network, or its own). The node has already
-        checked the block and the proposer; the engine checks the signed
-        PROPOSE message when given (and keeps an equivocation as evidence)
+        (received over the network, or its own), and only then: this may
+        vote. The node has already checked the block and the proposer; the
+        engine checks the signed PROPOSE message when given (and keeps an
+        equivocation as evidence)
         and the proof of `valid_round`."""
         if proposal_msg is not None:
             if (proposal_msg.kind != MsgKind.PROPOSE or proposal_msg.level != level
@@ -742,16 +743,8 @@ class BftEngine:
                 return []
         state = self._state(level, round_)
         if (proposal_msg is not None and state.proposal_msg is not None
-                and state.proposal_msg.validator == proposal_msg.validator
-                and (state.proposal_msg.block_hash != proposal_msg.block_hash
-                     or state.proposal_msg.valid_round != proposal_msg.valid_round)):
-            ev = ProposalEquivocation(proposal_msg.validator, state.proposal_msg, proposal_msg)
-            if ev.verify()[0] and not any(
-                    (e.offender, e.msg_a.level, e.msg_a.round) == (ev.offender, level, round_)
-                    for e in self.proposal_evidence):
-                LOG.error("PROPOSAL EQUIVOCATION: %s at L%d R%d", ev.offender, level, round_)
-                self.proposal_evidence.append(ev)
-                del self.proposal_evidence[:-MAX_PROPOSAL_EVIDENCE]
+                and state.proposal_msg.validator == proposal_msg.validator):
+            self.record_proposal_equivocation(state.proposal_msg, proposal_msg)
         if state.proposed_block_hash is None:
             state.proposed_block_hash = block_hash
             state.proposal_msg = proposal_msg
@@ -766,6 +759,25 @@ class BftEngine:
         elif state.proposal_msg is None and proposal_msg is not None:
             state.proposal_msg = proposal_msg
         return self._advance(state)
+
+    def record_proposal_equivocation(self, msg_a: ConsensusMessage,
+                                     msg_b: ConsensusMessage) -> bool:
+        """Review of e67ed17, P1: keep two conflicting PROPOSE messages of
+        one proposer for one (level, round) as evidence. This never touches
+        the round state and never votes: the node calls it for a proposal
+        it did not validate (the second block of a round, whose first block
+        may itself have been invalid). Only `on_proposal`, for a validated
+        block, can lead to a vote. True if new evidence was kept."""
+        ev = ProposalEquivocation(msg_a.validator, msg_a, msg_b)
+        if not ev.verify()[0]:
+            return False
+        key = (ev.offender, msg_a.level, msg_a.round)
+        if any((e.offender, e.msg_a.level, e.msg_a.round) == key for e in self.proposal_evidence):
+            return False
+        LOG.error("PROPOSAL EQUIVOCATION: %s at L%d R%d", ev.offender, msg_a.level, msg_a.round)
+        self.proposal_evidence.append(ev)
+        del self.proposal_evidence[:-MAX_PROPOSAL_EVIDENCE]
+        return True
 
     def _check_proof(self, level: int, round_: int, block_hash: str, valid_round: int,
                      proof: Optional[QuorumCertificate]) -> bool:

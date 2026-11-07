@@ -67,10 +67,14 @@ pre-endorsement, after these checks, in this order (`Node._on_proposal_msg`):
    `select_proposer(parent_hash, validators, payload_round)`, txs root,
    fee rules and state root.
 
-Only the first block seen for a (level, round), after steps 1 and 2, goes
-through steps 3 and 4 and is kept. A different block for the same (level,
-round) is not validated or kept: its PROPOSE message is recorded as
-proposal equivocation evidence, and the conflict is relayed once.
+Only the first proposal seen for a (level, round), after steps 1 to 3,
+goes through step 4. The node remembers that first signed PROPOSE whether
+or not its block passes step 4. A different block for the same (level,
+round) is never validated, kept or voted on, even when the first block
+was invalid: the two signed PROPOSE messages are recorded as proposal
+equivocation evidence, and both proposals are relayed once. A block that
+fails step 4 is not validated again. Only a block that passed step 4
+reaches the engine as a proposal it may vote on.
 
 Bare PROPOSE messages on the `consensus` channel are dropped: no
 validator ever pre-endorses a hash whose block it has not executed. Valid

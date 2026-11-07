@@ -268,3 +268,13 @@ A third review of the implementation found three more points, each confirmed wit
 
 Tests: `tests/test_phase_e_hardening.py`; all five fail on 84cbbcc.
 
+### 10.8 Review of e67ed17: an invalid first proposal
+
+**P1, a vote on a block never validated.** The fix of section 10.7 reserved the (level, round) for the first block hash before validating that block. Scenario: a byzantine proposer signs an invalid block A and a valid block B for the same round, and a validator receives A first. A fails validation and never reaches the engine; B is then a conflicting proposal, which the node passed to `BftEngine.on_proposal` without validating it, only to record the evidence. The engine had no proposal for that round, took B as the first one, and could pre-endorse it: on e67ed17 the validator's signing journal holds a PREENDORSE for B. The vote was not broadcast (the node discarded the engine's output on that path), but it was signed and journalled, and the rule is that an honest validator never signs a vote for a block it has not validated. The equivocation was also lost, since the engine never had the PROPOSE message of A.
+
+Fix: the engine gains `record_proposal_equivocation(msg_a, msg_b)`, which checks the two signed PROPOSE messages and keeps them as evidence without touching the round state and without voting. The node keeps the first signed PROPOSE of each (level, round), with its envelope, whether or not the block turns out valid. A later, different block for that round goes only to `record_proposal_equivocation`; both proposals are relayed once so that the other nodes can keep the same evidence. A block that failed validation is remembered and not validated again. `on_proposal`, the only path that can lead to a vote, is called only for a block the node has validated.
+
+Effect on liveness: a validator that saw an invalid first proposal does not vote in that round, as in Tendermint when the first proposal received is invalid. The other validators may still finalize B; the validator then receives the finalized block with its certificate and checks it in full. If B gathers a pre-endorsement certificate, a later proposer can propose it again with its proof, in a new round where it is validated normally.
+
+Tests: `tests/test_phase_e_invalid_first_proposal.py` (no vote and no lock after an invalid first proposal; evidence kept with both signatures; both proposals relayed and the evidence rebuilt by another node; an invalid block validated once; control with the valid block first; the engine API keeps evidence without voting and refuses four kinds of non evidence); 9 of its 10 tests fail on e67ed17, the control passes on both.
+

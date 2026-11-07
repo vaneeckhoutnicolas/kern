@@ -72,7 +72,7 @@ pytest tests/ -v
 
 **Verification**: You should see exactly:
 ```
-======================= 974 passed in about 2 minutes ========================
+======================= 984 passed in about 2 minutes ========================
 ```
 
 If any test fails on a fresh clone, that's a bug. Open an issue immediately.

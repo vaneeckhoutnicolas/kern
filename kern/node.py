@@ -202,10 +202,16 @@ class Node:
         # serves every round in which it is proposed.
         self._pending: Dict[Tuple[int, str], Block] = {}
         self._seen_proposals: Set[Tuple[int, int, str, str, int]] = set()
-        # Review of 84cbbcc: the first block seen for each (level, round).
-        # Only that block is validated and kept; another one for the same
-        # (level, round) is equivocation evidence, never validated or stored.
-        self._round_block: Dict[Tuple[int, int], str] = {}
+        # Review of 84cbbcc: the first proposal seen for each (level, round),
+        # as (block hash, signed PROPOSE, envelope). Only that block is
+        # validated and kept; another one for the same (level, round) is
+        # equivocation evidence, never validated or stored. Review of
+        # e67ed17: the entry is kept even when that first block turns out
+        # to be invalid, so a later block of the round is never voted on
+        # unvalidated and the two signed messages stay available as evidence.
+        self._round_proposal: Dict[Tuple[int, int], Tuple[str, ConsensusMessage, dict]] = {}
+        # (level, hash) of proposed blocks that failed validation: checked once.
+        self._invalid_proposals: Set[Tuple[int, str]] = set()
         self._relayed_conflicts: Set[Tuple[int, int]] = set()
         # (level, round) the engine was last told about.
         self._engine_pos: Tuple[int, int] = (-1, -1)
@@ -414,7 +420,8 @@ class Node:
         if self.journal is not None and level % JOURNAL_COMPACT_EVERY == 0:
             self.journal.compact(level + 1)
         self._seen_proposals = {k for k in self._seen_proposals if k[0] > level}
-        self._round_block = {k: v for k, v in self._round_block.items() if k[0] > level}
+        self._round_proposal = {k: v for k, v in self._round_proposal.items() if k[0] > level}
+        self._invalid_proposals = {k for k in self._invalid_proposals if k[0] > level}
         self._relayed_conflicts = {k for k in self._relayed_conflicts if k[0] > level}
         self._round = 0
         self._proposed_this_round = False
@@ -524,13 +531,14 @@ class Node:
             return
         failpoints.hit("after_proposal_signed")
         self._pending[(level, h)] = block
-        self._round_block.setdefault((level, r), h)
+        envelope = self._envelope(block, proposal, proof)
+        self._round_proposal.setdefault((level, r), (h, proposal, envelope))
         self._seen_proposals.add((level, r, h, proposal.validator, valid_round))
         LOG.info("proposed block %d round %d (payload round %d, valid round %d, "
                  "hash %s, %d txs)", level, r, block.header.payload_round,
                  valid_round, h[:12], len(block.transactions))
         if self.network:
-            await self.network.broadcast_proposal(self._envelope(block, proposal, proof))
+            await self.network.broadcast_proposal(envelope)
             failpoints.hit("after_proposal_broadcast")
         # Self-deliver the proposal to our own engine: emits our
         # pre-endorsement, which loops back through _ingest_consensus and,
@@ -717,20 +725,25 @@ class Node:
                 return
         self._seen_proposals.add(key)
         self._trim(self._seen_proposals)
-        first = self._round_block.setdefault((level, r), h)
-        if first != h:
+        first = self._round_proposal.setdefault((level, r), (h, pmsg, envelope))
+        if first[1] is not pmsg and self.bft is not None:
+            # Same proposer, same (level, round), another signed message
+            # (another block, or the same block with another valid round):
+            # evidence. Never a vote (review of e67ed17).
+            self.bft.record_proposal_equivocation(first[1], pmsg)
+        if first[0] != h:
             # A second, different block from the proposer of this round:
-            # keep the two signed PROPOSE messages as evidence (the engine
-            # checks the signature), relay the conflict once so that other
-            # nodes see it, and never validate, store or keep this block.
-            if self.bft is not None:
-                self._refresh_engine()
-                self.bft.on_proposal(level, r, h, valid_round=vr, proof=proof, proposal_msg=pmsg)
+            # relay both signed proposals once so that other nodes can keep
+            # the same evidence, and never validate, store, keep or vote on
+            # this block, whether or not the first one was valid.
             if self.network and (level, r) not in self._relayed_conflicts:
                 self._relayed_conflicts.add((level, r))
-                asyncio.create_task(self.network.broadcast_proposal(envelope))
+                for env in (first[2], envelope):
+                    asyncio.create_task(self.network.broadcast_proposal(env))
             LOG.warning("conflicting proposal at level %d round %d from %s: kept as evidence, "
                         "not validated", level, r, pmsg.validator)
+            return
+        if (level, h) in self._invalid_proposals:
             return
         if (level, h) not in self._pending:
             # Full validation BEFORE pre-endorsing (quorum not required on a
@@ -738,6 +751,7 @@ class Node:
             err, _ = validate_and_apply(block, parent.header, self.chain.state,
                                         validators, require_quorum=False)
             if err is not None:
+                self._invalid_proposals.add((level, h))
                 LOG.warning("invalid proposal at level %d: %s", level, err)
                 return
             block.endorsements = []

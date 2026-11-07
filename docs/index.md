@@ -69,7 +69,7 @@ This documentation reflects **v1.0-rc** (release candidate). The reference imple
 - ✅ Two-track on-chain governance with quadratic + delegated voting + slashing
 - ✅ Bonded PoS delegation (no LST; delegated KRN locked and slashable, unbonding period on exit)
 - ✅ Adaptive issuance + treasury
-- ✅ 974 tests passing, none skipped
+- ✅ 984 tests passing, none skipped
 
 What remains before mainnet (Midgard):
 
@@ -97,7 +97,7 @@ git clone https://github.com/vaneeckhoutnicolas/kern.git
 cd kern
 pip install -r requirements.txt
 pytest tests/
-# 974 passed in about 2 minutes
+# 984 passed in about 2 minutes
 ```
 
 For a multi-node devnet:
