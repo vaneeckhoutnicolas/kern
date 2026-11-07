@@ -112,6 +112,9 @@ nav:
       - Merkle trie: merkle-trie.md
       - Slashable attestations: attestations.md
       - Fee floor: fee-floor.md
+      - Consensus on the wire: consensus-wire.md
+      - State-machine invariants: state-machine-invariants.md
+      - Go port breakpoints: go-port-breakpoints.md
   - Smart contracts (Skald):
       - Skald language: skald-language.md
       - Static typing: typecheck.md
@@ -143,6 +146,7 @@ nav:
   - Authorship & attribution:
       - Originality & attribution: originality-and-attribution.md
   - Change history:
+      - v1.1-rc Phase B: phase-b-changes.md
       - v1.1-rc: v11rc-changes.md
       - v1.0-rc: v10rc-changes.md
       - v0.7 – v0.9: v07-v08-v09-changes.md

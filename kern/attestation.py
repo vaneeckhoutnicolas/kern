@@ -272,6 +272,25 @@ def _index_key(issuer: str, schema_id: str, subject: str) -> str:
 ATTESTATION_SLASHING_PERCENTAGE = 30
 ATTESTATION_WHISTLEBLOWER_REWARD_PCT = 10
 
+# Phase B (audit 1, findings 1, 2 and 10): unbonding period, in blocks.
+# Revoking an attestation no longer returns its bond immediately. The
+# bond stays locked, and slashable, for this many blocks after the
+# revocation, then is released to the issuer automatically. Without it,
+# an issuer could revoke both halves of a contradiction and walk away
+# with both bonds before anyone submits the evidence. Default: one day of
+# one-second blocks. A chain may override it at genesis through
+# state["attestation_unbonding_blocks"].
+DEFAULT_ATTESTATION_UNBONDING_BLOCKS = 86_400
+
+
+def attestation_unbonding_blocks(state: dict) -> int:
+    """Resolve the unbonding period from chain state (genesis override) or
+    the default. Pure."""
+    v = state.get("attestation_unbonding_blocks")
+    if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+        return v
+    return DEFAULT_ATTESTATION_UNBONDING_BLOCKS
+
 
 def compute_attestation_slash(bond: int) -> Tuple[int, int, int]:
     """Given an attestation's bond, return (slash, reward, burn).

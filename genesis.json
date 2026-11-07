@@ -1,4 +1,5 @@
 {
+  "_notice": "DEVNET GENESIS. All addresses are derived from public seeds in scripts/build_v1_genesis.py and are spendable by anyone. Not a mainnet genesis.",
   "balances": {
     "kn1KU1aiU6MZxJXV4CiDtkAGBzfHPTD24qmx": 10000000000000,
     "kn1LsLG7LvXzwYiJ2CyKPGRdxTyDkuHydMtn": 14000000000000,
@@ -7,7 +8,7 @@
     "kn1QtCF6n4zmShWdecJKMrAUhwTvCo7L97tB": 70000000000000,
     "kn1dSwF8xJXHXkv3BFRgHShj79xFjxn7zapT": 1000000000000
   },
-  "chain_id": "kern-mainnet-midgard",
+  "chain_id": "kern-devnet-placeholder",
   "genesis_time": "2027-Q3 (target)",
   "issuance_params": {
     "block_time_seconds": 1.0,
@@ -17,6 +18,7 @@
     "target_staking_ratio": 0.5,
     "treasury_share": 0.1
   },
+  "placeholder_keys": true,
   "pool_addresses": {
     "bootstrap_baker": "kn1dSwF8xJXHXkv3BFRgHShj79xFjxn7zapT",
     "early_contributors": "kn1PsVFT5DmqK3Jamp8rGXJmzkLwjMibvyFi",

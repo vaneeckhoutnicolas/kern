@@ -16,7 +16,7 @@
 //   - Property valuation must be refreshed periodically (typically annually).
 //
 // Compliance:
-//   Prospectus Regulation Art. 3 — Whitepaper / prospectus
+//   Prospectus Regulation Art. 3 — Prospectus approval before the offer
 //   MiFID II Art. 16(9) — Investor funds segregation
 //   MAR Art. 14 — No transfers during material event windows
 //   National real estate law — Notary-attested title transfer, registration
@@ -256,14 +256,15 @@ contract StoRealEstate {
         secondary_market_active = false;
     }
 
-    entry attempt_secondary_trade(token_amount: int, price_per_token: int, current_level: int) {
+    // Compliance gate for a secondary trade: succeeds or reverts; moves no
+    // tokens (no token ledger in Skald v1.1). Formerly attempt_secondary_trade.
+    entry check_secondary_trade_compliance(token_amount: int, price_per_token: int, current_level: int) {
         require secondary_market_active with "secondary market not active";
         require !frozen with "frozen";
         require !blackout_active with "blackout (MAR Art. 14)";
         require current_level - valuation_at_level <= valuation_max_staleness with "valuation stale";
         require token_amount > 0 with "amount must be positive";
         require price_per_token >= secondary_floor_price with "below floor price";
-        // Runtime side effect: cross-account token ledger update.
     }
 
     // ========================================================================

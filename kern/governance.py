@@ -185,6 +185,11 @@ KNOWN_PROTOCOL_PAYLOAD_KEYS = {"params", "swap", "to"}
 
 # Allowed parameter names for the "params" payload.
 ALLOWED_PARAMS = {
+    # Canonical integer (ppm) issuance parameters.
+    "i_min_ppm", "i_max_ppm", "target_staking_ratio_ppm", "target_block_time_ms",
+    "treasury_share_ppm", "proposer_bonus_ppm",
+    # Legacy float names, still accepted and converted at the parsing
+    # boundary by IssuanceParams.from_dict (pre-integer-migration chains).
     "i_min", "i_max", "target_staking_ratio", "target_block_time_seconds",
     "treasury_share", "proposer_bonus",
     "block_time_seconds",

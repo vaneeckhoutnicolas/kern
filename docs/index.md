@@ -47,9 +47,10 @@ The design philosophy: take the things Ethereum proved at scale (EVM ecosystem, 
 |---|---:|---:|---|
 | Public sale | 70 000 000 | 70% | Liquid at genesis |
 | Founder | 10 000 000 | 10% | 1-year cliff + 4-year linear |
-| Foundation | 15 000 000 | 15% | Foundation legal entity multisig |
+| Foundation | 14 000 000 | 14% | Foundation legal entity multisig |
 | Early contributors pool | 3 000 000 | 3% | 6-month cliff + 3-year linear |
 | Validator bootstrap | 2 000 000 | 2% | Released over 1 year |
+| Bootstrap validator stake | 1 000 000 | 1% | Own stake of the first validator |
 | **Total** | **100 000 000** | **100%** | |
 
 Modeled on the Ethereum 2014 ICO template with modern vesting practices. See [Tokenomics §4](tokenomics.md#4-distribution-at-genesis).

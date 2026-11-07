@@ -111,7 +111,7 @@ def test_challenge_with_valid_proof():
         challenger=challenger.address,
         expected_state_root="22" * 32,
         claimed_state_root="11" * 32,
-        witness_data={"step_proof": "..." * 10},
+        witness_data={"n_steps": 8},
     )
     ok, reason = state.open_challenge(proof, now=int(time.time()))
     assert ok, reason
@@ -130,7 +130,7 @@ def test_challenge_with_matching_roots_rejected():
         challenger=challenger.address,
         expected_state_root="11" * 32,
         claimed_state_root="11" * 32,  # same as expected — no fraud
-        witness_data={"step_proof": "..."},
+        witness_data={"n_steps": 8},
     )
     ok, reason = state.open_challenge(proof, now=int(time.time()))
     assert not ok
@@ -157,13 +157,14 @@ def test_no_finalization_inside_window():
     assert state.batches[0].status == BatchStatus.PENDING
 
 
-def test_successful_challenge_reverts_batch():
+def test_challenge_cannot_be_decided_without_an_executed_step():
+    """Audit 2, point 6: opening a challenge with a well-shaped proof no
+    longer allows reverting the batch. There is no public revert path;
+    resolution requires a finished bisection and a re-executed step."""
     rollup, state, sequencer = _make_rollup()
     challenger = KernKeypair.generate()
     b0 = _make_batch(state, sequencer, 0, "11" * 32)
     state.post_batch(b0, 10, int(time.time()))
-    b1 = _make_batch(state, sequencer, 1, "22" * 32)
-    state.post_batch(b1, 11, int(time.time()))
 
     proof = FraudProof(
         rollup_id=state.rollup.rollup_id,
@@ -171,16 +172,13 @@ def test_successful_challenge_reverts_batch():
         challenger=challenger.address,
         expected_state_root="99" * 32,
         claimed_state_root="11" * 32,
-        witness_data={"step_proof": "evidence"},
+        witness_data={"n_steps": 8},
     )
-    state.open_challenge(proof, int(time.time()))
-    ok, _ = state.resolve_challenge_for_challenger(0)
-    assert ok
-    # Both batches now reverted (b1 was built on top of b0).
-    assert state.batches[0].status == BatchStatus.REVERTED
-    assert state.batches[1].status == BatchStatus.REVERTED
-    # State root falls back to genesis.
-    assert state.current_state_root() == rollup.genesis_state_root
+    assert state.open_challenge(proof, int(time.time()))[0]
+    assert not hasattr(state, "resolve_challenge_for_challenger")
+    ok, reason = state.resolve_challenge(0, b"", None)
+    assert not ok and "bisection not finished" in reason
+    assert state.batches[0].status == BatchStatus.CHALLENGED
 
 
 def test_withdrawal_only_claimable_after_finality():

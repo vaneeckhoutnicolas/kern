@@ -124,13 +124,13 @@ storage {
     blackout_active: bool,
 }
 
-entry attempt_transfer(token_amount: int, current_level: int) {
+entry check_transfer_compliance(token_amount: int, current_level: int) {
     require !blackout_active with "transfer blocked: blackout window (MAR)";
     ...
 }
 ```
 
-When the issuer (or the compliance oracle that monitors them) declares a blackout window (e.g., before earnings, during pending material event), the contract refuses transfers. This isn't a soft policy — it's a hard runtime constraint.
+When the issuer (or the compliance oracle that monitors them) declares a blackout window (e.g., before earnings, during pending material event), the compliance gate refuses. The template holds no token ledger in v1.1: the gate answers whether a transfer is permitted, and an external ledger must honour that answer.
 
 The blackout signal comes from an off-chain compliance oracle that reads attestations from the issuer's filings. See §4.
 

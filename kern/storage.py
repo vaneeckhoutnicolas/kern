@@ -12,9 +12,17 @@ The schema is deliberately simple:
     state(key TEXT PRIMARY KEY, json TEXT)
     mempool(hash TEXT PRIMARY KEY, json TEXT, received_at INTEGER, sender TEXT)
 
-State snapshots are stored as a single JSON blob keyed by "head". A
-production node would maintain incremental state diffs and a state trie
-with proof generation; this is sufficient for the reference node.
+State snapshots are stored as a single JSON blob keyed by "head",
+alongside the level it was taken at ("head_level"). Snapshots are
+periodic, not per-block: `maybe_save_state` persists every
+`snapshot_interval` blocks (default 16) and the node writes a final
+snapshot on clean shutdown. On startup the node loads the latest
+snapshot and deterministically replays the stored blocks above it
+(see kern.node.load_chain), so crash recovery costs at most
+`snapshot_interval` block applications. This bounds the per-block
+persistence cost, which previously serialized the full state every
+block — O(state) per block. A trie-backed store with incremental
+node flushing remains the production design.
 
 The mempool is bounded. ``add_to_mempool`` enforces both a global size
 cap and a per-sender cap so that a single sender cannot exhaust node
@@ -69,11 +77,13 @@ class Storage:
         data_dir: str,
         max_mempool_size: int = MAX_MEMPOOL_SIZE,
         max_mempool_per_sender: int = MAX_MEMPOOL_PER_SENDER,
+        snapshot_interval: int = 16,
     ):
         os.makedirs(data_dir, exist_ok=True)
         self.path = os.path.join(data_dir, "kern.sqlite")
         self.max_mempool_size = max_mempool_size
         self.max_mempool_per_sender = max_mempool_per_sender
+        self.snapshot_interval = max(1, snapshot_interval)
         self.conn = sqlite3.connect(self.path, isolation_level=None)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
@@ -125,17 +135,43 @@ class Storage:
 
     # --- State ---------------------------------------------------------------
 
-    def save_state(self, state: dict) -> None:
+    def save_state(self, state: dict, level: int = -1) -> None:
+        """Persist a full state snapshot, tagged with the level it was
+        taken at (-1 = unknown/legacy)."""
         self.conn.execute(
             "INSERT OR REPLACE INTO state(key, json) VALUES ('head', ?)",
             (json.dumps(state),),
         )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO state(key, json) VALUES ('head_level', ?)",
+            (json.dumps(level),),
+        )
+
+    def maybe_save_state(self, state: dict, level: int) -> bool:
+        """Persist a snapshot only every `snapshot_interval` blocks.
+        Returns True if a snapshot was written. The caller is expected to
+        also call save_state unconditionally on clean shutdown."""
+        if level % self.snapshot_interval == 0:
+            self.save_state(state, level)
+            return True
+        return False
 
     def load_state(self) -> Optional[dict]:
         row = self.conn.execute("SELECT json FROM state WHERE key = 'head'").fetchone()
         if not row:
             return None
         return json.loads(row[0])
+
+    def load_state_level(self) -> int:
+        """Level at which the persisted snapshot was taken, or -1 if the
+        snapshot predates leveled snapshots (legacy databases: treat the
+        snapshot as the head state, which is what those nodes wrote)."""
+        row = self.conn.execute(
+            "SELECT json FROM state WHERE key = 'head_level'"
+        ).fetchone()
+        if not row:
+            return -1
+        return int(json.loads(row[0]))
 
     # --- Mempool -------------------------------------------------------------
 

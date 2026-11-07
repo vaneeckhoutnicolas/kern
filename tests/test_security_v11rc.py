@@ -45,7 +45,7 @@ def test_s_crit_1_negative_fee_rejected_at_construction():
 def test_s_crit_1_negative_fee_rejected_via_from_dict():
     """The same rejection must apply when a transaction arrives over RPC
     (constructed via from_dict)."""
-    with pytest.raises(ValueError, match="fee must be non-negative"):
+    with pytest.raises(ValueError, match=r"tx\.fee"):
         Transaction.from_dict({
             "kind": "transfer",
             "sender": "kn1xxx",
@@ -81,7 +81,7 @@ def test_s_crit_2_negative_amount_rejected_at_construction():
 
 def test_s_crit_2_negative_amount_rejected_via_from_dict():
     """Same protection over RPC."""
-    with pytest.raises(ValueError, match="amount must be non-negative"):
+    with pytest.raises(ValueError, match=r"tx\.amount"):
         Transaction.from_dict({
             "kind": "transfer",
             "sender": "kn1xxx",
@@ -179,7 +179,9 @@ def test_s_maj_2_slash_refunds_unslashed_portion_to_issuer():
     # Note: the slash target is whichever attestation has bond=1M;
     # the OTHER attestation still holds the second 1M bond.
     assert r.extra["slashed"] == 300_000
-    assert r.extra["refunded_to_issuer"] == 700_000
+    # Phase B (audit 1, finding 10): the second bond is no longer frozen;
+    # it returns to the issuer together with the unslashed remainder.
+    assert r.extra["refunded_to_issuer"] == 700_000 + 1_000_000
 
     # Total economic loss to issuer = 300_000 (= the slash).
     # Issuer balance change from pre-slash to post-slash:
@@ -187,7 +189,7 @@ def test_s_maj_2_slash_refunds_unslashed_portion_to_issuer():
     #     but baker == issuer here, so net zero on fee)
     # Note: tx fee 1000 from snitch goes to baker=issuer = +1000
     #   so the net change is +700_000 + 1000.
-    assert state["balances"][issuer.address] == pre_issuer + 700_000 + 1000
+    assert state["balances"][issuer.address] == pre_issuer + 700_000 + 1_000_000 + 1000
 
     # The snitch got their reward, less the fee.
     assert state["balances"][snitch.address] == pre_snitch - 1000 + 30_000
@@ -330,7 +332,11 @@ def test_s_med_2_verify_accepts_well_formed():
         proof_c=[70, 80],
         predicate_summary="ok",
     )
-    assert verify_zk_claim(good_claim)
+    # Phase B: the structural check is now check_zk_claim_shape; the
+    # cryptographic verifier rejects this payload (no verifier key).
+    from kern.zk_claims import check_zk_claim_shape
+    assert check_zk_claim_shape(good_claim)
+    assert not verify_zk_claim(good_claim)
 
 
 if __name__ == "__main__":

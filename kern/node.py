@@ -7,6 +7,13 @@ kern.node
 The Kern node binary. Combines storage, chain state, P2P network, RPC
 server, and (optionally) baker logic into a running process.
 
+The consensus driver in this module wires kern.bft (the three-phase
+Tenderbake-style engine) to kern.network: proposals travel as full blocks
+on the "proposal" channel, pre-endorsements and endorsements as signed
+ConsensusMessages on the "consensus" channel, and a block is appended
+with require_quorum=True only once its endorsement quorum certificate
+has been gathered. See docs/consensus-wire.md for the protocol.
+
 CLI:
 
     python -m kern.node init  --genesis genesis.json --data-dir DIR
@@ -26,12 +33,13 @@ import os
 import signal
 import sys
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 from aiohttp import web
 
+from .bft import BftEngine, ConsensusMessage, MsgKind
 from .block import Block, BlockHeader, txs_merkle_root_hex
-from .chain import Chain, apply_block, state_root_hex
+from .chain import Chain, apply_block, state_root_hex, validate_and_apply
 from .consensus import BakerConfig, propose_block, select_proposer, DEFAULT_BLOCK_TIME_S
 from .crypto import KernKeypair
 from .network import Network
@@ -41,6 +49,12 @@ from .transaction import Transaction
 
 LOG = logging.getLogger("kern.node")
 
+# Dedup sets are advisory only (correctness never depends on them: stale
+# blocks are rejected by level, duplicate txs by the mempool primary key,
+# and repeated consensus messages are idempotent in the engine), so a
+# blunt clear-on-overflow bound is sufficient.
+MAX_SEEN_ENTRIES = 50_000
+
 
 # ---------------------------------------------------------------------------
 # Genesis utilities
@@ -48,7 +62,34 @@ LOG = logging.getLogger("kern.node")
 
 def load_genesis(path: str) -> dict:
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        genesis = json.load(f)
+    check_genesis_safety(genesis)
+    return genesis
+
+
+# Seed bytes used by scripts/build_v1_genesis.py for its placeholder pool
+# and baker addresses (bytes([b]) * 32). Their keys are public.
+_PLACEHOLDER_SEED_BYTES = (0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xB0)
+
+
+def check_genesis_safety(genesis: dict) -> None:
+    """Refuse a genesis that names a mainnet while holding funds or stake
+    on addresses whose private keys are public (audit 2, point 5).
+
+    Devnet and test genesis files may use public seeds on purpose; only a
+    chain_id containing "mainnet" triggers the check. Raises ValueError."""
+    chain_id = str(genesis.get("chain_id") or "")
+    if "mainnet" not in chain_id.lower():
+        return
+    if genesis.get("placeholder_keys"):
+        raise ValueError(f"genesis {chain_id!r} is marked placeholder_keys; refusing to run it as mainnet")
+    public = {KernKeypair.from_seed(bytes([b]) * 32).address for b in _PLACEHOLDER_SEED_BYTES}
+    used = set(genesis.get("balances", {})) | {v.get("address") for v in genesis.get("validators", [])}
+    leaked = sorted(used & public)
+    if leaked:
+        raise ValueError(
+            f"genesis {chain_id!r} funds addresses derived from public placeholder seeds: {leaked}"
+        )
 
 
 def build_genesis_block(genesis: dict) -> Block:
@@ -75,6 +116,36 @@ def build_genesis_block(genesis: dict) -> Block:
     # The genesis block's "signature" is a magic placeholder — every node
     # accepts it because it matches what's declared in genesis.json.
     return Block(header=header, transactions=[], commits=[])
+
+
+def load_chain(storage: Storage) -> Chain:
+    """Load the chain from storage: latest state snapshot, then
+    deterministic replay of the stored blocks above the snapshot level.
+
+    Snapshots are periodic (Storage.maybe_save_state), so after a crash
+    at most `snapshot_interval` blocks are replayed through apply_block —
+    the same pure function that produced the state in the first place.
+    Legacy databases (snapshot level -1, written by pre-snapshot nodes at
+    head) are loaded as-is with no replay."""
+    genesis = storage.get_block_by_level(0)
+    if genesis is None:
+        raise RuntimeError("storage has no genesis block; run `init` first")
+    state = storage.load_state() or {}
+    snap_level = storage.load_state_level()
+    head = storage.head_level()
+    if snap_level < 0:
+        snap_level = head
+    for level in range(snap_level + 1, head + 1):
+        b = storage.get_block_by_level(level)
+        if b is None:
+            raise RuntimeError(f"missing block at level {level} during replay")
+        state, _ = apply_block(state, b)
+    chain = Chain(genesis, state.get("validators", []), initial_state=state)
+    for level in range(1, head + 1):
+        b = storage.get_block_by_level(level)
+        if b is not None:
+            chain.blocks.append(b)
+    return chain
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +177,30 @@ class Node:
         self._tasks: List[asyncio.Task] = []
         self._stop_event = asyncio.Event()
 
+        # Consensus engine — present iff this node holds a validator key.
+        self.bft: Optional[BftEngine] = None
+        if baker is not None:
+            self.bft = BftEngine(
+                own_keypair=baker.keypair,
+                own_pubkey_b58=baker.pubkey_b58,
+                validator_set=list(chain.validators),
+            )
+
+        # Pending (pre-quorum) proposals, keyed by (level, block_hash).
+        self._pending: Dict[Tuple[int, str], Block] = {}
+        # Advisory dedup sets (see MAX_SEEN_ENTRIES note above).
+        self._seen_blocks: Set[str] = set()
+        self._seen_txs: Set[str] = set()
+        self._seen_cons: Set[Tuple[str, int, int, str]] = set()
+        # Round management for the level currently being decided.
+        self._round: int = chain.head.header.round + 1
+        self._round_deadline: float = 0.0
+        self._proposed_this_round: bool = False
+        self._last_block_at: float = time.monotonic()
+        self._last_sync_request: float = 0.0
+
+    # ------------------------------------------------------------ lifecycle
+
     async def start(self) -> None:
         self.network = Network(
             host="0.0.0.0",
@@ -113,6 +208,10 @@ class Node:
             on_block=self._on_block_msg,
             on_tx=self._on_tx_msg,
             get_head_level=lambda: self.chain.height,
+            on_proposal=self._on_proposal_msg,
+            on_consensus=self._on_consensus_msg,
+            get_blocks_fn=self._get_blocks,
+            on_peer_level=self._on_peer_level,
         )
         await self.network.start()
 
@@ -129,9 +228,9 @@ class Node:
         await site.start()
         LOG.info("RPC listening on 0.0.0.0:%d", self.rpc_port)
 
-        # Baker loop.
+        # Consensus driver (proposer + endorser duties).
         if self.baker is not None:
-            self._tasks.append(asyncio.create_task(self._baker_loop()))
+            self._tasks.append(asyncio.create_task(self._consensus_loop()))
 
         LOG.info("Kern node started — head level %d", self.chain.height)
         await self._stop_event.wait()
@@ -145,84 +244,291 @@ class Node:
             await self.network.stop()
         if self._app_runner:
             await self._app_runner.cleanup()
+        # Final exact snapshot so restart never has to replay.
+        self.storage.save_state(self.chain.state, self.chain.height)
         self.storage.close()
 
-    # --- Network handlers ----------------------------------------------------
+    # ------------------------------------------------------------ helpers
 
-    async def _on_block_msg(self, block_dict: dict) -> None:
-        try:
-            block = Block.from_dict(block_dict)
-            if block.header.level <= self.chain.height:
-                return
-            if block.header.level != self.chain.height + 1:
-                # Out-of-order: a real node would request missing blocks.
-                LOG.warning("ignoring out-of-order block at level %d (head %d)",
-                            block.header.level, self.chain.height)
-                return
-            self.chain.append(block)
-            self.storage.save_block(block)
-            self.storage.save_state(self.chain.state)
-            # Drop included txs from the mempool.
-            self.storage.remove_from_mempool([tx.hash_hex() for tx in block.transactions])
-            LOG.info("applied gossiped block %d (hash %s, %d txs)",
-                     block.header.level, block.hash_hex()[:12], len(block.transactions))
-        except Exception as e:
-            LOG.warning("rejected gossiped block: %s", e)
+    def _round_timeout(self) -> float:
+        return max(2.0, self.block_time * 4)
 
-    async def _on_tx_msg(self, tx_dict: dict) -> None:
-        try:
-            tx = Transaction.from_dict(tx_dict)
-            if not tx.verify_signature():
-                return
-            self.storage.add_to_mempool(tx)
-        except Exception as e:
-            LOG.warning("rejected gossiped tx: %s", e)
+    def _refresh_engine(self) -> None:
+        if self.bft is not None:
+            self.bft.validator_set = self.chain.validators
 
-    # --- Baker loop ----------------------------------------------------------
+    @staticmethod
+    def _trim(seen: set) -> None:
+        if len(seen) > MAX_SEEN_ENTRIES:
+            seen.clear()
 
-    async def _baker_loop(self) -> None:
-        assert self.baker is not None
-        LOG.info("baker started for address %s", self.baker.keypair.address)
+    def _after_block_applied(self, block: Block, *, broadcast: bool) -> None:
+        """Common bookkeeping once a block has been appended to the chain
+        (self-finalized, gossiped, or synced)."""
+        level = block.header.level
+        self.storage.save_block(block)
+        self.storage.maybe_save_state(self.chain.state, level)
+        self.storage.remove_from_mempool([tx.hash_hex() for tx in block.transactions])
+        self._seen_blocks.add(block.hash_hex())
+        self._trim(self._seen_blocks)
+        # Reset consensus context for the next level.
+        self._pending = {k: v for k, v in self._pending.items() if k[0] > level}
+        if self.bft is not None:
+            self.bft.prune_below(level + 1)
+        self._round = block.header.round + 1
+        self._proposed_this_round = False
+        self._round_deadline = time.monotonic() + self._round_timeout()
+        self._last_block_at = time.monotonic()
+        LOG.info("finalized block %d (hash %s, %d txs, %d quorum entries)",
+                 level, block.hash_hex()[:12], len(block.transactions),
+                 len(block.commits) + len(block.endorsements))
+        if broadcast and self.network:
+            asyncio.create_task(self.network.broadcast_block(block.to_dict()))
+
+    # ------------------------------------------------------------ consensus
+
+    async def _consensus_loop(self) -> None:
+        assert self.baker is not None and self.bft is not None
+        LOG.info("consensus driver started for %s", self.baker.keypair.address)
+        tick = min(0.2, self.block_time / 5) if self.block_time > 0 else 0.2
+        self._round_deadline = time.monotonic() + self._round_timeout()
         while not self._stop_event.is_set():
             try:
-                await asyncio.sleep(self.block_time)
+                await asyncio.sleep(tick)
+                now = time.monotonic()
+                self._refresh_engine()
 
-                # Are we the proposer for the next round?
+                if now > self._round_deadline:
+                    self._round += 1
+                    self._proposed_this_round = False
+                    self._round_deadline = now + self._round_timeout()
+                    LOG.info("round timeout at level %d — advancing to round %d",
+                             self.chain.height + 1, self._round)
+
                 parent = self.chain.head
                 proposer = select_proposer(
                     parent_hash_hex=parent.hash_hex(),
                     validators=self.chain.validators,
-                    round_=parent.header.round + 1,
+                    round_=self._round,
                 )
-                if proposer["address"] != self.baker.keypair.address:
-                    # Not our turn this round.
-                    continue
+                if (proposer["address"] == self.baker.keypair.address
+                        and not self._proposed_this_round
+                        and now - self._last_block_at >= self.block_time):
+                    await self._propose(parent)
 
-                txs = self.storage.drain_mempool(max_n=self.baker.max_txs_per_block)
-                block = propose_block(
-                    parent=parent,
-                    mempool=txs,
-                    proposer_keypair=self.baker.keypair,
-                    proposer_pubkey_b58=self.baker.pubkey_b58,
-                    state_before=self.chain.state,
-                    round_=parent.header.round + 1,
-                )
-                self.chain.append(block)
-                self.storage.save_block(block)
-                self.storage.save_state(self.chain.state)
-                self.storage.remove_from_mempool([tx.hash_hex() for tx in block.transactions])
-
-                LOG.info(
-                    "baked block %d (hash %s, %d txs)",
-                    block.header.level, block.hash_hex()[:12], len(block.transactions),
-                )
-
-                if self.network:
-                    asyncio.create_task(self.network.broadcast_block(block.to_dict()))
+                await self._try_finalize()
             except asyncio.CancelledError:
                 break
             except Exception:
-                LOG.exception("baker loop error")
+                LOG.exception("consensus loop error")
+
+    async def _propose(self, parent: Block) -> None:
+        assert self.baker is not None and self.bft is not None
+        txs = self.storage.drain_mempool(max_n=self.baker.max_txs_per_block)
+        evicted: list = []
+        block = propose_block(
+            parent=parent,
+            mempool=txs,
+            proposer_keypair=self.baker.keypair,
+            proposer_pubkey_b58=self.baker.pubkey_b58,
+            state_before=self.chain.state,
+            round_=self._round,
+            evict_out=evicted,
+        )
+        if evicted:
+            # Transactions that can never become valid (bad signature,
+            # consumed nonce) are dropped so they are not re-tried forever.
+            self.storage.remove_from_mempool(evicted)
+        h = block.hash_hex()
+        self._pending[(block.header.level, h)] = block
+        self._proposed_this_round = True
+        LOG.info("proposed block %d round %d (hash %s, %d txs)",
+                 block.header.level, block.header.round, h[:12],
+                 len(block.transactions))
+        if self.network:
+            await self.network.broadcast_proposal(block.to_dict())
+        # Self-deliver the proposal to our own engine: emits our
+        # pre-endorsement, which loops back through _ingest_consensus and,
+        # in single-validator operation, drives the full pre-endorse →
+        # endorse → quorum-certificate sequence within this tick.
+        out = self.bft.on_proposal(block.header.level, block.header.round, h)
+        await self._emit_consensus(out)
+
+    async def _emit_consensus(self, msgs: List[ConsensusMessage]) -> None:
+        for m in msgs:
+            if self.network:
+                await self.network.broadcast_consensus(m.to_dict())
+            await self._ingest_consensus(m, from_wire=False)
+
+    async def _ingest_consensus(self, msg: ConsensusMessage, *, from_wire: bool) -> None:
+        if self.bft is None:
+            return
+        # PROPOSE never rides the consensus channel in this protocol:
+        # proposals travel as full blocks so that a validator only ever
+        # pre-endorses a hash whose block it has fully validated. Drop
+        # bare PROPOSE messages from the wire.
+        if from_wire and msg.kind == MsgKind.PROPOSE:
+            return
+        key = (msg.kind.value, msg.level, msg.round, msg.validator)
+        if key in self._seen_cons:
+            return
+        self._seen_cons.add(key)
+        self._trim(self._seen_cons)
+        out = self.bft.on_message(msg)
+        if from_wire and self.network:
+            # Re-gossip newly seen consensus messages for mesh propagation.
+            asyncio.create_task(self.network.broadcast_consensus(msg.to_dict()))
+        await self._emit_consensus(out)
+        await self._try_finalize()
+
+    async def _try_finalize(self) -> None:
+        """Append any pending proposal whose endorsement quorum certificate
+        has been reached. commits stay exactly as proposed (they feed the
+        state_root); the wire QC goes into block.endorsements, sorted for
+        a deterministic encoding."""
+        if self.bft is None:
+            return
+        level = self.chain.height + 1
+        for (lvl, h), block in list(self._pending.items()):
+            if lvl != level:
+                continue
+            qc = self.bft.get_endorse_qc(lvl, block.header.round)
+            if qc is None or qc.block_hash != h:
+                continue
+            block.endorsements = sorted(
+                f"{addr}:{sig}" for addr, sig in qc.signatures.items()
+            )
+            try:
+                self.chain.append(block, require_quorum=True)
+            except ValueError as e:
+                LOG.error("finalization failed at level %d: %s", lvl, e)
+                continue
+            self._after_block_applied(block, broadcast=True)
+            break
+
+    # ------------------------------------------------------------ network in
+
+    async def _on_proposal_msg(self, block_dict: dict) -> None:
+        try:
+            block = Block.from_dict(block_dict)
+        except (ValueError, KeyError) as e:
+            LOG.warning("rejected proposal: %s", e)
+            return
+        h = block.hash_hex()
+        level = self.chain.height + 1
+        if block.header.level != level or (level, h) in self._pending:
+            return
+        if h in self._seen_blocks:
+            return
+        parent = self.chain.head
+        # The proposal must come from the legitimate proposer of the round
+        # it claims, and rounds only move forward.
+        if block.header.round < parent.header.round + 1:
+            return
+        expected = select_proposer(
+            parent_hash_hex=parent.hash_hex(),
+            validators=self.chain.validators,
+            round_=block.header.round,
+        )
+        if expected["address"] != block.header.proposer:
+            LOG.warning("proposal at level %d round %d from illegitimate "
+                        "proposer %s", level, block.header.round,
+                        block.header.proposer)
+            return
+        # Full validation BEFORE pre-endorsing (quorum not required on a
+        # proposal — the quorum is what we are about to help build).
+        err, _ = validate_and_apply(
+            block, parent.header, self.chain.state, self.chain.validators,
+            require_quorum=False,
+        )
+        if err is not None:
+            LOG.warning("invalid proposal at level %d: %s", level, err)
+            return
+        self._pending[(level, h)] = block
+        if block.header.round > self._round:
+            self._round = block.header.round
+            self._proposed_this_round = False
+        self._round_deadline = time.monotonic() + self._round_timeout()
+        if self.network:
+            asyncio.create_task(self.network.broadcast_proposal(block.to_dict()))
+        if self.bft is not None:
+            out = self.bft.on_proposal(block.header.level, block.header.round, h)
+            await self._emit_consensus(out)
+        await self._try_finalize()
+
+    async def _on_consensus_msg(self, msg_dict: dict) -> None:
+        try:
+            msg = ConsensusMessage.from_dict(msg_dict)
+        except (ValueError, KeyError) as e:
+            LOG.warning("rejected consensus message: %s", e)
+            return
+        if not msg.verify_signature():
+            return
+        await self._ingest_consensus(msg, from_wire=True)
+
+    async def _on_block_msg(self, block_dict: dict) -> None:
+        try:
+            block = Block.from_dict(block_dict)
+        except (ValueError, KeyError) as e:
+            LOG.warning("rejected gossiped block: %s", e)
+            return
+        h = block.hash_hex()
+        if h in self._seen_blocks:
+            return
+        level = block.header.level
+        if level <= self.chain.height:
+            return
+        if level == self.chain.height + 1:
+            try:
+                # Every networked block must carry a verified > 2/3 quorum.
+                self.chain.append(block, require_quorum=True)
+            except ValueError as e:
+                LOG.warning("rejected gossiped block at level %d: %s", level, e)
+                return
+            self._after_block_applied(block, broadcast=False)
+            if self.network:
+                asyncio.create_task(self.network.broadcast_block(block.to_dict()))
+            await self._try_finalize()
+        else:
+            # Peer is ahead of us: catch-up sync (rate-limited).
+            now = time.monotonic()
+            if self.network and now - self._last_sync_request > 2.0:
+                self._last_sync_request = now
+                LOG.info("behind peer (head %d < %d) — requesting blocks",
+                         self.chain.height, level)
+                await self.network.request_blocks(self.chain.height + 1, level)
+
+    async def _on_tx_msg(self, tx_dict: dict) -> None:
+        try:
+            tx = Transaction.from_dict(tx_dict)
+        except (ValueError, KeyError) as e:
+            LOG.warning("rejected gossiped tx: %s", e)
+            return
+        h = tx.hash_hex()
+        if h in self._seen_txs:
+            return
+        self._seen_txs.add(h)
+        self._trim(self._seen_txs)
+        if not tx.verify_signature():
+            return
+        if self.storage.add_to_mempool(tx) and self.network:
+            asyncio.create_task(self.network.broadcast_tx(tx.to_dict()))
+
+    # ------------------------------------------------------------ sync out
+
+    def _get_blocks(self, lo: int, hi: int) -> List[dict]:
+        out: List[dict] = []
+        for level in range(lo, hi + 1):
+            b = self.storage.get_block_by_level(level)
+            if b is None:
+                break
+            out.append(b.to_dict())
+        return out
+
+    def _on_peer_level(self, level: int) -> Optional[Tuple[int, int]]:
+        if level > self.chain.height:
+            return (self.chain.height + 1, level)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +558,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         initial_state=initial_state,
     )
     storage.save_block(genesis_block)
-    storage.save_state(chain.state)
+    storage.save_state(chain.state, 0)
     storage.close()
     print(f"Initialized node at {args.data_dir}")
     print(f"  Genesis hash: {genesis_block.hash_hex()}")
@@ -262,6 +568,12 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    from .evm.bn254 import PY_ECC_AVAILABLE
+    if not PY_ECC_AVAILABLE:
+        # A node without the BN254 backend cannot evaluate pairings and
+        # would diverge from its peers on any block that needs one.
+        print("error: py_ecc is required (pip install -r requirements.txt)", file=sys.stderr)
+        return 1
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -272,32 +584,8 @@ def cmd_start(args: argparse.Namespace) -> int:
         print("data-dir not initialized; run `init` first", file=sys.stderr)
         return 1
 
-    # Load the genesis block and the persisted state snapshot.
-    genesis = storage.get_block_by_level(0)
-    assert genesis is not None
-    persisted_state = storage.load_state() or {}
-    validators = persisted_state.get("validators", [])
-
-    # Rebuild the genesis-state-of-the-world (balances at level 0) so we can
-    # replay subsequent blocks deterministically. Since the persisted state
-    # reflects the *current* head, we don't reuse it directly — instead we
-    # reconstruct the level-0 state from the storage-saved validator set
-    # plus the balances that the genesis block committed to.
-    # For simplicity (and because we only persist head-state, not historical
-    # snapshots), we initialize Chain at level 0 with the persisted state if
-    # head is 0, otherwise we trust the saved head-state and skip replay.
-    if storage.head_level() == 0:
-        chain = Chain(genesis, validators, initial_state=persisted_state)
-    else:
-        # Use persisted state directly; we've already validated all blocks
-        # up to head as they were applied.
-        chain = Chain(genesis, validators, initial_state=persisted_state)
-        # Replay all blocks above genesis to populate chain.blocks list.
-        for level in range(1, storage.head_level() + 1):
-            b = storage.get_block_by_level(level)
-            if b is not None:
-                chain.blocks.append(b)
-        # chain.state already reflects head; no replay of state needed.
+    # Latest snapshot + deterministic replay of the blocks above it.
+    chain = load_chain(storage)
 
     baker: Optional[BakerConfig] = None
     if args.baker_key:

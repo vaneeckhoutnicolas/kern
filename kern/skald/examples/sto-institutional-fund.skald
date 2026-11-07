@@ -9,7 +9,7 @@
 // real-asset exposure.
 //
 // Regulatory layers encoded as invariants:
-//   Prospectus Regulation Art. 3 — Whitepaper / prospectus registration
+//   Prospectus Regulation Art. 3 — Prospectus registration
 //   MiFID II Art. 16(9) — Segregation of client assets
 //   MAR Art. 14 — Insider trading / market abuse
 //   AIFMD      Art. 21 — Depositary independence (depositary != AIFM)

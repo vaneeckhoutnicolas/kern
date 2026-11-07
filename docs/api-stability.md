@@ -191,9 +191,10 @@ The phases and thresholds in [`kern/governance.py`](../kern/governance.py):
 The 100M KRN distribution per [`tokenomics.md`](tokenomics.md) §4:
 - 70% public sale
 - 10% founder (4-year vest, 1-year cliff)
-- 15% Foundation
+- 14% Foundation
 - 3% early contributors
 - 2% validator bootstrap
+- 1% bootstrap validator stake (from the Foundation pool)
 
 **Frozen at genesis ceremony**. Cannot be changed after the genesis block is signed.
 

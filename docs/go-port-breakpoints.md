@@ -1,0 +1,151 @@
+# kern-go port breakpoints
+
+This document inventories every place where a naive Go translation of
+this Python reference implementation would silently diverge — producing
+different bytes, different hashes, or different state roots — and states
+the required resolution. It exists because the Python implementation is
+the **executable specification**: kern-go must reproduce its consensus
+outputs bit-for-bit before it can be called a reference client (see
+`roadmap.md`, Track 4).
+
+Sites are referenced by module and function name rather than line number.
+
+## 1. Integer semantics
+
+Python integers are arbitrary precision. Go's are fixed-width. Three
+distinct hazards:
+
+**1a. Products that exceed int64 (~9.22e18).**
+
+| Site | Product | Magnitude |
+|---|---|---|
+| `issuance.reward_per_block` | `total_supply * rate_ppm` | ~6e18 at 100M KRN genesis supply, **grows with issuance** — will cross int64 |
+| `issuance.distribute_baker_pool` | `remainder * stake` | up to ~1e23 |
+| `issuance.split_validator_reward` | `remaining * balance` | up to ~1e23 |
+| `issuance._smoothstep_ppm` | `x * x * (3*PPM - 2*x)` | up to 3e18 — under int64 today, no headroom |
+| `governance` quadratic tallies (`_isqrt` inputs) | stake²-scale | > int64 |
+
+Resolution: all consensus-visible arithmetic in kern-go uses
+`math/bits.Mul64`/`Div64` pairs or `math/big.Int`. Never bare `*` on
+amounts. The issuance module docstring carries the same warning.
+
+**1b. JSON numbers decode to float64 by default in Go.**
+`encoding/json` unmarshals numbers into `float64` unless told otherwise;
+integers above 2^53 (9.007e15) lose precision silently. Genesis supply in
+mukrn is 1e14 — safe today by two orders of magnitude, not safe by
+design. Resolution: decode with `json.Decoder.UseNumber()` or into
+typed structs with `int64`/`big.Int` fields, and **reject** any number
+token containing `.`, `e`, or `E` in consensus objects (the strict
+`from_dict` decoders on the Python side already reject non-int types;
+kern-go must reject float syntax at the same boundary).
+
+**1c. Division and modulo.** Python `//` floors; Go `/` truncates toward
+zero. All consensus quantities here are non-negative, where floor and
+truncation coincide — but any future signed arithmetic must use explicit
+floor division. Keep amounts unsigned end-to-end.
+
+## 2. Canonical JSON encoding
+
+Every signed payload and every hash preimage in this codebase is
+produced by:
+
+```python
+json.dumps(d, sort_keys=True, separators=(",", ":"))
+```
+
+(`transaction`, `block`, `bft.ConsensusMessage`, `chain.state_root_hex`
+under the default `json` root function.) Python's default
+`ensure_ascii=True` escapes every non-ASCII character as `\uXXXX`;
+Go's `encoding/json` instead emits UTF-8 and additionally escapes
+`<`, `>`, `&` for HTML safety. These produce **different bytes for the
+same value**, hence different hashes.
+
+Resolution: kern-go implements a dedicated canonical marshaller (no
+`encoding/json` for hash preimages) with the exact rules: keys sorted
+bytewise; separators `,` and `:` with no whitespace; strings escaped
+exactly as Python's `ensure_ascii=True` does (`"`, `\`, control chars,
+and all code points ≥ U+0080 as `\uXXXX` with lowercase hex, surrogate
+pairs for astral plane); integers in base 10 with no sign for zero;
+**no floats anywhere** (Phase A removed the last consensus float —
+issuance is ppm integer fixed-point). Both clients validate against the
+shared vectors in §6. Protocol rule to preserve: consensus-hashed string
+fields are ASCII by construction (addresses, base58, hex); Skald
+sources and storage values that may contain non-ASCII are covered by
+the escape rules above.
+
+## 3. Map iteration order
+
+Go randomizes map iteration; Python 3.7+ dicts preserve insertion order.
+Any consensus-visible iteration must be explicitly ordered in kern-go:
+
+- Validator sets and endorser lists are **lists** here, and
+  `issuance.distribute_baker_pool` documents that distribution follows
+  validator-set list order — port as slices, never maps.
+- Reward crediting iterates `per_validator` dicts; state mutation order
+  is invisible to the state root (the root serializes sorted), but any
+  future event/receipt stream must sort explicitly.
+- `block.endorsements` entries are sorted lexicographically at
+  finalization (`node._try_finalize`) — preserve.
+
+## 4. Cryptography
+
+| Primitive | Python | Go | Note |
+|---|---|---|---|
+| Ed25519 | PyNaCl (libsodium) | `crypto/ed25519` | Both RFC 8032; interop verified via shared vectors |
+| Hashing | `hashlib.blake2b` with domain keys (e.g. `kern.merkle`) and digest sizes 8/32 | `golang.org/x/crypto/blake2b` | Keyed mode + digest size must match exactly |
+| Base58 | custom alphabet in `crypto` | port the same table | Address/pubkey/signature prefixes are part of the format |
+| BN254 pairing | `py_ecc` (pure Python) | **`gnark-crypto` (bn254 package)** | **blst is BLS12-381-only and cannot implement BN254** — earlier notes suggesting a py_ecc→blst swap are corrected in this repo. gnark-crypto is maintained, audited, and constant-time where it matters. A compiled BN254 backend also sidesteps py_ecc's deep-recursion issue on Windows. |
+
+## 5. Concurrency model
+
+The Python node is effectively single-threaded: one asyncio loop owns
+chain state, and handlers never run concurrently with each other. The
+Go node will have real parallelism. Rule: a single goroutine owns
+`Chain` mutation (apply/append); network handlers communicate with it
+over channels; read-only RPC takes snapshots or a RWMutex. The BFT
+engine (`bft.BftEngine`) is a pure state machine — port it as one and
+keep it inside the owner goroutine. Deadlines use the monotonic clock
+(`time.monotonic()` here, Go `time.Now()` monotonic reading), never
+wall-clock arithmetic; block timestamps are integer unix seconds.
+
+## 6. Differential testing protocol
+
+kern-go earns "reference client" status only after passing cross-client
+vectors generated from this repo:
+
+1. **Encoding vectors**: canonical bytes + blake2b hashes for a corpus
+   of transactions, headers, blocks (with commits and endorsements),
+   and consensus messages — including non-ASCII Skald sources and
+   maximal integer values.
+2. **Issuance vectors**: `reward_per_block(1e15, 300_000) == 720_587`
+   is pinned in `tests/test_issuance.py`; extend to a sweep of
+   (supply, ratio_ppm) pairs including values past int64.
+3. **State roots**: scripted block sequences (transfers, originations,
+   delegation, governance, slashing) with expected roots after each
+   block, under both `json` and `trie` root functions.
+4. **Quorum vectors**: blocks with valid/forged/duplicate/insufficient
+   endorsement sets and the exact accept/reject verdict
+   (`tests/test_consensus_wire.py` is the source of truth).
+
+Divergence anywhere is a kern-go bug by definition until proven to be a
+specification bug here — in which case this repo is fixed **first** and
+the vectors regenerated (see `roadmap.md`: changes land in the
+specification before the port).
+
+## 7. Phase B consensus rule changes (port these exactly)
+
+Each item below changes what a valid block is or what state it produces.
+The source of truth is the code and the named tests; see
+[phase-b-changes.md](phase-b-changes.md) for the rationale.
+
+| Rule | Python reference | Pinned by |
+|---|---|---|
+| Any exception raised while applying an operation is a deterministic rejection after fee and nonce (state rolled back to post-fee). Kind-specific presence rules (`_malformed_reason`) run after the fee debit. | `chain.apply_transaction`, `chain._malformed_reason` | `tests/test_phase_b_exception_boundary.py` |
+| Transaction field types are checked at construction (`Transaction.__post_init__`), not only in `from_dict`. | `transaction.Transaction.__post_init__` | same |
+| `_current_level` is set to the block level before the first transaction. | `chain.apply_block`, `consensus.propose_block` | `tests/test_phase_b_state_rules.py` |
+| Rewarded endorser set = `{proposer}`; `commits` are never read for rewards. | `chain._apply_block_rewards` | `tests/test_phase_b_exception_boundary.py::test_extra_commit_entries_do_not_change_rewards` |
+| Staking ratio and both governance tracks use effective stake (own stake + delegated liquid balances); the treasury track has no delegation copy. | `chain._compute_staked`, `chain._governance_validator_set` | `tests/test_phase_b_state_rules.py` |
+| If state carries `chain_id`, a transaction must carry the same `chain_id` (null rejected); checked before any mutation. | `chain._check_signature_and_nonce` | same |
+| Genesis: declared `total_supply` must equal the sum of balances; `chain_id` is copied into state. | `chain.initial_state_from_genesis` | same |
+| Attestation revoke starts an unbonding period (`attestation_unbonding_blocks`, default 86 400); bonds are released at the end of the block, after rewards and before the governance tick, in ascending release level then insertion order. A slash resolves both bonds. | `chain._apply_revoke_attestation`, `chain._release_matured_attestation_bonds`, `chain._apply_slash_attestation_equivocation` | `tests/test_phase_b_bond_lifecycle.py` |
+| RIPEMD-160 precompile always returns the real digest; ECRECOVER is an Ed25519 verifier. | `evm.frames` | `tests/test_phase_b_precompiles.py` |

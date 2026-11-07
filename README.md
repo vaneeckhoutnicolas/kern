@@ -6,13 +6,15 @@
 
 > *The noyau. The kernel. The grain of state that endures.*
 
-**Kern** is a Layer-1 blockchain protocol that combines EVM tooling and developer-ecosystem compatibility with native on-chain governance, formal verifiability, and Liquid Proof-of-Stake. Smart contracts are written in **Skald**, a resource-typed language with declared invariants compiled to a verifiable bytecode and executed deterministically.
+**Kern** is a Layer-1 blockchain protocol that combines EVM tooling and developer-ecosystem compatibility with native on-chain governance, formal verifiability, and Liquid Proof-of-Stake. Smart contracts are written in **Skald**, a small statically typed language (scalar types `int`, `bool`, `string`, `address`; no recursion, no loops) with declared invariants that the runtime re-checks after every entry call.
 
-This repository is the **v1.1 release candidate** — building on the v1.0-rc audit-frozen foundation with **slashable attestations** as a new L1 primitive, three **tokenized-securities Skald templates** for the EU securities regime — MiFID II / Prospectus Regulation / AIFMD, *not* MiCA, which excludes financial instruments under Art. 2(4) (startup equity, institutional fund, real estate; see [docs/sto-mica.md](docs/sto-mica.md)), **public goods funding primitives** (Quadratic Funding + Retroactive PGF), an **oracle network** (generic data + DeFi prices + schema marketplace), **ZK-claims** for privacy-preserving attestations, and **Heimdall** — the official block explorer + monitoring stack that surfaces the institutional-legibility features Kern was built to support. See [docs/v11rc-changes.md](docs/v11rc-changes.md) for the full vertical and [docs/setup-heimdall-operator.md](docs/setup-heimdall-operator.md) for the explorer.
+> **Status.** Kern is a Layer-1 protocol with a Python reference implementation, at devnet stage; no public network is in operation. The repository's `genesis.json` is a devnet file whose keys are public placeholders. Nothing here has been professionally audited, and nothing here has monetary value (see [docs/disclaimer.md](docs/disclaimer.md)).
+
+This repository is the **v1.1 release candidate** — building on the v1.0-rc audit-frozen foundation with **slashable attestations** as a new L1 primitive, three **tokenized-securities Skald templates** for the EU securities regime — MiFID II / Prospectus Regulation / AIFMD, *not* MiCA, which excludes financial instruments under Art. 2(4) (startup equity, institutional fund, real estate; see [docs/sto-mica.md](docs/sto-mica.md)), **public goods funding primitives** (Quadratic Funding + Retroactive PGF), an **oracle network** (generic data + DeFi prices + schema marketplace), **ZK-claims** for privacy-preserving attestations (a Groth16 verifier over BN254 against registered verifier keys; no circuits, trusted setup or prover are shipped), and **Heimdall** — the official block explorer + monitoring stack that surfaces the institutional-legibility features Kern was built to support. See [docs/v11rc-changes.md](docs/v11rc-changes.md) for the full vertical and [docs/setup-heimdall-operator.md](docs/setup-heimdall-operator.md) for the explorer.
 
 The v1.0-rc foundation includes: the Skald language with static type checker, a multi-validator BFT consensus engine, an optimistic rollup framework with a multi-frame Mini-EVM and bisection-based fraud proofs, **Liquid PoS delegation with no LSTs and no lockups**, **EVM Yellow Paper-compliant gas metering in the rollup Mini-EVM** (the L1 native layer uses a flat per-transaction fee and a non-recursive, loop-free Skald execution model that terminates by construction — see [docs/skald-language.md](docs/skald-language.md), with an optional governance-gated [fee floor + per-block size cap](docs/fee-floor.md) that is off by default), **real BN254 pairing via py_ecc**, and a complete on-chain governance system with slashing.
 
-The economy is finalized: **100 000 000 KRN** genesis supply, broad public distribution (70% public sale / 10% founder vested 4 years / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake), and a documented **API stability spec** declaring what's frozen at v1.0.
+The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad public distribution (70% public sale / 10% founder vested 4 years / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake), and a documented **API stability spec** declaring what's frozen at v1.0. The distribution is a design, not a launched economy: no sale has taken place, and a mainnet genesis can only be built from real multisig keys in a separate ceremony.
 
 ---
 
@@ -46,6 +48,7 @@ The economy is finalized: **100 000 000 KRN** genesis supply, broad public distr
 |----------|------------|
 | [Consensus](docs/consensus.md) | Three-phase BFT consensus — the single-validator view |
 | [Multi-validator BFT](docs/bft.md) | The full 3-phase protocol: propose / pre-endorse / endorse |
+| [Consensus on the wire](docs/consensus-wire.md) | How the BFT protocol travels over P2P: message kinds, quorum verification, sync — the normative spec for kern-go |
 | [Skald language](docs/skald-language.md) | Grammar, semantics, examples |
 | [Skald static typing](docs/typecheck.md) | The compile-time type checker |
 | [EVM rollups](docs/rollups.md) | Optimistic Smart Rollup framework |
@@ -68,7 +71,7 @@ The economy is finalized: **100 000 000 KRN** genesis supply, broad public distr
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~50 markdown specifications, 692 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~50 markdown specifications, 836 tests passing.**
 
 ```
 kern/
@@ -120,7 +123,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 692 tests (+ 2 chaos skipped by default)
+├── tests/                      # 836 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -181,7 +184,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 692 passed, 2 skipped (chaos tests) in ~20s
+# 836 passed in ~25s
 ```
 
 ### Open the block explorer (Heimdall)
@@ -340,13 +343,16 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | v0.9 | Observability + property-based fuzzing + devnet bootstrap | ✅ |
 | **v1.0-rc** | Genesis 100M + Liquid PoS delegation + dynamic gas wired + real BN254 + slashing tx + API freeze | ✅ |
 | **v1.1-rc** | **Slashable attestations + STO securities templates + QF/RPGF + oracle network + ZK-claims** | **✅ (this version)** |
+| **v1.1-rc Phase A** | **Hardening: consensus on the wire (verified > 2/3 quorum on every networked block), strict ingress decoding, integer-only issuance, periodic snapshots + replay, catch-up sync, mypy clean** | **✅** |
+| **v1.1-rc Phase B** | **External audit fixes: exception boundary, attestation bond unbonding, current level, single delegation truth, chain_id enforcement, genesis checks, real Groth16 verifier, executed-step rollup challenges, portable precompiles ([details](docs/phase-b-changes.md))** | **✅ (this version)** |
+| kern-go | Go client in a sibling repo — this repo remains the executable specification; kern-go becomes the operator reference after differential testing ([details](docs/roadmap.md)) | 🔵 announced |
 | v1.0 | First stable release after audit cycle 1 | 🔵 |
 | Yggdrasil testnet | Public testnet, permissionless validators | 🔵 |
 | Midgard mainnet | Production launch with 100M KRN distribution | 🔵 |
 
 See [`docs/roadmap.md`](docs/roadmap.md) for the full three-track plan (code releases, networks, operational milestones).
 
-This is a **reference implementation and protocol specification**, not yet a production network. It is intended for protocol research, education, prototyping rollup applications, and as the foundation of the upcoming Yggdrasil testnet and Midgard mainnet. Do not use it to secure real value before audit cycle 1 completes.
+This is a **reference implementation and protocol specification**, not yet a production network. Kern is a Layer 1 by design (own consensus, settlement, execution and native token, no dependency on another chain); it is not yet a Layer 1 network in operation (no multi-machine devnet with independent validators, no public testnet). It is intended for protocol research, education, prototyping rollup applications, and as the foundation of the upcoming Yggdrasil testnet and Midgard mainnet. Do not use it to secure real value before audit cycle 1 completes.
 
 ## After v1.1-rc — what's next
 

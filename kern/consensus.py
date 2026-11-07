@@ -79,6 +79,7 @@ def propose_block(
     state_before: dict,
     round_: int = 0,
     max_txs: int = DEFAULT_MAX_TXS_PER_BLOCK,
+    evict_out: Optional[List[str]] = None,
 ) -> Block:
     """Construct, fill, and sign a new block proposing it as the next
     head. Transactions are taken in mempool order; ones that fail to
@@ -87,19 +88,40 @@ def propose_block(
     Block rewards are applied to working_state BEFORE computing the
     state_root, so that the published state_root commits to the
     post-reward state — matching what apply_block will produce on
-    validation."""
+    validation.
+
+    Phase B (audit 1, finding 7): a transaction can never stop block
+    production. `apply_transaction` turns every handler exception into a
+    rejection, and this loop additionally guards the call so that a defect
+    anywhere in the application path discards the transaction instead of
+    propagating out of the baker loop.
+
+    If `evict_out` is given, the hashes of transactions that can NEVER
+    become valid (bad signature, nonce already consumed) are appended to
+    it so the caller can drop them from the mempool. Transactions that
+    may become valid later (future nonce, insufficient balance) stay."""
     selected: List[Transaction] = []
     # Trial-apply candidate transactions; build a working state.
     import copy
     working_state = copy.deepcopy(state_before)
+    # Same rule as apply_block: transactions observe the block's own level.
+    working_state["_current_level"] = parent.header.level + 1
     from .chain import apply_transaction, _apply_block_rewards
 
     for tx in mempool[:max_txs]:
         before = copy.deepcopy(working_state)
-        result = apply_transaction(working_state, tx, baker=proposer_keypair.address)
+        try:
+            result = apply_transaction(working_state, tx, baker=proposer_keypair.address)
+        except Exception:  # defensive: apply_transaction should not raise
+            working_state = before
+            if evict_out is not None:
+                evict_out.append(tx.hash_hex())
+            continue
         if not result.ok:
             # Discard this tx for this proposal; restore state.
             working_state = before
+            if evict_out is not None and _never_valid(tx, before):
+                evict_out.append(tx.hash_hex())
             continue
         selected.append(tx)
 
@@ -116,11 +138,14 @@ def propose_block(
         proposer_pubkey=proposer_pubkey_b58,
     )
     draft_block = Block(header=draft_header, transactions=selected, commits=[])
-    # Single-validator self-commit (multi-validator: aggregate over network).
-    # We populate commits before computing rewards so endorsers are known.
-    draft_block.commits.append(
-        f"{proposer_keypair.address}:{proposer_keypair.sign_b58(b'pre-commit-placeholder')}"
-    )
+    # Self-commit: the proposer's own endorse-schema signature. It is
+    # populated (with a placeholder signature) before computing rewards so
+    # that the endorser set feeding _apply_block_rewards is known, then
+    # re-signed over the final block hash below. In multi-validator
+    # operation, additional endorsements gathered on the wire go into
+    # block.endorsements (see docs/consensus-wire.md) — they arrive after
+    # the header is signed and therefore cannot feed the state_root.
+    draft_block.commits.append(f"{proposer_keypair.address}:placeholder")
 
     # Apply block rewards to working_state now that commits are known.
     _apply_block_rewards(working_state, draft_block)
@@ -129,17 +154,37 @@ def propose_block(
     # activations). This must run BEFORE state_root computation so that
     # the proposed state_root matches what apply_block will produce on
     # validation.
-    from .chain import _apply_governance_tick
+    from .chain import _apply_governance_tick, _release_matured_attestation_bonds
+    _release_matured_attestation_bonds(working_state, draft_block.header.level)
     _apply_governance_tick(working_state, draft_block.header.level)
 
     # Now compute the final state_root over the post-reward state.
     draft_header.state_root = state_root_hex(working_state)
     draft_header.sign(proposer_keypair)
-    # Re-sign the commit over the now-final block hash.
-    draft_block.commits = [
-        f"{proposer_keypair.address}:{proposer_keypair.sign_b58(draft_block.header.hash())}"
-    ]
+    # Sign the self-commit over the now-final block hash, using the same
+    # ENDORSE message schema that wire endorsements use, so that a solo
+    # proposer's block passes strict quorum verification identically to a
+    # multi-validator block (one schema, one verifier: bft.verify_commits).
+    from .bft import ConsensusMessage, MsgKind, commit_entry
+    self_endorse = ConsensusMessage(
+        kind=MsgKind.ENDORSE,
+        level=draft_header.level,
+        round=draft_header.round,
+        block_hash=draft_header.hash_hex(),
+        validator=proposer_keypair.address,
+        validator_pubkey=proposer_pubkey_b58,
+    )
+    self_endorse.sign(proposer_keypair)
+    draft_block.commits = [commit_entry(self_endorse)]
     return draft_block
+
+
+def _never_valid(tx: Transaction, state: dict) -> bool:
+    """True when `tx` cannot become valid in any later block: its signature
+    is invalid, or its nonce is already consumed. Pure."""
+    if not tx.verify_signature():
+        return True
+    return tx.nonce < state.get("nonces", {}).get(tx.sender, 0)
 
 
 @dataclass

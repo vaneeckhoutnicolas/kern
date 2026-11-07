@@ -85,9 +85,10 @@ The genesis distribution follows the Ethereum 2014 template, adjusted for 2026 b
 |-----------------------------------|------------:|----------------:|------------------------------------------------------------------|
 | **Public sale**                   |        70%  |    70 000 000   | Liquid at genesis                                                |
 | **Founder (Nicolas Van Eeckhout)** |       10%  |    10 000 000   | 1-year cliff + 4-year linear vest                                |
-| **Foundation**                    |        15%  |    15 000 000   | Held by Foundation legal entity; spent only via Foundation governance |
+| **Foundation**                    |        14%  |    14 000 000   | Held by Foundation legal entity; spent only via Foundation governance |
 | **Early contributors pool**       |         3%  |     3 000 000   | 6-month cliff + 3-year linear vest, individual grants per recipient |
 | **Validator bootstrap pool**      |         2%  |     2 000 000   | Released over 1 year to initial validators                       |
+| **Bootstrap validator stake**     |         1%  |     1 000 000   | Own stake of the first validator, carved out of the Foundation's 15M pool before genesis |
 
 **Total: 100% = 100 000 000 KRN**
 
@@ -96,7 +97,7 @@ The genesis distribution follows the Ethereum 2014 template, adjusted for 2026 b
 - **Mirror of Ethereum 2014 ratios (70/10/10/+).** Ethereum's ICO put ~83% to public, ~10% to early contributors, ~10% to Foundation. The 2026 adjustment is to add explicit vesting on the founder pool (the modern norm) and to break out a dedicated contributors and validator-bootstrap pool, each at modest percentages.
 - **Public majority (70%).** Genesis decentralization is what gives an L1 long-term legitimacy. Without a large liquid public allocation, the chain starts captured.
 - **Founder allocation with vesting (10%).** This is the modern standard, and it serves a real purpose: aligning the founder's incentive with long-term protocol health rather than short-term exit liquidity. Without vesting, the founder allocation becomes a sword of Damocles over the price; with it, the founder must build value over 5 years to fully realize their stake.
-- **Foundation (15%).** Holds working capital for audits, dev grants, marketing, partnerships, and operational continuity. Spent via Foundation governance (multisig + legal accountability), distinct from the on-chain treasury, which is funded ongoing from issuance.
+- **Foundation (15% pool: 14% liquid at genesis + 1% staked by the bootstrap validator).** Holds working capital for audits, dev grants, marketing, partnerships, and operational continuity. Spent via Foundation governance (multisig + legal accountability), distinct from the on-chain treasury, which is funded ongoing from issuance.
 - **Early contributors pool (3%).** A pool — not individual line items — managed by the Foundation and distributed to people who contributed code, audits, documentation, or other significant work before mainnet. Individual grants vest 3 years with a 6-month cliff. See [`contributors-program.md`](contributors-program.md).
 - **Validator bootstrap (2%).** Without seeding initial validators, the chain has a chicken-and-egg problem. This pool funds the first 5-10 validators for one year of operation while staking economics mature.
 
@@ -289,7 +290,7 @@ If, post-mainnet, the community wants memecoin-style assets *on top of* Kern, th
 
 2. **"Fair launch" theatre** — token distributed via points-farming, retroactive airdrop to wallets that interacted with a testnet, or similar gameable mechanisms that *appear* democratic but in practice concentrate ownership in sophisticated Sybil farmers. This is the dominant pattern in 2022-2025 L1 launches, and it has not been good for the chains that adopted it.
 
-Kern's published distribution (70% public sale / 10% founder vested / 15% Foundation / 3% contributors / 2% validator bootstrap) is transparently insider-conservative at 10% — most VC-backed L1s allocate 25-40% to insiders. The 70% public allocation is genuinely public, conducted via a regulated sale mechanism (see [setup-foundation.md](setup-foundation.md) Step 7).
+Kern's published distribution (70% public sale / 10% founder vested / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake) is transparently insider-conservative at 10% — most VC-backed L1s allocate 25-40% to insiders. The 70% public allocation is genuinely public, conducted via a regulated sale mechanism (see [setup-foundation.md](setup-foundation.md) Step 7).
 
 There will be no retroactive airdrop. There will be no pre-mainnet "points". There will be no surprise insider unlocks. The distribution is the distribution.
 
@@ -336,7 +337,7 @@ If you are reading this section while evaluating Kern as a speculative position,
 | Smallest unit          | mukrn (10⁻⁶ KRN)                          |
 | Genesis supply         | 100 000 000 KRN                          |
 | Founder allocation     | 10% (vested 4 years, 1-year cliff)      |
-| Foundation allocation  | 15%                                      |
+| Foundation allocation  | 15% pool (14% + 1% bootstrap validator stake) |
 | Public sale            | 70%                                      |
 | Issuance               | Adaptive (0.25% – 6% annualized)         |
 | Target staking ratio   | 50%                                      |

@@ -100,6 +100,7 @@ def tokenize(src: str) -> List[Token]:
     tokens: List[Token] = []
     for m in _TOKEN_RE.finditer(src):
         kind = m.lastgroup
+        assert kind is not None  # every alternative in _TOKEN_RE is a named group
         val = m.group()
         if kind in ("WS", "COMMENT"):
             continue

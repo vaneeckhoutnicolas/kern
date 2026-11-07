@@ -98,7 +98,49 @@ class BlockHeader:
 
     @classmethod
     def from_dict(cls, d: dict) -> "BlockHeader":
-        return cls(**d)
+        """Strictly typed decode; raises ValueError on malformed input.
+
+        Like Transaction.from_dict, this is an ingress gate: gossiped
+        blocks are decoded here before touching any consensus code."""
+        if not isinstance(d, dict):
+            raise ValueError("header: expected an object")
+
+        def _uint(key: str) -> int:
+            v = d.get(key)
+            if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+                raise ValueError(f"header.{key}: expected a non-negative integer")
+            return v
+
+        def _hex32(key: str) -> str:
+            v = d.get(key)
+            if not isinstance(v, str) or len(v) != 64:
+                raise ValueError(f"header.{key}: expected a 64-char hex string")
+            try:
+                bytes.fromhex(v)
+            except ValueError:
+                raise ValueError(f"header.{key}: expected a 64-char hex string")
+            return v
+
+        def _str(key: str) -> str:
+            v = d.get(key)
+            if not isinstance(v, str) or not v:
+                raise ValueError(f"header.{key}: expected a non-empty string")
+            return v
+
+        sig = d.get("signature")
+        if sig is not None and not isinstance(sig, str):
+            raise ValueError("header.signature: expected a string or null")
+        return cls(
+            level=_uint("level"),
+            round=_uint("round"),
+            timestamp=_uint("timestamp"),
+            parent_hash=_hex32("parent_hash"),
+            state_root=_hex32("state_root"),
+            txs_root=_hex32("txs_root"),
+            proposer=_str("proposer"),
+            proposer_pubkey=_str("proposer_pubkey"),
+            signature=sig,
+        )
 
 
 @dataclass
@@ -107,7 +149,17 @@ class Block:
 
     header: BlockHeader
     transactions: List[Transaction] = field(default_factory=list)
-    commits: List[str] = field(default_factory=list)  # base58 sigs by validators
+    # Endorse-schema signatures ("kn1addr:ksig...") that were known to the
+    # proposer at proposal time and therefore feed reward accounting and
+    # the state_root. In single-validator operation this is the proposer's
+    # own self-endorsement.
+    commits: List[str] = field(default_factory=list)
+    # The endorsement quorum certificate gathered on the wire AFTER the
+    # header was signed. Excluded from the header hash and from reward
+    # accounting (both would be circular); counted, together with commits,
+    # by validate_block's quorum check. Empty in single-validator blocks,
+    # whose self-commit already satisfies the quorum on its own.
+    endorsements: List[str] = field(default_factory=list)
 
     def hash_hex(self) -> str:
         return self.header.hash_hex()
@@ -117,14 +169,26 @@ class Block:
             "header": self.header.to_dict(),
             "transactions": [tx.to_dict() for tx in self.transactions],
             "commits": self.commits,
+            "endorsements": self.endorsements,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "Block":
+        if not isinstance(d, dict):
+            raise ValueError("block: expected an object")
+        txs = d.get("transactions")
+        if not isinstance(txs, list):
+            raise ValueError("block.transactions: expected a list")
+        commits = d.get("commits", [])
+        endorsements = d.get("endorsements", [])
+        for name, lst in (("commits", commits), ("endorsements", endorsements)):
+            if not isinstance(lst, list) or not all(isinstance(c, str) for c in lst):
+                raise ValueError(f"block.{name}: expected a list of strings")
         return cls(
             header=BlockHeader.from_dict(d["header"]),
-            transactions=[Transaction.from_dict(t) for t in d["transactions"]],
-            commits=d.get("commits", []),
+            transactions=[Transaction.from_dict(t) for t in txs],
+            commits=list(commits),
+            endorsements=list(endorsements),
         )
 
 

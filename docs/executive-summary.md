@@ -120,9 +120,10 @@ Kern has a native token, **KRN**, because the protocol genuinely needs one:
 |---|---:|---:|---|
 | Public sale | 70% | 70M KRN | Liquid at genesis |
 | Founder (Nicolas Van Eeckhout) | 10% | 10M KRN | 1-year cliff + 4-year linear |
-| Foundation | 15% | 15M KRN | Strategic ops, legal entity multisig |
+| Foundation | 14% | 14M KRN | Strategic ops, legal entity multisig |
 | Early contributors pool | 3% | 3M KRN | 6-month cliff + 3-year linear, individual grants |
 | Validator bootstrap | 2% | 2M KRN | Released over 1 year |
+| Bootstrap validator stake | 1% | 1M KRN | Own stake of the first validator (from the Foundation pool) |
 
 The full tokenomics — supply, distribution, vesting, sinks, faucets, adaptive issuance formula, staking and delegation mechanics, slashing — is specified in [`tokenomics.md`](tokenomics.md) and [`staking.md`](staking.md). The contributor incentive structure is detailed in [`contributors-program.md`](contributors-program.md).
 
@@ -159,7 +160,7 @@ The full tokenomics — supply, distribution, vesting, sinks, faucets, adaptive 
 | v1.0-rc — Dynamic gas wiring | EIP-2200 SSTORE pricing wired into VM step(); SHA3/EXP/memory expansion costs live | ✅ Done |
 | v1.0-rc — Slashing tx | OpKind.SLASH_EQUIVOCATION transaction; proportional delegator slashing | ✅ Done |
 | v1.0-rc — Delegated staking | Liquid PoS: DELEGATE_STAKE / UNDELEGATE_STAKE; commission split; effective_stake | ✅ Done |
-| v1.0-rc — Genesis 100M | Ethereum-style distribution: 70% public / 10% founder vested 4y / 15% Foundation / 3% contributors / 2% validator bootstrap | ✅ Done |
+| v1.0-rc — Genesis 100M | Distribution: 70% public / 10% founder vested 4y / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake | ✅ Done |
 | v1.0-rc — Code freeze | Final RPC API + transaction format + state schema freeze. Full documentation site. | 🟡 Remaining |
 | v1.0 — Audit cycle 1 | First external security audit (candidates: Trail of Bits, OtterSec, Hashlock) | 🔵 Planned |
 | Yggdrasil (testnet) | Public testnet, permissionless validators | 🔵 Planned |

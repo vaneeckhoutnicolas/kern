@@ -188,7 +188,13 @@ def test_attest_duplicate_id_rejected():
 # Revocation
 # ---------------------------------------------------------------------------
 
-def test_revoke_returns_bond():
+def test_revoke_locks_bond_then_releases_after_unbonding():
+    """Phase B (audit 1, findings 1 and 2): revocation starts an unbonding
+    period. The bond stays in the record (still slashable) and is released
+    to the issuer only once the period has elapsed."""
+    from kern.attestation import attestation_unbonding_blocks
+    from kern.chain import _release_matured_attestation_bonds
+
     state, issuer = _setup_state_with_issuer(initial_balance=10_000_000)
     tx = make_attest(issuer, "s", "subj", {"v": 1}, nonce=0, bond=500_000)
     result = apply_transaction(state, tx, baker=issuer.address)
@@ -198,8 +204,18 @@ def test_revoke_returns_bond():
     revoke = make_revoke_attestation(issuer, att_id, nonce=1)
     result2 = apply_transaction(state, revoke, baker=issuer.address)
     assert result2.ok, result2.error
-    # Bond returned (less the revoke fee which went to baker=issuer → net 0)
+    # Not returned yet (fee went to baker=issuer, so net 0 on the fee).
+    assert state["balances"][issuer.address] == pre
+    assert state["attestations"][att_id]["bond"] == 500_000
+
+    release_at = state["attestations"][att_id]["bond_release_level"]
+    assert release_at == state["_current_level"] + attestation_unbonding_blocks(state)
+
+    _release_matured_attestation_bonds(state, release_at - 1)
+    assert state["balances"][issuer.address] == pre
+    _release_matured_attestation_bonds(state, release_at)
     assert state["balances"][issuer.address] == pre + 500_000
+    assert state["attestations"][att_id]["bond"] == 0
 
 
 def test_revoke_marks_revoked_at_level():
@@ -270,7 +286,9 @@ def test_slash_equivocation_basic():
     assert result.extra["slashed"] == 300_000
     assert result.extra["whistleblower_reward"] == 30_000
     assert result.extra["burned"] == 270_000
-    assert result.extra["refunded_to_issuer"] == 700_000
+    # Phase B (audit 1, finding 10): the remainder of the slashed bond
+    # (700k) AND the whole second bond (1M) return to the issuer.
+    assert result.extra["refunded_to_issuer"] == 700_000 + 1_000_000
 
     # Snitch received reward (less the 1000 mukrn tx fee which went to baker=issuer)
     assert state["balances"][snitch.address] == pre_snitch - 1000 + 30_000
@@ -280,7 +298,7 @@ def test_slash_equivocation_basic():
     assert state["attestations"][id_1]["consumed_for_slashing"]
     assert state["attestations"][id_2]["consumed_for_slashing"]
     # Both bonds zeroed out (fully resolved)
-    assert state["attestations"][id_1]["bond"] == 0 or state["attestations"][id_2]["bond"] == 0
+    assert state["attestations"][id_1]["bond"] == 0 and state["attestations"][id_2]["bond"] == 0
 
 
 def test_slash_with_identical_claims_fails():

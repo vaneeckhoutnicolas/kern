@@ -21,14 +21,24 @@ Produces two files:
 The total genesis supply is 100_000_000 KRN = 100_000_000_000_000 mukrn
 (1 KRN = 1_000_000 mukrn).
 
-Distribution (as agreed with the founder):
+Distribution as written to genesis.json (70 / 10 / 14 / 3 / 2 / 1):
     Public sale         : 70_000_000 KRN  (70%)
     Founder (Nicolas)   : 10_000_000 KRN  (10%)  vested 4y/cliff 1y
-    Foundation          : 15_000_000 KRN  (15%)
+    Foundation          : 14_000_000 KRN  (14%)  15M pool minus the 1M below
     Early contributors  :  3_000_000 KRN   (3%)  vested 3y/cliff 6mo
     Validator bootstrap :  2_000_000 KRN   (2%)  released over 1y
+    Bootstrap baker     :  1_000_000 KRN   (1%)  own stake, taken from the
+                                                 Foundation pool before genesis
     -------------------------------------
     Total               : 100_000_000 KRN
+
+PLACEHOLDER KEYS. Every address in the file this script writes is derived
+from a public seed (bytes([seed_byte]) * 32, see derive_placeholder_address).
+Anyone who reads this script can spend those balances. The output is
+therefore a DEVNET genesis only: it is labelled "placeholder_keys": true and
+the script refuses to write a chain_id that names mainnet. A mainnet genesis
+must be built from real multisig and validator keys by a separate,
+audited ceremony, never by this script (audit 2, point 5).
 
 Usage:
     python scripts/build_v1_genesis.py [--out genesis.json]
@@ -106,8 +116,16 @@ def derive_placeholder_address(seed_byte: int) -> tuple:
     return kp.address, kp.public_key_b58
 
 
-def build_genesis() -> dict:
-    """Build the canonical v1.0 genesis state."""
+DEFAULT_CHAIN_ID = "kern-devnet-placeholder"
+
+
+def build_genesis(chain_id: str = DEFAULT_CHAIN_ID) -> dict:
+    """Build the v1.0 genesis distribution with PLACEHOLDER keys (devnet)."""
+    if "mainnet" in chain_id.lower():
+        raise ValueError(
+            "refusing to label a placeholder-key genesis as mainnet: these "
+            "addresses are derived from public seeds and spendable by anyone"
+        )
 
     founder_addr, founder_pk = derive_placeholder_address(0xF0)
     foundation_addr, foundation_pk = derive_placeholder_address(0xF1)
@@ -149,7 +167,13 @@ def build_genesis() -> dict:
     total_supply_mukrn = TOTAL_SUPPLY_KRN * MUKRN_PER_KRN
 
     genesis = {
-        "chain_id": "kern-mainnet-midgard",
+        "chain_id": chain_id,
+        "placeholder_keys": True,
+        "_notice": (
+            "DEVNET GENESIS. All addresses are derived from public seeds in "
+            "scripts/build_v1_genesis.py and are spendable by anyone. Not a "
+            "mainnet genesis."
+        ),
         "genesis_time": "2027-Q3 (target)",
         "total_supply": total_supply_mukrn,
         "balances": balances,
@@ -226,23 +250,26 @@ def main():
     ap.add_argument("--out", default="genesis.json", help="Output genesis file path")
     ap.add_argument("--vesting-out", default="genesis_vesting.json",
                     help="Output vesting schedule path")
+    ap.add_argument("--chain-id", default=DEFAULT_CHAIN_ID,
+                    help="Network identifier (mainnet names are refused)")
     args = ap.parse_args()
 
-    genesis = build_genesis()
-    Path(args.out).write_text(json.dumps(genesis, indent=2, sort_keys=True))
-    print(f"Wrote {args.out}: 100M KRN distributed across 5 pools.")
+    genesis = build_genesis(args.chain_id)
+    Path(args.out).write_text(json.dumps(genesis, indent=2, sort_keys=True), encoding="utf-8")
+    print(f"Wrote {args.out}: 100M KRN, chain_id {args.chain_id!r}, PLACEHOLDER KEYS (devnet only).")
 
     vesting = build_vesting()
-    Path(args.vesting_out).write_text(json.dumps(vesting, indent=2, sort_keys=True))
+    Path(args.vesting_out).write_text(json.dumps(vesting, indent=2, sort_keys=True), encoding="utf-8")
     print(f"Wrote {args.vesting_out}: founder + contributor + validator schedules.")
 
     print()
     print("Distribution summary (KRN):")
     print(f"  Public sale         : {PUBLIC_SALE_KRN:>13,}")
     print(f"  Founder             : {FOUNDER_KRN:>13,}  (vested 4y / cliff 1y)")
-    print(f"  Foundation          : {FOUNDATION_KRN:>13,}")
+    print(f"  Foundation          : {FOUNDATION_KRN - 1_000_000:>13,}  (15M pool minus bootstrap baker stake)")
     print(f"  Early contributors  : {EARLY_CONTRIBUTORS_KRN:>13,}  (vested 3y / cliff 6mo)")
     print(f"  Validator bootstrap : {VALIDATOR_BOOTSTRAP_KRN:>13,}  (released over 1y)")
+    print(f"  Bootstrap baker     : {1_000_000:>13,}  (own stake)")
     print(f"  {'─' * 38}")
     print(f"  Total               : {TOTAL_SUPPLY_KRN:>13,}")
 

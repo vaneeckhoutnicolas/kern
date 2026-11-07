@@ -74,8 +74,10 @@ def single_step_verify(code, pre_state, claimed_seq, claimed_chal, disputed_step
    - The L1 verifier calls `step()` and compares.
 
 5. **Resolution.**
-   - **Challenger wins:** the disputed batch and all batches built on top of it are reverted (`resolve_challenge_for_challenger`). The sequencer's bond is partially slashed; the challenger gets a bounty.
-   - **Sequencer wins:** the challenger's bond is slashed and paid to the sequencer as a deterrent against frivolous challenges (`resolve_challenge_for_sequencer`).
+   - `RollupState.resolve_challenge(batch_index, code, pre_state)` is the only way a challenge ends (Phase B, audit 2 point 6). It checks that `program_hash(code)` equals the batch's `tx_data_hash` and that `pre_state` hashes to the commitment both parties agreed on at step `lo`, then runs `single_step_verify`.
+   - **Challenger wins:** the disputed batch and all batches built on top of it are reverted. Bond slashing and the challenger bounty are not yet wired (the rollup control plane is not exposed as L1 operations in v1.1).
+   - **Sequencer wins:** the batch returns to `PENDING`.
+   - Rounds are driven with `RollupState.challenge_round`. Response deadlines (step 3) are not yet implemented.
 
 ## Why this matters
 

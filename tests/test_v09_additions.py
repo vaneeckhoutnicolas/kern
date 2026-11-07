@@ -224,14 +224,14 @@ def test_run_all_fuzzers_passes_at_low_iterations():
 # Chaos: long-running scenarios
 # ===========================================================================
 
-@pytest.mark.skip(reason="slow chaos test — run with --no-skip or in nightly CI")
 def test_chaos_evm_determinism_1000_iter():
-    """1000-iteration determinism check. Slower, marked slow."""
+    """1000-iteration determinism check. Formerly skipped as slow; the
+    current fuzzer runs this in well under a second, so it is part of
+    the default suite."""
     result = fuzz_evm_determinism(iterations=1000, seed=0)
     assert result["success"], f"Failures: {result['failures'][:3]}"
 
 
-@pytest.mark.skip(reason="slow chaos test — run with --no-skip or in nightly CI")
 def test_chaos_governance_500_iter():
     result = fuzz_governance_invariants(iterations=500, seed=0)
     assert result["success"], result["failures"][:3]

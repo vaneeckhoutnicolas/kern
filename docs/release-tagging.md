@@ -127,7 +127,7 @@ First release candidate. Code-frozen for audit cycle 1.
 Highlights:
 - Liquid PoS baking delegation (DELEGATE_STAKE, UNDELEGATE_STAKE)
 - Genesis 100M KRN with Ethereum 2014-style distribution
-  (70% public / 10% founder / 15% Foundation / 3% contributors / 2% validators)
+  (70% public / 10% founder / 14% Foundation / 3% contributors / 2% validators / 1% bootstrap validator stake)
 - EVM Yellow Paper compliance (dynamic gas in vm.py::step)
 - Real BN254 pairing via py_ecc (Groth16 identity verified)
 - Slashing transaction (SLASH_EQUIVOCATION) closing the equivocation loop

@@ -96,6 +96,10 @@ class Metric:
         self.help_text = help_text
         self._lock = Lock()
 
+    def render(self) -> List[str]:
+        """Prometheus text-exposition lines; implemented by subclasses."""
+        raise NotImplementedError
+
 
 class Counter(Metric):
     """A monotonically-increasing counter (e.g., 'blocks_produced_total')."""
