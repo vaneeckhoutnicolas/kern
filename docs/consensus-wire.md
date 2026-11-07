@@ -129,6 +129,8 @@ future protocol version.
 Proposer (its turn per `select_proposer(parent_hash, validators, round)`,
 cadence `block_time`):
 
+0. Before signing anything over a block, write it to
+   `signing_journal.blocks.jsonl` and sync it (below, "Signing journal").
 1. If the engine has a valid round for this level (it saw a
    pre-endorsement certificate for block X at `valid_round`) and the node
    holds X, propose X again with that `valid_round` and the certificate
@@ -144,7 +146,10 @@ cadence `block_time`):
 
 Every validator, on a valid proposal or consensus message:
 
-1. Deduplicate by `(kind, level, round, validator, block_hash)`.
+1. Deduplicate by `(kind, level, round, validator, block_hash)`. For a
+   valid proposal: keep its block on disk before the engine may sign,
+   then count the endorsements its `commits` carry as ENDORSE votes of the
+   payload round (the self-commit of a proposer holding the quorum alone).
 2. Feed `BftEngine.on_message`; broadcast and self-ingest any outbound
    messages it returns.
 3. Re-gossip newly seen wire messages for mesh propagation.
@@ -285,10 +290,17 @@ round).
 **Signing journal.** Before any signature (PROPOSE, PREENDORSE, ENDORSE,
 the solo self-commit), the node appends a record to
 `<data-dir>/signing_journal.jsonl` and syncs it to disk. A record holds
-`chain_id`, `kind`, `level`, `round`, `block_hash` and the lock and valid
-state after the step. At start, the node restores the lock, the valid
-round and the round of the level in progress, and refuses to sign any
-(kind, level, round) already recorded for another block. A journal that
+`chain_id`, `kind`, `level`, `round`, `block_hash`, `signed_valid_round`
+(the valid_round a PROPOSE signs, -1 for votes) and the lock and valid
+state after the step. Before the first signature over a block, the block
+itself is appended to `<data-dir>/signing_journal.blocks.jsonl` and
+synced, so that a lock never names a block the node could lose. At start,
+the node restores the lock, the valid round, the round of the level in
+progress and the kept blocks of that level (validated again); if it is
+locked on its own block and holds the quorum alone, its self-commit is
+counted again and the block is finalized. It refuses to sign any (kind,
+level, round) already recorded for another block or, for PROPOSE, with
+another valid_round. A journal that
 cannot be read is moved aside, and a missing journal on a chain past
 genesis is treated the same way: the validator does not sign at the
 level in progress and resumes once that level is finalized by others. A

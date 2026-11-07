@@ -553,15 +553,18 @@ class BftEngine:
             return False
         j = self.journal
         if j is not None:
-            if j.conflicts(msg.kind.value, msg.level, msg.round, msg.block_hash):  # type: ignore[attr-defined]
+            svr = msg.valid_round if msg.kind == MsgKind.PROPOSE else -1
+            if j.conflicts(msg.kind.value, msg.level, msg.round, msg.block_hash,  # type: ignore[attr-defined]
+                           svr):
                 LOG.error("signing journal: refusing %s at L%d R%d for %s, another "
-                          "block was signed there before", msg.kind.value, msg.level,
+                          "message was signed there before", msg.kind.value, msg.level,
                           msg.round, msg.block_hash[:12])
                 return False
             try:
                 j.append(msg.kind.value, msg.level, msg.round, msg.block_hash,  # type: ignore[attr-defined]
                          locked_round=after.locked_round, locked_hash=after.locked_hash,
-                         valid_round=after.valid_round, valid_hash=after.valid_hash)
+                         valid_round=after.valid_round, valid_hash=after.valid_hash,
+                         signed_valid_round=svr)
             except OSError:
                 LOG.exception("signing journal: write failed, not signing")
                 return False
@@ -752,9 +755,23 @@ class BftEngine:
         own endorsement when it builds the block (kern.consensus
         propose_block). That signature is an endorsement like any other:
         record it in the journal, lock on the block, and count it. The
-        caller must not publish the block if this returns False."""
+        caller must not publish the block if this returns False.
+
+        The engine checks the rule itself (review of f24564b): the message
+        must carry a valid signature by this validator's key, and this
+        validator must hold strictly more than two thirds of the stake.
+        Below that, an endorsement signed before any pre-endorsement
+        certificate would bypass the lock rules."""
         own = self._own_address()
         if own is None or msg.validator != own or msg.kind != MsgKind.ENDORSE:
+            return False
+        if msg.validator_pubkey != (self.own_pubkey_b58 or "") or not msg.verify_signature():
+            LOG.error("refusing a self-commit without a valid own signature")
+            return False
+        total = self._total_stake()
+        if total <= 0 or self._stake_of(own) * 3 <= total * 2:
+            LOG.error("refusing a self-commit: this validator does not hold more "
+                      "than two thirds of the stake")
             return False
         if msg.level <= self.no_signing_through_level:
             return False
