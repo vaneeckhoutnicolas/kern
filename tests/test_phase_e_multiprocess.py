@@ -21,6 +21,7 @@ independent operators, which remains to be run."""
 
 import json
 import os
+import random
 import socket
 import subprocess
 import sys
@@ -44,15 +45,34 @@ STAKE = 1_000_000_000_000
 BLOCK_TIME = 0.5
 
 
-def _free_ports(n):
-    socks, ports = [], []
-    for _ in range(n):
+# Ports are taken OUTSIDE the ranges the operating system hands out for
+# outgoing connections (Windows 49152-65535, Linux 32768-60999). Asking the
+# system for a free port (bind to port 0) returns one from that range: once
+# released, Windows may give the same port, in sequence, to a node's outgoing
+# connection to a peer that is not listening yet, and that peer then cannot
+# listen on it (WinError 10048).
+_PORT_LOW, _PORT_HIGH = 20000, 32000
+_rng = random.Random()
+
+
+def _bindable(port):
+    for host in ("0.0.0.0", "127.0.0.1"):
         s = socket.socket()
-        s.bind(("127.0.0.1", 0))
-        socks.append(s)
-        ports.append(s.getsockname()[1])
-    for s in socks:
-        s.close()
+        try:
+            s.bind((host, port))
+        except OSError:
+            return False
+        finally:
+            s.close()
+    return True
+
+
+def _free_ports(n):
+    ports = []
+    while len(ports) < n:
+        p = _rng.randint(_PORT_LOW, _PORT_HIGH)
+        if p not in ports and _bindable(p):
+            ports.append(p)
     return ports
 
 
