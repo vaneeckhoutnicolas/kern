@@ -76,7 +76,7 @@ class OpKind(str, Enum):
     GOVERNANCE_PROPOSE = "governance_propose"
     GOVERNANCE_VOTE = "governance_vote"
     SLASH_EQUIVOCATION = "slash_equivocation"   # v1.0-rc
-    DELEGATE_STAKE = "delegate_stake"           # v1.0-rc: Liquid PoS baking delegation
+    DELEGATE_STAKE = "delegate_stake"           # v1.0-rc: stake delegation (bonded since Phase D)
     UNDELEGATE_STAKE = "undelegate_stake"       # v1.0-rc
     # v1.1-rc: slashable attestations — generalize the equivocation
     # detection-and-punishment pattern beyond governance to any

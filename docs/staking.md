@@ -2,6 +2,20 @@
 
 This document is the reference for how staking works in Kern as the code stands in v1.1-rc. It complements [`tokenomics.md`](tokenomics.md) §6. Every rule below can be checked in [`kern/chain.py`](../kern/chain.py).
 
+## Definition
+
+**Bonded Proof-of-Stake** is the staking model in which the tokens that secure the chain are locked (bonded) in the protocol for as long as they do so. In Kern:
+
+- **Who bonds.** Each validator bonds its own stake. Any holder can delegate by bonding KRN to one validator, without running a node.
+- **Who holds the bond.** The protocol, never the validator. A validator cannot spend or move its delegators' KRN.
+- **What a bond does.** It adds to the validator's consensus weight (from the next epoch), earns a share of its rewards, and is slashed if the validator signs conflicting votes.
+- **How it ends.** Undelegating removes the weight at once and starts an unbonding period (86 400 blocks by default); the KRN return to their owner at its end, minus any slash for an offence committed while they were exposed.
+- **What it is not.** It is not *liquid* staking: bonded KRN cannot be spent while they secure the chain, and no derivative token stands in for them.
+
+The lock is the point: consensus weight always has collateral behind it that can be slashed. The cost is liquidity for the holder.
+
+## Overview
+
 Kern uses **bonded Proof-of-Stake delegation**. Delegated KRN leave the delegator's spendable balance and are held, at protocol level, in a bond to one validator. A bond counts toward that validator's consensus weight, earns a share of its rewards, and is slashed with it. Undelegating starts an unbonding period during which the bond carries no weight but stays locked, and slashable for offences committed before the undelegation. There is no derivative token and no smart-contract counterparty.
 
 > **History.** Before v1.1-rc Phase D, a delegation counted the delegator's *liquid* balance, which stayed spendable. An external review showed that this let consensus weight exist without collateral behind it. Phase D bonded delegations ([phase-d-changes.md](phase-d-changes.md)); Phase E made undelegation lower consensus weight at once and limited slashing to the stake that was exposed at the offence ([phase-e-changes.md](phase-e-changes.md)).

@@ -140,7 +140,7 @@ Any third party can construct and submit this evidence on-chain. The protocol's 
 3. Burns 50% of the confiscated amount.
 4. Pays 50% of the confiscated amount to the submitter as a bug bounty.
 
-Delegated funds are slashed proportionally to the validator's stake — delegators are economically tied to their chosen validator's behavior, which is what makes the LPoS reward structure work.
+Delegated funds are slashed proportionally to the validator's stake — delegators are economically tied to their chosen validator's behavior, which is what makes the delegation reward structure work.
 
 ## Liveness and view changes
 

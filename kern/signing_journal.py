@@ -16,13 +16,30 @@ lock prevents.
 The journal is an append-only file of JSON lines, one record per
 consensus message the node is ABOUT to sign:
 
-    {"chain_id", "kind", "level", "round", "block_hash", "signed_valid_round",
-     "locked_round", "locked_hash", "valid_round", "valid_hash"}
+    {"v": 2, "chain_id", "kind", "level", "round", "block_hash",
+     "signed_valid_round", "locked_round", "locked_hash",
+     "valid_round", "valid_hash", "valid_qc"}
 
 The lock and valid fields are the engine's state for that level after the
 step. `signed_valid_round` is the valid_round a PROPOSE message signs (-1
 for votes): two proposals for one (level, round) that differ only there
-are still two different signed messages. Rules:
+are still two different signed messages. `valid_qc` is the
+pre-endorsement certificate for (valid_round, valid_hash), or null
+(review of 3f2b200, P1): without it, validators that all restart locked
+on a block could no longer propose that block again with its proof, and
+the level would stay stuck. It is written in the same synced record as
+the ENDORSE that depends on it.
+
+Format (review of 3f2b200, P2): the journal is a security boundary and
+fails closed. Every record must carry the format version `v`, the chain's
+`chain_id` and every field above with its type, and `signed_valid_round`
+must be -1 for votes and lower than `round` for proposals. A journal
+written in an older format, for another chain, or with any malformed
+record is unreadable: the node moves it aside and does not sign at the
+level in progress. There is no automatic migration, because the old
+format did not record what a proposal signed.
+
+Rules:
 
 - The record is written, flushed and synced to disk (fsync) BEFORE the
   signature is produced, so no signature can exist without its record.
@@ -62,8 +79,11 @@ LOG = logging.getLogger("kern.signing_journal")
 JOURNAL_FILE = "signing_journal.jsonl"
 BLOCKS_FILE = "signing_journal.blocks.jsonl"
 
-_FIELDS = ("kind", "level", "round", "block_hash",
-           "locked_round", "locked_hash", "valid_round", "valid_hash")
+JOURNAL_VERSION = 2
+
+_FIELDS = ("v", "chain_id", "kind", "level", "round", "block_hash", "signed_valid_round",
+           "locked_round", "locked_hash", "valid_round", "valid_hash", "valid_qc")
+_KINDS = ("propose", "preendorse", "endorse")
 
 
 @dataclass
@@ -74,6 +94,7 @@ class LockRecord:
     locked_hash: Optional[str] = None
     valid_round: int = -1
     valid_hash: Optional[str] = None
+    valid_qc: Optional[dict] = None   # pre-endorsement certificate for the valid round
     max_round: int = -1     # highest round in which this node signed anything
 
 
@@ -131,26 +152,47 @@ class SigningJournal:
             # a fresh line.
             self._rewrite(self.records)
 
-    @staticmethod
-    def _check_record(rec: object) -> None:
+    def _check_record(self, rec: object) -> None:
         if not isinstance(rec, dict):
             raise ValueError("record is not an object")
+        if rec.get("v") != JOURNAL_VERSION:
+            raise ValueError(f"journal format {rec.get('v', 1)!r}, expected {JOURNAL_VERSION}: "
+                             "written by an older node, not trusted")
         for k in _FIELDS:
             if k not in rec:
                 raise ValueError(f"record without {k}")
-        for k in ("level", "round", "locked_round", "valid_round"):
+        if rec["chain_id"] != self.chain_id:
+            raise ValueError(f"record for chain {rec['chain_id']!r}, not {self.chain_id!r}")
+
+        def _int(k: str, low: int) -> int:
             v = rec[k]
-            if not isinstance(v, int) or isinstance(v, bool) or v < -1:
-                raise ValueError(f"record field {k} is not an integer")
-        if not isinstance(rec["kind"], str) or not isinstance(rec["block_hash"], str):
-            raise ValueError("record kind or block_hash is not a string")
+            if not isinstance(v, int) or isinstance(v, bool) or v < low:
+                raise ValueError(f"record field {k} is not an integer >= {low}")
+            return v
+
+        _int("level", 0)
+        round_ = _int("round", 0)
+        svr = _int("signed_valid_round", -1)
+        lr, vr = _int("locked_round", -1), _int("valid_round", -1)
+        if rec["kind"] not in _KINDS:
+            raise ValueError(f"record kind {rec['kind']!r} unknown")
+        if not isinstance(rec["block_hash"], str) or not rec["block_hash"]:
+            raise ValueError("record block_hash is not a string")
+        if rec["kind"] == "propose" and svr >= round_:
+            raise ValueError("proposal signed_valid_round not below its round")
+        if rec["kind"] != "propose" and svr != -1:
+            raise ValueError("vote with a signed_valid_round")
+        for k, r in (("locked_hash", lr), ("valid_hash", vr)):
+            h = rec[k]
+            if (r < 0) != (h is None) or (h is not None and (not isinstance(h, str) or not h)):
+                raise ValueError(f"record field {k} does not match its round")
+        if rec["valid_qc"] is not None and not isinstance(rec["valid_qc"], dict):
+            raise ValueError("record field valid_qc is not an object")
 
     def _index(self, rec: dict) -> None:
         self.records.append(rec)
-        svr = rec.get("signed_valid_round", -1)
-        if not isinstance(svr, int) or isinstance(svr, bool):
-            svr = -1
-        self._signed[(rec["kind"], rec["level"], rec["round"])] = (rec["block_hash"], svr)
+        self._signed[(rec["kind"], rec["level"], rec["round"])] = (
+            rec["block_hash"], rec["signed_valid_round"])
 
     # ------------------------------------------------------------- queries
 
@@ -172,6 +214,7 @@ class SigningJournal:
             out.locked_hash = rec["locked_hash"]
             out.valid_round = rec["valid_round"]
             out.valid_hash = rec["valid_hash"]
+            out.valid_qc = rec["valid_qc"]
             out.max_round = max(out.max_round, rec["round"])
         return out
 
@@ -180,16 +223,21 @@ class SigningJournal:
     def append(self, kind: str, level: int, round_: int, block_hash: str, *,
                locked_round: int, locked_hash: Optional[str],
                valid_round: int, valid_hash: Optional[str],
-               signed_valid_round: int = -1) -> None:
-        """Write one record and sync it to disk. Raises OSError on failure;
-        the caller must then not sign."""
+               signed_valid_round: int = -1,
+               valid_qc: Optional[dict] = None) -> None:
+        """Write one record and sync it to disk. Raises OSError on failure,
+        ValueError if the record would not pass the format check; the
+        caller must then not sign."""
         rec = {
+            "v": JOURNAL_VERSION,
             "chain_id": self.chain_id,
             "kind": kind, "level": level, "round": round_, "block_hash": block_hash,
             "signed_valid_round": signed_valid_round,
             "locked_round": locked_round, "locked_hash": locked_hash,
             "valid_round": valid_round, "valid_hash": valid_hash,
+            "valid_qc": valid_qc,
         }
+        self._check_record(rec)
         line = json.dumps(rec, sort_keys=True, separators=(",", ":")) + "\n"
         with open(self.path, "a", encoding="utf-8", newline="\n") as f:
             f.write(line)

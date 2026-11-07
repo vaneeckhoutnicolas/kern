@@ -21,7 +21,7 @@ Code is what you `git pull`. Versions follow semver: `0.x` is pre-stable, `1.x` 
 | v0.7 | BN254 precompiles + dynamic gas costs (Yellow Paper compliance) | Pass ethereum/tests opcode subset; zkSNARK verification working | ✅ |
 | v0.8 | Voting refinements: quadratic + delegated; GovernanceVote over P2P with equivocation slashing | Multi-validator votes via gossip; slashing detected from history | ✅ |
 | v0.9 | Hardening: structured logs, Prometheus metrics, fuzzing harness, devnet bootstrap | No crashes, no consensus stalls under fuzz | ✅ |
-| **v1.0-rc** | **Genesis distribution (100M KRN) + Liquid PoS stake delegation + slashing tx + dynamic gas wired into VM** | **Code freeze. RPC API frozen. Documentation complete.** | **🟡 In progress (this iteration)** |
+| **v1.0-rc** | **Genesis distribution (100M KRN) + PoS stake delegation (bonded since v1.1-rc Phase D) + slashing tx + dynamic gas wired into VM** | **Code freeze. RPC API frozen. Documentation complete.** | **🟡 In progress (this iteration)** |
 | v1.0 | First stable release after audit-cycle-1 fixes applied | External audit report public | 🔵 Planned |
 | v1.x | Non-breaking patches and features (governance-amendable only) | Backward-compatible with v1.0 | 🔵 |
 | v2.0 | Breaking protocol changes activated via on-chain governance | Approved by ≥ 80% supermajority vote | 🔵 |

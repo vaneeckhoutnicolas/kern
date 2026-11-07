@@ -290,18 +290,21 @@ round).
 **Signing journal.** Before any signature (PROPOSE, PREENDORSE, ENDORSE,
 the solo self-commit), the node appends a record to
 `<data-dir>/signing_journal.jsonl` and syncs it to disk. A record holds
-`chain_id`, `kind`, `level`, `round`, `block_hash`, `signed_valid_round`
-(the valid_round a PROPOSE signs, -1 for votes) and the lock and valid
-state after the step. Before the first signature over a block, the block
+the format version `v` (2), `chain_id`, `kind`, `level`, `round`,
+`block_hash`, `signed_valid_round` (the valid_round a PROPOSE signs, -1
+for votes), the lock and valid state after the step, and `valid_qc`, the
+pre-endorsement certificate of the valid round when the engine holds it. Before the first signature over a block, the block
 itself is appended to `<data-dir>/signing_journal.blocks.jsonl` and
 synced, so that a lock never names a block the node could lose. At start,
-the node restores the lock, the valid round, the round of the level in
-progress and the kept blocks of that level (validated again); if it is
+the node restores the lock, the valid round with its certificate (checked
+against the validator set before use), the round of the level in progress
+and the kept blocks of that level (validated again); if it is
 locked on its own block and holds the quorum alone, its self-commit is
 counted again and the block is finalized. It refuses to sign any (kind,
 level, round) already recorded for another block or, for PROPOSE, with
 another valid_round. A journal that
-cannot be read is moved aside, and a missing journal on a chain past
+cannot be read, is in an older format, is for another chain, or holds a
+malformed record is moved aside, and a missing journal on a chain past
 genesis is treated the same way: the validator does not sign at the
 level in progress and resumes once that level is finalized by others. A
 final line cut by a crash is ignored, because the signature it announced

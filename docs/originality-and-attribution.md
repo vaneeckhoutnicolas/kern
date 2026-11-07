@@ -17,7 +17,7 @@ Specifically:
 
 - **No source code is copied from any external project.** Every line of Python in `kern/` was written for Kern.
 - **External public specifications are implemented from spec.** The EVM opcode semantics follow the Ethereum Yellow Paper (a public specification); the BN254 curve uses the public BN128 parameters; gas costs follow public EIP standards (EIP-2200, EIP-197). Implementing a public specification is not copying — it is what every implementor does.
-- **Design influences are noted in code where relevant.** Where Kern's design implements a pattern that is already part of the public state-of-the-art in blockchain design (e.g., delegated Liquid Proof-of-Stake, dual-track on-chain governance), the relevant code includes a brief comment noting the pattern (e.g., `# Liquid PoS baking delegation`), but the implementation itself is fresh Python.
+- **Design influences are noted in code where relevant.** Where Kern's design implements a pattern that is already part of the public state-of-the-art in blockchain design (e.g., delegated Proof-of-Stake, dual-track on-chain governance), the relevant code includes a brief comment noting the pattern (e.g., `# stake delegation (bonded since v1.1-rc Phase D)`), but the implementation itself is fresh Python.
 - **One external library dependency is used:** `py_ecc` (Ethereum Foundation's reference Python BN128 library). This is imported via Python's standard import mechanism. The dependency is declared in `requirements.txt` and `pyproject.toml`. The library's source code is not vendored into this repo.
 
 ### Audit trail

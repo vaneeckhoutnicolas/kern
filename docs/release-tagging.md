@@ -42,7 +42,7 @@ grep '^version' pyproject.toml
 
 # 3. Run the full test suite
 pytest tests/
-# Expected: 378 passed, 2 skipped (10 wallet CLI + 368 base)
+# Expected: 969 passed, none skipped (v1.1-rc)
 
 # 4. Run the originality audit
 grep -rni "copied from\|adapted from\|fork of" --include="*.py" . | \

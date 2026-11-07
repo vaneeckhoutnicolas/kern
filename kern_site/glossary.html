@@ -228,7 +228,7 @@
   <div class="section">
     <p class="num">The ticker and the atomic unit</p>
     <h2>KRN, and the grain inside the grain.</h2>
-    <p class="blurb">The token ticker and the smallest indivisible unit of accounting.</p>
+    <p class="blurb">The token ticker, the smallest indivisible unit of accounting, and how KRN secure the chain.</p>
   </div>
 
   <div class="term">
@@ -249,6 +249,17 @@
       <p>A contraction of <strong>micro-KRN</strong> — the unit one millionth of a KRN. Following the convention of major chains that name their atomic units (satoshi for Bitcoin, wei for Ethereum, lovelace for Cardano), Kern has a dedicated name for its smallest indivisible unit so that internal accounting can be done in integers with no floating-point error.</p>
       <p><b>Conversion:</b> 1 KRN = 1 000 000 mukrn (10⁶). All on-chain balances, fees, and bonds are stored as integer mukrn quantities; KRN is the human-facing display unit.</p>
       <div class="field"><b>Why not "mutez"</b> · Earlier drafts used "mutez" by analogy with the common atomic-unit naming convention of micro-prefixed tokens. The wording was clean engineering but created the wrong impression — that Kern was a derivative project rather than an independent one. The unit belongs to KRN; it is called mukrn.</div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="icon txt">β</div>
+    <div class="body">
+      <h3>Bonded Proof-of-Stake</h3>
+      <div class="role">How KRN secure the chain</div>
+      <p>The staking model in which the KRN that secure the chain are <strong>locked in the protocol for as long as they do so</strong>. Validators bond their own stake; any holder can delegate by bonding KRN to one validator, without running a node. The protocol holds the bond, never the validator.</p>
+      <p>A bond adds to the validator's consensus weight, earns a share of its rewards, and is <strong>slashed if the validator signs conflicting votes</strong>. Undelegating removes the weight at once and starts an unbonding period, after which the KRN return to their owner. No derivative token is issued.</p>
+      <div class="field"><b>Why not "liquid"</b> · Early versions let delegated KRN stay spendable, a model often called liquid Proof-of-Stake. An external review showed that this gave consensus weight with no collateral behind it, and delegation was bonded in v1.1-rc. The lock is the point; the cost is liquidity for the holder. Full rules: <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/staking.md" style="color:var(--amber-deep);border-bottom:1px solid rgba(194,136,94,.4);">staking.md</a>.</div>
     </div>
   </div>
 
@@ -323,6 +334,7 @@
         <tr><td class="rune-cell">ᚴ</td><td class="name">Kern</td><td>Old Norse <em>kjarni</em> — kernel, core, grain</td><td>The protocol</td></tr>
         <tr><td></td><td class="name">KRN</td><td>Contracted ticker</td><td>Native token</td></tr>
         <tr><td></td><td class="name">mukrn</td><td>micro-KRN, contraction</td><td>Atomic unit (1 KRN = 10⁶ mukrn)</td></tr>
+        <tr><td></td><td class="name">Bonded PoS</td><td>Generic industry term</td><td>Staking model</td></tr>
         <tr><td></td><td class="name">Skald</td><td>Old Norse <em>skáld</em> — preserving poet</td><td>The contract language</td></tr>
         <tr><td></td><td class="name">Heimdall</td><td>Norse god of watchful guarding</td><td>Official explorer + monitoring</td></tr>
         <tr><td></td><td class="name">Devnet</td><td>Generic industry term</td><td>Local developer network</td></tr>

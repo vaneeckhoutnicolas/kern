@@ -1110,6 +1110,7 @@ PAGE_TEMPLATE = """<!--
 }})();
 </script>
 
+  <script defer src="cookie-notice.js"></script>
 </body>
 </html>
 """

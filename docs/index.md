@@ -1,6 +1,6 @@
 # Kern Protocol
 
-**Kern** is a Layer-1 blockchain protocol that combines the developer ecosystem and EVM tooling of Ethereum with the on-chain governance, formal verifiability, and Liquid Proof-of-Stake of Tezos.
+**Kern** is a Layer-1 blockchain protocol that combines the developer ecosystem and EVM tooling of Ethereum with on-chain governance, formal verifiability, and bonded Proof-of-Stake delegation.
 
 Smart contracts are written in **Skald**, a resource-typed language with declared invariants compiled to verifiable bytecode and executed deterministically.
 
@@ -69,7 +69,7 @@ This documentation reflects **v1.0-rc** (release candidate). The reference imple
 - ✅ Two-track on-chain governance with quadratic + delegated voting + slashing
 - ✅ Bonded PoS delegation (no LST; delegated KRN locked and slashable, unbonding period on exit)
 - ✅ Adaptive issuance + treasury
-- ✅ 368 tests passing
+- ✅ 969 tests passing, none skipped
 
 What remains before mainnet (Midgard):
 
@@ -97,7 +97,7 @@ git clone https://github.com/vaneeckhoutnicolas/kern.git
 cd kern
 pip install -r requirements.txt
 pytest tests/
-# 368 passed, 2 skipped in ~10s
+# 969 passed in about 2 minutes
 ```
 
 For a multi-node devnet:

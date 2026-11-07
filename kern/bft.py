@@ -564,8 +564,9 @@ class BftEngine:
                 j.append(msg.kind.value, msg.level, msg.round, msg.block_hash,  # type: ignore[attr-defined]
                          locked_round=after.locked_round, locked_hash=after.locked_hash,
                          valid_round=after.valid_round, valid_hash=after.valid_hash,
-                         signed_valid_round=svr)
-            except OSError:
+                         signed_valid_round=svr,
+                         valid_qc=self._valid_qc_dict(msg.level, after))
+            except (OSError, ValueError):
                 LOG.exception("signing journal: write failed, not signing")
                 return False
         msg.sign(self.own_keypair)
@@ -581,12 +582,55 @@ class BftEngine:
         )
         return msg if self._sign(msg, after) else None
 
+    def _valid_qc_dict(self, level: int, lv: "LevelState") -> Optional[dict]:
+        """The pre-endorsement certificate behind a valid round, for the
+        journal (review of 3f2b200, P1). None when there is no valid round
+        or this engine does not hold its certificate (a self-commit)."""
+        if lv.valid_round < 0 or lv.valid_hash is None:
+            return None
+        qc = self.find_preendorse_qc(level, lv.valid_round, lv.valid_hash)
+        return qc.to_dict() if qc is not None else None
+
     def restore_lock(self, level: int, locked_round: int, locked_hash: Optional[str],
-                     valid_round: int, valid_hash: Optional[str]) -> None:
-        """Restore a level's lock and valid state from the signing journal."""
+                     valid_round: int, valid_hash: Optional[str],
+                     valid_qc: Optional[dict] = None) -> bool:
+        """Restore a level's lock and valid state from the signing journal.
+
+        Review of 3f2b200, P1: the certificate behind the valid round is
+        restored too, after checking it (pre-endorsements for exactly that
+        level, round and block, more than two thirds of the current stake,
+        every signature valid). Its votes go back into the round's state,
+        so that the node can propose the valid block again with its proof
+        even if no other process kept the certificate in memory. A
+        certificate that does not check is ignored (the lock stays: losing
+        the proof costs liveness, never safety). Returns True if a
+        certificate was restored."""
         lv = self.level_state(level)
         lv.locked_round, lv.locked_hash = locked_round, locked_hash
         lv.valid_round, lv.valid_hash = valid_round, valid_hash
+        if valid_qc is None or valid_round < 0 or valid_hash is None:
+            return False
+        try:
+            qc = QuorumCertificate.from_dict(valid_qc)
+        except (ValueError, KeyError, TypeError):
+            LOG.warning("signing journal: ignoring a malformed certificate at L%d", level)
+            return False
+        if (qc.kind != MsgKind.PREENDORSE or qc.level != level or qc.round != valid_round
+                or qc.block_hash != valid_hash):
+            LOG.warning("signing journal: ignoring a certificate for another round or block")
+            return False
+        ok, reason = qc.verify(self.validator_set)
+        if not ok:
+            LOG.warning("signing journal: ignoring a certificate that does not verify: %s", reason)
+            return False
+        keys = {v["address"]: v["pubkey"] for v in self.validator_set}
+        state = self._state(level, valid_round)
+        for addr, sig in qc.signatures.items():
+            state.preendorsements.setdefault(addr, ConsensusMessage(
+                kind=MsgKind.PREENDORSE, level=level, round=valid_round,
+                block_hash=valid_hash, validator=addr, validator_pubkey=keys[addr],
+                signature=sig))
+        return True
 
     # ---------------------------------------------------------------- rules
 
@@ -786,8 +830,9 @@ class BftEngine:
             try:
                 j.append(msg.kind.value, msg.level, msg.round, msg.block_hash,  # type: ignore[attr-defined]
                          locked_round=after.locked_round, locked_hash=after.locked_hash,
-                         valid_round=after.valid_round, valid_hash=after.valid_hash)
-            except OSError:
+                         valid_round=after.valid_round, valid_hash=after.valid_hash,
+                         valid_qc=self._valid_qc_dict(msg.level, after))
+            except (OSError, ValueError):
                 return False
         lv.locked_round, lv.locked_hash = after.locked_round, after.locked_hash
         lv.valid_round, lv.valid_hash = after.valid_round, after.valid_hash

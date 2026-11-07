@@ -341,3 +341,59 @@ def test_weighted_90_10_crash_at_each_failpoint(weighted_devnet, failpoint):
     for blk in _blocks(small["rpc"], common):
         fresh.append(Block.from_dict(blk), require_quorum=True)
 
+
+def test_whole_cluster_crash_after_endorsing_then_restart(devnet):
+    """Review of 3f2b200, P1. Four validators of equal stake pre-endorse
+    block B at some level, see the certificate, sign and journal their
+    ENDORSE for B, and every one of them dies before sending it: nobody
+    finalizes B, and no process keeps the pre-endorsement certificate in
+    memory. All four restart from their own data directories. They are all
+    locked on B, so a new payload cannot gather a certificate; B can only be
+    proposed again with the certificate as proof. Expected: B is finalized
+    at that level on every node, the chain moves on, every block verifies
+    independently, and nobody signs anything conflicting."""
+    from kern.failpoints import FAILPOINT_EXIT_CODE
+
+    d = devnet
+    nodes = d["nodes"]
+    level = 4
+    for i in range(N):
+        d["start"](i, {"KERN_FAILPOINT": "before_endorse_broadcast",
+                       "KERN_FAILPOINT_LEVEL": str(level)})
+    try:
+        _wait(lambda: all(n["proc"].poll() is not None for n in nodes), 120,
+              f"all four validators dying at level {level}")
+        for n in nodes:
+            assert n["proc"].returncode == FAILPOINT_EXIT_CODE
+            n["proc"] = None
+        locked = set()
+        for n in nodes:
+            for line in (n["dir"] / JOURNAL_FILE).read_text().splitlines():
+                rec = json.loads(line)
+                if rec["level"] == level and rec["kind"] == "endorse":
+                    locked.add(rec["block_hash"])
+        assert len(locked) == 1, locked                    # all locked on the same B
+        for i in range(N):
+            d["start"](i)
+        _wait(lambda: min(_height(n["rpc"]) for n in nodes) >= level + 2, 120,
+              "progress after the whole cluster restarted")
+    except AssertionError:
+        raise AssertionError(_logs(d))
+
+    common = min(_height(n["rpc"]) for n in nodes)
+    finals = {_get(n["rpc"], f"/chain/block/{level}")["header"]["parent_hash"] for n in nodes}
+    assert len(finals) == 1
+    final = Block.from_dict(_get(nodes[0]["rpc"], f"/chain/block/{level}"))
+    assert final.hash_hex() in locked                      # the locked payload, not a new one
+    headers = [[json.dumps(b["header"], sort_keys=True) for b in _blocks(n["rpc"], common)]
+               for n in nodes]
+    assert all(h == headers[0] for h in headers)
+    genesis = d["genesis"]
+    fresh = Chain(build_genesis_block(genesis), genesis["validators"],
+                  initial_state=initial_state_from_genesis(genesis))
+    for blk in _blocks(nodes[3]["rpc"], common):
+        fresh.append(Block.from_dict(blk), require_quorum=True)
+    for i in range(N):
+        assert "submitted slashing evidence" not in (d["path"] / f"node{i}.log").read_text(
+            errors="replace")
+

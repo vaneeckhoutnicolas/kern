@@ -17,7 +17,7 @@ site_name: Kern Protocol Documentation
 site_description: >
   Reference documentation for Kern — a Layer-1 blockchain combining
   Ethereum's developer ecosystem with Tezos-style governance,
-  formal verifiability, and Liquid Proof-of-Stake.
+  formal verifiability, and bonded Proof-of-Stake delegation.
 site_url: https://docs.kern.protocol/
 repo_url: https://github.com/vaneeckhoutnicolas/kern
 repo_name: kern-protocol/kern

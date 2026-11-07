@@ -33,7 +33,7 @@ Plus, shipping in v1.1-rc:
 | Property                          | Ethereum L1   | Tezos         | Solana        | **Kern**     |
 |-----------------------------------|---------------|---------------|---------------|--------------|
 | Finality                          | Probabilistic (~12 min) | Deterministic (~30s) | Deterministic (~12s) | **Deterministic (~2s)** |
-| Consensus                         | PoS (Casper)  | Tenderbake    | PoH + PoS     | **Tenderbake-lite + LPoS** |
+| Consensus                         | PoS (Casper)  | Tenderbake    | PoH + PoS     | **Tenderbake-lite BFT + bonded PoS** |
 | Block time                        | 12 s          | 8–15 s        | 0.4 s         | **1 s**      |
 | On-chain governance               | No            | Yes           | No            | **Yes (dual track)** |
 | Contract language verifiability   | Hard (Solidity) | Strong (Michelson) | Hard (Rust + BPF) | **Strong (Skald + declared invariants)** |
@@ -159,7 +159,7 @@ The full tokenomics — supply, distribution, vesting, sinks, faucets, adaptive 
 | v0.9 — Devnet bootstrap    | One-command multi-validator local network generator                                       | ✅ Done     |
 | v1.0-rc — Dynamic gas wiring | EIP-2200 SSTORE pricing wired into VM step(); SHA3/EXP/memory expansion costs live | ✅ Done |
 | v1.0-rc — Slashing tx | OpKind.SLASH_EQUIVOCATION transaction; proportional delegator slashing | ✅ Done |
-| v1.0-rc — Delegated staking | Liquid PoS: DELEGATE_STAKE / UNDELEGATE_STAKE; commission split; effective_stake | ✅ Done |
+| v1.0-rc — Delegated staking | DELEGATE_STAKE / UNDELEGATE_STAKE; commission split; effective_stake (bonded since v1.1-rc Phase D) | ✅ Done |
 | v1.0-rc — Genesis 100M | Distribution: 70% public / 10% founder vested 4y / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake | ✅ Done |
 | v1.0-rc — Code freeze | Final RPC API + transaction format + state schema freeze. Full documentation site. | 🟡 Remaining |
 | v1.0 — Audit cycle 1 | First external security audit (candidates: Trail of Bits, OtterSec, Hashlock) | 🔵 Planned |

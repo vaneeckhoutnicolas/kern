@@ -277,7 +277,7 @@ def compute_block_rewards(
 
 
 # ---------------------------------------------------------------------------
-# Delegation reward splitting (v1.0-rc, Liquid PoS)
+# Delegation reward splitting (v1.0-rc, bonded delegation since Phase D)
 # ---------------------------------------------------------------------------
 
 def split_validator_reward(
@@ -287,7 +287,7 @@ def split_validator_reward(
     commission_pct: int,
 ) -> tuple:
     """Split a validator's block reward between the validator and their
-    delegators. Liquid PoS:
+    delegators. Bonded delegation:
 
     1. Commission: validator takes `commission_pct` % off the top.
     2. Remaining `R'` is split between validator (for their own_stake)
