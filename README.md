@@ -25,7 +25,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 | [**Executive Summary**](docs/executive-summary.md) | The 5-minute pitch. Value proposition, differentiation, use cases, roadmap. **Read this first.** |
 | [Whitepaper](docs/whitepaper.md) | Technical long-form: design principles, architecture, governance |
 | [Tokenomics](docs/tokenomics.md) | KRN token economy: supply, distribution, sinks, governance |
-| [**Staking & delegation**](docs/staking.md) | **Liquid PoS delegation: how it works, how to delegate** |
+| [**Staking & delegation**](docs/staking.md) | **Bonded PoS delegation: how it works, how to delegate** |
 | [Contributors program](docs/contributors-program.md) | Three funding channels: genesis pool, Foundation, on-chain treasury |
 | [Use cases](docs/use-cases.md) | Six target application domains, in detail |
 | [Naming and symbolism](docs/naming-and-symbolism.md) | Glossary explaining Kern, Skald, Heimdall, network names, and design runes |
@@ -344,11 +344,12 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | v0.8 | Quadratic + delegated voting + equivocation tracking | ✅ |
 | v0.9 | Observability + property-based fuzzing + devnet bootstrap | ✅ |
 | **v1.0-rc** | Genesis 100M + Liquid PoS delegation + dynamic gas wired + real BN254 + slashing tx + API freeze | ✅ |
-| **v1.1-rc** | **Slashable attestations + STO securities templates + QF/RPGF + oracle network + ZK-claims** | **✅ (this version)** |
+| **v1.1-rc** | **Slashable attestations + STO securities templates + QF/RPGF + oracle network + ZK-claims** | **✅** |
 | **v1.1-rc Phase A** | **Hardening: consensus on the wire (verified > 2/3 quorum on every networked block), strict ingress decoding, integer-only issuance, periodic snapshots + replay, catch-up sync, mypy clean** | **✅** |
 | **v1.1-rc Phase B** | **Fixes from two independent external reviews (not a professional security audit): exception boundary, attestation bond unbonding, current level, single delegation truth, chain_id enforcement, genesis checks, real Groth16 verifier, executed-step rollup challenges, portable precompiles ([details](docs/phase-b-changes.md))** | **✅** |
 | **v1.1-rc Phase C** | **Consensus hardening from a third external review: quorum certificates bound to the proposed block, on-chain slashing of consensus equivocation, one effective validator set per epoch ([details](docs/phase-c-changes.md))** | **✅** |
-| **v1.1-rc Phase D** | **Consensus weight backed by slashable collateral: bonded own stake and delegations with an unbonding period, evidence window, bounded BFT state ([details](docs/phase-d-changes.md))** | **✅ (this version)** |
+| **v1.1-rc Phase D** | **Consensus weight backed by slashable collateral: bonded own stake and delegations with an unbonding period, evidence window, bounded BFT state ([details](docs/phase-d-changes.md))** | **✅** |
+| **v1.1-rc Phase E** | **Undelegation lowers weight at once, slashing limited to exposed stake (done); consensus fork reproduced in a network harness, locking design reviewed, implementation pending ([details](docs/phase-e-changes.md), [design](docs/consensus-locking.md))** | **🟡 in progress (this version)** |
 | kern-go | Go client in a sibling repo — this repo remains the executable specification; kern-go becomes the operator reference after differential testing ([details](docs/roadmap.md)) | 🔵 announced |
 | v1.0 | First stable release after audit cycle 1 | 🔵 |
 | Yggdrasil testnet | Public testnet, permissionless validators | 🔵 |
@@ -360,7 +361,7 @@ This is a **reference implementation and protocol specification**, not yet a pro
 
 ## After v1.1-rc — what's next
 
-The code is complete. **What remains is execution work that cannot be solved by writing more code.** See [`docs/post-code-roadmap.md`](docs/post-code-roadmap.md) for the detailed plan. In summary:
+**The consensus engine is not finished.** With several validators, the current engine can finalize two blocks at the same level under message delay alone; Phase E reproduces this in an automated harness and the fix ([consensus-locking.md](docs/consensus-locking.md)) is not implemented yet. Until it is, multi-validator safety is not established and no testnet should start. Beyond that, what remains is mostly execution work that cannot be solved by writing more code. See [`docs/post-code-roadmap.md`](docs/post-code-roadmap.md) for the detailed plan. In summary:
 
 | Phase | What | Indicative time | Indicative cost |
 |---|---|---|---:|

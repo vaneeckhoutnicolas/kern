@@ -20,7 +20,7 @@ Phase E answers the external review of Phase D (November 2026, not a professiona
 
 ## Still open
 
-- E1 step 3: implement the design once reviewed.
+- E1 step 3: implement the design. The design was reviewed on 7 November 2026; the decisions (rounds restart at 0 at every level, persistent signing journal, proposal equivocation evidence, extended acceptance criteria) are in [consensus-locking.md](consensus-locking.md) section 9.
 - `validate_and_apply` checks that the proposer is a validator, not that it is the proposer `select_proposer` designates for the round; only the node checks that on proposals. Covered by the design (section 4.5).
 - The website (`kern_site/`) and the white paper still use the term "Liquid Proof-of-Stake"; whether to keep that wording is a positioning decision.
 - Wire endorsers are still not rewarded. No multi-machine network with independent validators has run this code.
