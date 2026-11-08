@@ -173,7 +173,7 @@ Publish. Within minutes Zenodo archives the source of the tag and assigns two DO
 Then, in a follow-up commit (signed, through a pull request):
 
 1. Add the version DOI and the concept DOI to `CITATION.cff` (`doi:` and `identifiers:`, as in quantum-cortex) and to the "How to cite" section of the README.
-   Recorded so far: v1.1.0-rc2 (8 November 2026), version DOI `10.5281/zenodo.24046904`, concept DOI `10.5281/zenodo.24046903`. The README badge points to the concept DOI and never needs updating; `tests/test_citation.py` keeps the DOIs consistent.
+   Recorded so far: v1.1.0-rc2 (8 November 2026), version DOI `10.5281/zenodo.24046904`, concept DOI `10.5281/zenodo.24046903`. The README badge points to the concept DOI and never needs updating; Software Heritage: `swh:1:rel:5b23398b47c4585379011dc86a05635604c29df0` for the signed tag (`git rev-parse v1.1.0-rc2`) and `swh:1:dir:5e8448555a4e5e0cdfe9cfe5158a1d3d8b727ae7` for its tree (`git rev-parse v1.1.0-rc2^{tree}`). `tests/test_citation.py` keeps the identifiers consistent.
 2. Ask Software Heritage to archive the repository (`https://archive.softwareheritage.org/save/`), then add the `swh:1:dir:` identifier of the tag's tree to `CITATION.cff`.
 
 ---

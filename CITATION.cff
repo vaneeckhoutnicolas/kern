@@ -18,6 +18,12 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.24046903
     description: "The concept DOI of the archive: every archived version, resolving to the latest one."
+  - type: swh
+    value: "swh:1:dir:5e8448555a4e5e0cdfe9cfe5158a1d3d8b727ae7"
+    description: "The Software Heritage identifier of the tree of the v1.1.0-rc2 tag (commit f5ae46f), archived on 2026-11-08: the git tree hash, bit for bit."
+  - type: swh
+    value: "swh:1:rel:5b23398b47c4585379011dc86a05635604c29df0"
+    description: "The Software Heritage identifier of the signed v1.1.0-rc2 tag itself (the git tag object)."
   - type: url
     value: "https://github.com/vaneeckhoutnicolas/kern/releases/tag/v1.1.0-rc2"
     description: "The GitHub release of this edition."

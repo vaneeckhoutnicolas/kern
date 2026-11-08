@@ -58,6 +58,11 @@ def test_citation_metadata_needed_by_zenodo():
 # DOI names this edition; the concept DOI resolves to the latest archived one.
 VERSION_DOI = "10.5281/zenodo.24046904"
 CONCEPT_DOI = "10.5281/zenodo.24046903"
+# Software Heritage identifier of the tag's tree: by construction the git
+# tree hash of v1.1.0-rc2 (`git rev-parse v1.1.0-rc2^{tree}`).
+SWHID = "swh:1:dir:5e8448555a4e5e0cdfe9cfe5158a1d3d8b727ae7"
+# ... and of the signed tag itself (`git rev-parse v1.1.0-rc2`).
+SWHID_REL = "swh:1:rel:5b23398b47c4585379011dc86a05635604c29df0"
 
 
 def test_citation_carries_the_zenodo_dois():
@@ -68,6 +73,9 @@ def test_citation_carries_the_zenodo_dois():
     assert "v1.1.0-rc2" in dois[VERSION_DOI]
     assert "concept DOI" in dois[CONCEPT_DOI]
     assert str(cff["date-released"]) == "2026-11-08"
+    swh = [i for i in cff["identifiers"] if i["type"] == "swh"]
+    assert [i["value"] for i in swh] == [SWHID, SWHID_REL]
+    assert all("v1.1.0-rc2" in i["description"] for i in swh)
 
 
 def test_readme_badge_and_citation_use_the_dois():
@@ -82,3 +90,4 @@ def test_readme_badge_and_citation_use_the_dois():
     assert f"doi     = {{{VERSION_DOI}}}" in cite
     assert f"https://doi.org/{VERSION_DOI}" in cite
     assert f"https://doi.org/{CONCEPT_DOI}" in cite
+    assert SWHID in cite and SWHID_REL in cite
