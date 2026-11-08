@@ -90,10 +90,19 @@ def test_every_figure_has_a_caption_naming_its_file():
                             after), f"{md.relative_to(ROOT)}: no caption after {ref}"
 
 
+VIDEO_URL = "https://github.com/user-attachments/assets/c5c4a092-de52-4082-a11a-9b4859b6a52c"
+
+
 def test_readme_video_poster_and_file_exist():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
+    # The poster plays the copy uploaded to GitHub (a repository file only
+    # downloads); the full quality file in the repository is linked too.
+    poster = re.search(r"<a\b[^>]*\bhref=\"([^\"]+)\"[^>]*>\s*<img\b[^>]*kern-explainer-poster\.jpg",
+                       text)
+    assert poster, "the poster is a link"
+    assert poster.group(1) == VIDEO_URL
     links = [h for h in HTML_LINK.findall(text) if h.endswith(".mp4")]
-    assert links, "the README links to the explainer video"
+    assert links, "the README links to the full quality video"
     for href in links:
         assert (ROOT / href).is_file(), href
     assert (ROOT / "docs/figures/kern-explainer-poster.jpg").is_file()

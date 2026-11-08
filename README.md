@@ -5,9 +5,9 @@
 > *The noyau. The kernel. The grain of state that endures.*
 
 <p align="center">
-  <a href="kern_site/media/kern-explainer.mp4" title="Watch the Kern explainer (MP4, 2 min 32 s)"><img src="docs/figures/kern-explainer-poster.jpg" alt="Kern explainer video: click to play (2 min 32 s)" width="720"></a>
+  <a href="https://github.com/user-attachments/assets/c5c4a092-de52-4082-a11a-9b4859b6a52c" title="Watch the Kern explainer (2 min 32 s)"><img src="docs/figures/kern-explainer-poster.jpg" alt="Kern explainer video: click to play (2 min 32 s)" width="720"></a>
   <br>
-  <sub><b>Kern in 2 min 32 s</b>: what the chain is for, how it reaches finality, and where it stands. Click the image to play (MP4, 19 MB).</sub>
+  <sub><b>Kern in 2 min 32 s</b>: what the chain is for, how it reaches finality, and where it stands. Click the image to play it in your browser; full quality file (1080p, 19 MB): <a href="kern_site/media/kern-explainer.mp4"><code>kern_site/media/kern-explainer.mp4</code></a>.</sub>
 </p>
 
 **Kern** is a Layer-1 blockchain protocol that combines EVM tooling and developer-ecosystem compatibility with native on-chain governance, formal verifiability, and bonded Proof-of-Stake with delegation. Smart contracts are written in **Skald**, a small statically typed language (scalar types `int`, `bool`, `string`, `address`; no recursion, no loops) with declared invariants that the runtime re-checks after every entry call.
