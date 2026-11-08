@@ -130,7 +130,7 @@ groups:
         annotations:
           summary: "Total bonded KRN in attestations exceeds 1M KRN"
           description: |
-            {{ $value | humanize }} mukrn ({{ $value | div 1000000 | humanize }} KRN)
+            {{ $value | humanize }} mukrn (1 KRN = 1,000,000 mukrn)
             is locked in active attestation bonds. This is informational — high values
             suggest active use of the attestation primitive, which is healthy.
 

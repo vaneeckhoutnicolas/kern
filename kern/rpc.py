@@ -108,6 +108,15 @@ def make_read_throttle(read_limiter: "RateLimiter", window_s: float, exempt: set
     return throttle_reads
 
 
+def _block_json(block) -> dict:
+    """A block as the RPC returns it: its wire form plus "hash", the header
+    hash, so that a client (Heimdall) need not recompute it.
+    Block.from_dict ignores the extra field."""
+    d = block.to_dict()
+    d["hash"] = block.hash_hex()
+    return d
+
+
 # Typed application keys (aiohttp warns on plain string keys).
 RATE_LIMITER_KEY = web.AppKey("rate_limiter", RateLimiter)
 READ_RATE_LIMITER_KEY = web.AppKey("read_rate_limiter", RateLimiter)
@@ -148,14 +157,14 @@ def build_app(
         block = node.storage.get_block_by_level(level)
         if block is None:
             return web.json_response({"error": "no such block"}, status=404)
-        return web.json_response(block.to_dict())
+        return web.json_response(_block_json(block))
 
     async def block_by_hash(req: web.Request) -> web.Response:
         h = req.match_info["hash"]
         block = node.storage.get_block_by_hash(h)
         if block is None:
             return web.json_response({"error": "no such block"}, status=404)
-        return web.json_response(block.to_dict())
+        return web.json_response(_block_json(block))
 
     async def balance(req: web.Request) -> web.Response:
         addr = req.match_info["address"]
@@ -246,14 +255,9 @@ def build_app(
 
     async def metrics(_req: web.Request) -> web.Response:
         """Prometheus scrape endpoint. v0.9."""
-        from .observability import REGISTRY, render_metrics
-        # Refresh dynamic gauges before rendering.
-        g_mempool = REGISTRY._metrics.get("kern_mempool_size")
-        if g_mempool is not None:
-            g_mempool.set(node.storage.mempool_size())  # type: ignore
-        g_peers = REGISTRY._metrics.get("kern_peers_connected")
-        if g_peers is not None and node.network is not None:
-            g_peers.set(len(node.network.peers))  # type: ignore
+        from .observability import render_metrics
+        # Refresh the gauges read from the node's live state.
+        node.refresh_metrics()
         return web.Response(text=render_metrics(),
                             content_type="text/plain; version=0.0.4")
 

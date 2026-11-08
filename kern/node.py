@@ -63,6 +63,11 @@ MAX_SEEN_ENTRIES = 50_000
 # The signing journal is compacted every this many finalized levels.
 JOURNAL_COMPACT_EVERY = 64
 
+# Configured peers that are not connected are tried again this often: a
+# peer that was not listening yet when this node started, that restarted,
+# or that a network cut separated, is connected again once it is reachable.
+PEER_RETRY_SECONDS = 5.0
+
 
 # ---------------------------------------------------------------------------
 # Genesis utilities
@@ -260,10 +265,10 @@ class Node:
         )
         await self.network.start()
 
-        # Bootstrap peer connections.
-        for spec in self.bootstrap_peers:
-            host, port_s = spec.split(":")
-            asyncio.create_task(self.network.connect(host, int(port_s)))
+        # Configured peers: connect now, and again whenever a connection is
+        # missing (it failed, or it closed).
+        if self.bootstrap_peers:
+            self._tasks.append(asyncio.create_task(self._maintain_peers()))
 
         # RPC.
         app = build_app(self)
@@ -283,6 +288,23 @@ class Node:
 
         LOG.info("Kern node started — head level %d", self.chain.height)
         await self._stop_event.wait()
+
+    async def _maintain_peers(self) -> None:
+        targets = []
+        for spec in self.bootstrap_peers:
+            host, port_s = spec.rsplit(":", 1)
+            targets.append((host, int(port_s)))
+        first = True
+        while not self._stop_event.is_set():
+            if self.network is not None:
+                for host, port in targets:
+                    if not self.network.is_connected_to(host, port):
+                        await self.network.connect(host, port, quiet=not first)
+            first = False
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=PEER_RETRY_SECONDS)
+            except asyncio.TimeoutError:
+                pass
 
     async def stop(self) -> None:
         LOG.info("Shutting down node...")
@@ -474,11 +496,37 @@ class Node:
         self._proposed_this_round = False
         self._round_deadline = time.monotonic() + self._round_timeout()
         self._last_block_at = time.monotonic()
+        self._record_finalized(block)
         LOG.info("finalized block %d (hash %s, %d txs, %d quorum entries)",
                  level, block.hash_hex()[:12], len(block.transactions),
                  len(block.commits) + len(block.endorsements))
         if broadcast and self.network:
             asyncio.create_task(self.network.broadcast_block(block.to_dict()))
+
+    def _record_finalized(self, block: Block) -> None:
+        """Chain metrics move only when a block is appended to the chain,
+        never while a proposal is validated (apply_block runs for both)."""
+        from .observability import REGISTRY
+        REGISTRY.gauge("kern_chain_height").set(block.header.level)
+        REGISTRY.gauge("kern_total_supply_mukrn").set(self.chain.state.get("total_supply", 0))
+        REGISTRY.gauge("kern_validator_count").set(len(self.chain.validators))
+        REGISTRY.counter("kern_blocks_applied_total").inc()
+        if block.header.proposer == self._own_address():
+            REGISTRY.counter("kern_blocks_produced_total").inc()
+        REGISTRY.gauge("kern_consensus_last_finalized_round").set(
+            block.cert_round if block.cert_round is not None else block.header.payload_round)
+
+    def refresh_metrics(self) -> None:
+        """Gauges read from the node's live state, refreshed at each scrape."""
+        from .observability import REGISTRY
+        REGISTRY.gauge("kern_chain_height").set(self.chain.height)
+        REGISTRY.gauge("kern_mempool_size").set(self.storage.mempool_size())
+        REGISTRY.gauge("kern_peers_connected").set(
+            getattr(self.network, "connection_count", 0) if self.network is not None else 0)
+        REGISTRY.gauge("kern_consensus_level").set(self.chain.height + 1)
+        REGISTRY.gauge("kern_consensus_round").set(self._round)
+        REGISTRY.gauge("kern_consensus_proposal_evidence").set(
+            len(self.bft.proposal_evidence) if self.bft is not None else 0)
 
     # ------------------------------------------------------------ consensus
 
@@ -497,6 +545,8 @@ class Node:
                 if now > self._round_deadline:
                     LOG.info("round timeout at level %d — advancing to round %d",
                              self.chain.height + 1, self._round + 1)
+                    from .observability import REGISTRY
+                    REGISTRY.counter("kern_consensus_round_timeouts_total").inc()
                     await self._set_round(self._round + 1)
                 else:
                     skip = self.bft.round_to_skip_to(self.chain.height + 1)
@@ -661,7 +711,11 @@ class Node:
         if self.bft is None or self.baker is None:
             return
         from .transaction import make_slash_consensus_equivocation
-        for ev in self.bft.take_evidence():
+        from .observability import REGISTRY
+        taken = self.bft.take_evidence()
+        if taken:
+            REGISTRY.counter("kern_consensus_vote_equivocations_total").inc(len(taken))
+        for ev in taken:
             try:
                 kp = self.baker.keypair
                 # Phase D: several reports can be filed before any of them

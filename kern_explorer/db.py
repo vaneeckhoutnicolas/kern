@@ -204,12 +204,17 @@ def get_meta(conn: sqlite3.Connection, key: str, default: Optional[str] = None) 
 
 
 def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Write one meta value. Inside a transaction (the indexer moves its
+    cursor in the same transaction as the block), the write belongs to that
+    transaction: `with conn:` would commit it half way, and the caller's
+    COMMIT would then fail (tests/test_heimdall_indexer_transaction.py)."""
+    sql = ("INSERT INTO meta(key, value) VALUES(?, ?) "
+           "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    if conn.in_transaction:
+        conn.execute(sql, (key, value))
+        return
     with conn:
-        conn.execute(
-            "INSERT INTO meta(key, value) VALUES(?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, value),
-        )
+        conn.execute(sql, (key, value))
 
 
 def latest_indexed_level(conn: sqlite3.Connection) -> int:

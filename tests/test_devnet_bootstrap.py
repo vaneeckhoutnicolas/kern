@@ -36,9 +36,13 @@ def _node_commands(service):
     """The `python -m kern.node ...` invocations a service runs."""
     entry = service.get("entrypoint")
     cmd = service["command"]
-    assert entry == ["sh", "-c"] and isinstance(cmd, str), "expected a shell command"
+    # A one-item list: compose splits a plain string into words, and
+    # `sh -c` would then run only the first word (found with a real
+    # `docker compose up`: every node exited at once with status 0).
+    assert entry == ["sh", "-c"], "expected a shell command"
+    assert isinstance(cmd, list) and len(cmd) == 1 and isinstance(cmd[0], str), cmd
     out = []
-    for part in cmd.split(";"):
+    for part in cmd[0].split(";"):
         words = shlex.split(part)
         if words and words[0] == "exec":
             words = words[1:]
@@ -49,8 +53,9 @@ def _node_commands(service):
 
 def test_every_service_command_is_accepted_by_the_node(tmp_path):
     compose = _generate(tmp_path / "devnet")
-    names = sorted(compose["services"])
-    for name, svc in compose["services"].items():
+    bakers = {n: s for n, s in compose["services"].items() if n.startswith("baker")}
+    names = sorted(bakers)
+    for name, svc in bakers.items():
         init, start = _node_commands(svc)
         a = node_mod.build_parser().parse_args(init)
         assert (a.cmd, a.data_dir, a.genesis) == ("init", "/data", "/genesis.json")
@@ -70,7 +75,7 @@ def test_the_build_context_is_the_repository(tmp_path):
     for out in (tmp_path / "devnet", ROOT / "networks" / "devnet-test-tmp"):
         try:
             compose = _generate(out)
-            for svc in compose["services"].values():
+            for svc in (s for s in compose["services"].values() if "build" in s):
                 ctx = (out / svc["build"]["context"]).resolve()
                 assert ctx == ROOT
                 assert (ctx / svc["build"]["dockerfile"]).is_file()
@@ -105,3 +110,70 @@ def test_the_generator_does_not_depend_on_the_platform_encoding(tmp_path):
     readme = (tmp_path / "devnet" / "README.md").read_text(encoding="utf-8")
     assert "\u2192" in readme                            # the arrows are written
 
+
+
+def test_one_image_heimdall_by_default_monitoring_on_request(tmp_path):
+    compose = _generate(tmp_path / "plain")
+    svcs = compose["services"]
+    assert set(svcs) == {"baker0", "baker1", "baker2", "heimdall"}
+    assert {s["image"] for s in svcs.values()} == {devnet_bootstrap.IMAGE}
+    assert [n for n, s in svcs.items() if "build" in s] == ["baker0"]
+    h = svcs["heimdall"]
+    assert h["environment"]["KERN_RPC"] == "http://baker0:8732"
+    assert h["ports"] == [f"127.0.0.1:{devnet_bootstrap.EXPLORER_PORT}:{devnet_bootstrap.EXPLORER_PORT}"]
+    assert all(p.startswith("127.0.0.1:") for s in svcs.values() for p in s.get("ports", []))
+
+    out = tmp_path / "mon"
+    devnet_bootstrap.build(out, 3, 10**12, 10**12, 10**15, explorer=True, monitoring=True)
+    compose = json.loads((out / "docker-compose.yml").read_text(encoding="utf-8"))
+    assert {"prometheus", "grafana"} <= set(compose["services"])
+    prom = (out / "prometheus.yml").read_text(encoding="utf-8")
+    for target in ("baker0:8732", "baker1:8732", "baker2:8732", "heimdall:8800"):
+        assert f"'{target}'" in prom
+    for svc in ("prometheus", "grafana"):
+        for vol in compose["services"][svc]["volumes"]:
+            src = vol.split(":")[0]
+            if src.startswith(".") or "/" in src:
+                assert (out / src).exists(), vol            # every mounted file exists
+
+    out = tmp_path / "bare"
+    devnet_bootstrap.build(out, 2, 10**12, 10**12, 10**15, explorer=False)
+    assert set(json.loads((out / "docker-compose.yml").read_text(encoding="utf-8"))["services"]) \
+        == {"baker0", "baker1"}
+
+
+def test_the_image_installs_the_explorer_extra_of_pyproject():
+    """docker/Dockerfile installs Heimdall's dependencies by name; they must
+    stay those of the [explorer] extra."""
+    import re
+    try:
+        import tomllib
+    except ModuleNotFoundError:                          # Python 3.10
+        import tomli as tomllib                          # type: ignore
+    extra = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"]["optional-dependencies"]["explorer"]
+    dockerfile = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    pinned = re.findall(r'"([A-Za-z0-9_.\[\]-]+>=[0-9.]+)"', dockerfile)
+    assert sorted(pinned) == sorted(extra)
+    assert "COPY kern_explorer/" in dockerfile
+
+
+def test_alert_rules_use_only_prometheus_template_functions():
+    """Prometheus refuses to start with an unknown template function in a
+    rule (kern-alerts.yml used `div`, so the monitoring stack never ran;
+    found with promtool 2.51.0)."""
+    import re
+    known = {"humanize", "humanize1024", "humanizeDuration", "humanizePercentage",
+             "humanizeTimestamp", "printf", "title", "toUpper", "toLower", "reReplaceAll",
+             "query", "first", "label", "value", "sortByLabel", "strvalue", "args",
+             "tmpl", "safeHtml", "match", "graphLink", "tableLink", "externalURL",
+             "pathPrefix", "stripPort", "stripDomain", "parseDuration", "toTime", "len",
+             "index", "and", "or", "not", "eq", "ne", "lt", "le", "gt", "ge", "html", "js",
+             "urlquery", "print", "println", "call", "slice"}
+    text = (ROOT / "kern_explorer" / "monitoring" / "alerts" / "kern-alerts.yml").read_text(
+        encoding="utf-8")
+    used = set()
+    for expr in re.findall(r"\{\{(.*?)\}\}", text):
+        for part in expr.split("|")[1:]:
+            used.add(part.split()[0])
+    assert used and used <= known, used - known

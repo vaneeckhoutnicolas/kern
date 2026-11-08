@@ -206,10 +206,10 @@ class Histogram(Metric):
         if self.help_text:
             lines.append(f"# HELP {self.name} {self.help_text}")
         lines.append(f"# TYPE {self.name} histogram")
-        cumulative = 0
+        # self.counts is already cumulative: observe() counts a value in
+        # every bucket whose bound covers it.
         for b, c in zip(self.buckets, self.counts):
-            cumulative += c
-            lines.append(f'{self.name}_bucket{{le="{b}"}} {cumulative}')
+            lines.append(f'{self.name}_bucket{{le="{b}"}} {c}')
         lines.append(f'{self.name}_bucket{{le="+Inf"}} {self.count}')
         lines.append(f"{self.name}_sum {self.sum}")
         lines.append(f"{self.name}_count {self.count}")
@@ -277,6 +277,18 @@ def _bootstrap_metrics() -> None:
     REGISTRY.gauge("kern_peers_connected", "Number of connected P2P peers")
     REGISTRY.gauge("kern_total_supply_mukrn", "Total KRN supply in mukrn")
     REGISTRY.gauge("kern_validator_count", "Number of registered validators")
+
+    # Consensus (Phase E). Refreshed at each scrape, or when a block is final.
+    REGISTRY.gauge("kern_consensus_level", "Level being decided (head + 1)")
+    REGISTRY.gauge("kern_consensus_round", "Round in progress at the level being decided")
+    REGISTRY.gauge("kern_consensus_last_finalized_round",
+                   "Round in which the last block was finalized (0 = first round)")
+    REGISTRY.counter("kern_consensus_round_timeouts_total",
+                     "Rounds that ended without a finalized block (timeout)")
+    REGISTRY.gauge("kern_consensus_proposal_evidence",
+                   "Proposal equivocations kept as evidence (in memory)")
+    REGISTRY.counter("kern_consensus_vote_equivocations_total",
+                     "Vote equivocations detected and reported for slashing")
 
     REGISTRY.histogram("kern_block_apply_seconds", "Time to apply a block to state")
     REGISTRY.histogram("kern_tx_apply_seconds", "Time to apply a single transaction")

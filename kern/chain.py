@@ -1437,21 +1437,9 @@ def apply_block(state: dict, block: Block) -> Tuple[dict, List[ApplyResult]]:
         # Phase C: refresh the consensus validator snapshot at epoch boundaries.
         _epoch_tick(new_state, block.header.level)
 
-    # Update gauges.
-    g_height = REGISTRY._metrics.get("kern_chain_height")
-    if g_height is not None:
-        g_height.set(block.header.level)  # type: ignore
-    g_supply = REGISTRY._metrics.get("kern_total_supply_mukrn")
-    if g_supply is not None:
-        g_supply.set(new_state.get("total_supply", 0))  # type: ignore
-    g_vals = REGISTRY._metrics.get("kern_validator_count")
-    if g_vals is not None:
-        g_vals.set(len(new_state.get("validators", [])))  # type: ignore
-
-    c_blocks = REGISTRY._metrics.get("kern_blocks_applied_total")
-    if c_blocks is not None:
-        c_blocks.inc()  # type: ignore
-
+    # Chain gauges and the applied-blocks counter are updated by the node
+    # when a block is appended (Node._record_finalized), not here: this
+    # function also runs to validate every proposal.
     return new_state, results
 
 

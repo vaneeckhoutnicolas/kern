@@ -73,7 +73,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1006 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1031 tests passing.**
 
 ```
 kern/
@@ -125,7 +125,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 1006 tests, none skipped
+├── tests/                      # 1031 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -186,8 +186,20 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 1006 passed in about 2 minutes (the multi-process consensus tests start real nodes)
+# 1031 passed in about 2 minutes (the multi-process consensus tests start real nodes)
 ```
+
+### A multi-node devnet in one command (Docker)
+
+```bash
+python scripts/devnet.py doctor            # checks Python and Docker, offers to install what is missing
+python scripts/devnet.py up                # 4 validators in containers + Heimdall on :8800
+python scripts/devnet.py check             # every validator holds the same block at every level
+python scripts/devnet.py up --monitoring   # + Prometheus (:9090) and Grafana (:3000)
+python scripts/devnet.py down --reset
+```
+
+Each validator runs in its own container with its own data and signing journal, over a real network; stop one, stop two, cut one from the network, and watch the chain continue, stop without forking, and recover. Details: [`docs/devnet.md`](docs/devnet.md).
 
 ### Open the block explorer (Heimdall)
 
@@ -210,7 +222,7 @@ curl http://localhost:8800/metrics            # Prometheus text format
 
 Full operator documentation: [`docs/setup-heimdall-operator.md`](docs/setup-heimdall-operator.md).
 
-For a multi-node local network, see [`docs/running-a-node.md`](docs/running-a-node.md) and [`docker/docker-compose.yml`](docker/docker-compose.yml).
+For a multi-node local network, see [`docs/devnet.md`](docs/devnet.md) (Docker, one command) or [`docs/running-a-node.md`](docs/running-a-node.md) (by hand).
 
 ## The wallet CLI
 

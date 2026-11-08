@@ -32,6 +32,7 @@ Return the block at the given level. Returns `404` if no such block exists.
 
 ```json
 {
+  "hash": "5f0c2a91e7b4...",
   "header": {
     "level": 4,
     "payload_round": 0,
@@ -50,11 +51,13 @@ Return the block at the given level. Returns `404` if no such block exists.
 }
 ```
 
+`hash` is the header hash (hex), the same value as in `/chain/head`; it is not part of the block's wire form, and a block decoder ignores it.
+
 ---
 
 ## `GET /chain/block/by_hash/{hash}`
 
-Return the block with the given header hash (hex). Returns `404` if no such block exists.
+Return the block with the given header hash (hex), in the same form as `/chain/block/{level}`. Returns `404` if no such block exists.
 
 ---
 
