@@ -513,6 +513,23 @@
       font-variation-settings: "opsz" 18, "SOFT" 100, "WONK" 1;
     }
     .article blockquote p { margin-bottom: 0.6rem; }
+
+    /* Figures: SVG diagrams drawn on white, followed by an italic caption */
+    .article img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 2rem auto 0.75rem;
+      background: #ffffff;
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+    }
+    .article p:has(> img) + p > em:only-child {
+      display: block;
+      font-size: 0.9rem;
+      color: var(--ink-secondary);
+      margin-bottom: 2rem;
+    }
     .article blockquote p:last-child { margin-bottom: 0; }
 
     /* Tables — keep them legible at narrow widths */
@@ -723,11 +740,11 @@
     </div>
     <div class="meta-item">
       <span class="meta-label">Reading</span>
-      <span class="meta-value">~58 min</span>
+      <span class="meta-value">~59 min</span>
     </div>
     <div class="meta-item">
       <span class="meta-label">Words</span>
-      <span class="meta-value">11 528</span>
+      <span class="meta-value">11 820</span>
     </div>
     <div class="meta-item">
       <span class="meta-label">License</span>
@@ -754,7 +771,7 @@
 <p class="lede"><span class="dropcap">W</span>e present Kern, a Layer-1 blockchain protocol designed around a specific thesis we call <strong>institutional legibility</strong>: the property that the rules an institution must follow — whether regulatory (MiCA, AIFMD, MiFID II), procedural (grant-making, funding allocation), or evidentiary (oracle attestations, supply chain provenance) — are encoded as protocol-enforced invariants that regulators, auditors, and counterparties can read directly, without trusting any intermediary.</p>
 <p>Kern combines five primitives that together support this thesis. None of them is individually novel; the combination has not previously been delivered by any production Layer-1 protocol. Those primitives are: (1) a four-phase BFT consensus protocol with bonded Proof-of-Stake delegation (the KRN that secure the chain are locked in a protocol-held bond, slashable and released only after an unbonding period; see §3.2 and <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/staking.md" target="_blank" rel="noopener"><code>staking.md</code></a>); (2) the Skald contract language with first-class runtime-enforced invariants and a static type system; (3) dual-track on-chain governance with equivocation slashing; (4) the slashable attestation primitive — generalized equivocation detection for any signed claim about the world; (5) BN254 zk-SNARK verification precompiles enabling privacy-preserving compliance attestations.</p>
 <p>We describe the protocol architecture, the four application verticals it enables (compliance-by-construction Security Token Offerings, public goods funding, generic data oracle networks, and ZK-claims-based identity), and the operational path from the v1.1-rc reference implementation to the Midgard mainnet. We are explicit about what Kern is not, what audits are required before launch, and which design decisions are deliberate trade-offs.</p>
-<p>The reference implementation is open-source under Apache-2.0 and ships with 1033 passing tests, none skipped. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.</p>
+<p>The reference implementation is open-source under Apache-2.0 and ships with 1048 passing tests, none skipped. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.</p>
 <hr />
 <h2 id="1-ambition"><span class="hash">§&nbsp;01</span><span class="htext">Ambition</span></h2>
 <p class="lede"><span class="dropcap">T</span>his section states the project&rsquo;s ambition in the simplest terms we can. We follow the Why → How → What ordering popularized by Simon Sinek&rsquo;s <em>Start With Why</em>, which we find clarifying for protocol design as much as for product design.</p>
@@ -781,7 +798,7 @@
 <h3 id="13-what-the-deliverables">1.3 WHAT — the deliverables</h3>
 <p>What Kern ships, concretely:</p>
 <ol>
-<li>A <strong>Layer-1 blockchain protocol</strong> with the design above, running with Python reference implementation (Apache-2.0, ~33,000 LOC, 1033 passing tests).</li>
+<li>A <strong>Layer-1 blockchain protocol</strong> with the design above, running with Python reference implementation (Apache-2.0, ~33,000 LOC, 1048 passing tests).</li>
 <li><strong>KRN</strong>, the native token, with a 100M genesis supply distributed per the Ethereum 2014 template.</li>
 <li><strong>Skald</strong>, a contract language with first-class runtime-enforced invariants, plus a static type system, plus a deterministic interpreter (the Kern Virtual Machine).</li>
 <li><strong>A dual-track governance system</strong> (protocol amendments + treasury) with equivocation slashing.</li>
@@ -793,6 +810,8 @@
 <li><strong>An internal security review</strong> documenting seven findings (two Critical, two Major, two Medium, one Minor) all fixed prior to engaging the mandatory professional audit.</li>
 </ol>
 <p>The deliverables are reference-implementation-grade. Production deployment requires the professional audit (Phase 2 in the post-code roadmap), the Foundation incorporation (Phase 1), and the public testnet stability validation (Phase 3). See §12 for the security path and the <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/post-code-roadmap.md" target="_blank" rel="noopener">post-code roadmap</a> for the full operational timeline.</p>
+<p><img alt="Kern, its validators and what sits around it" src="figures/architecture.svg" /></p>
+<p><em>Figure 1 (<code>docs/figures/architecture.svg</code>, original). The validators secure the layer 1 with bonded stake; the chain settles, governs, attests and registers; EVM rollups commit to it and can be challenged; Heimdall, Prometheus and Grafana make it observable. Pre-audit, and not yet run by independent operators.</em></p>
 <hr />
 <h2 id="2-motivation"><span class="hash">§&nbsp;02</span><span class="htext">Motivation</span></h2>
 <h3 id="21-the-structural-gap-in-existing-layer-1-protocols">2.1 The structural gap in existing Layer-1 protocols</h3>
@@ -1120,6 +1139,8 @@
 - Consensus equivocation: two signed pre-endorsements, or two signed endorsements, by the same validator for different blocks at the same level and round.
 - Governance equivocation: voting both sides of the same proposal in the same phase.</p>
 <p>Proposing two different blocks is not slashable on its own; only the votes are. For an offence at level L, the slash removes 30% of the validator&rsquo;s own stake (10% of the slashed amount goes to the reporter, the rest is burned) and burns 30% of every delegated tranche that was backing the validator at L. The validator&rsquo;s consensus weight drops at once. The attestation primitive (§8) applies the same 30% rate to attestation bonds.</p>
+<p><img alt="The life of a bond and what a slash can reach" src="figures/bonded-stake.svg" /></p>
+<p><em>Figure 2 (<code>docs/figures/bonded-stake.svg</code>, original). A bond weighs from the next epoch boundary, loses its weight at once when undelegated, and stays locked and slashable while unbonding. A slash for an offence at level L burns 30% of the delegated tranches that were backing the validator at L; the others are not touched. Durations are defaults, not measurements.</em></p>
 <h3 id="53-the-block-lifecycle-step-by-step">5.3 The block lifecycle, step by step</h3>
 <p>A block is produced in a four-move round. Most blocks settle in round 0; rounds 1, 2, … are fallbacks if a proposer fails.</p>
 <pre><code>  PROPOSE            PRE-ENDORSE          ENDORSE              FINAL
@@ -1134,6 +1155,10 @@
                      of stake             = endorsed
 </code></pre>
 <p>The <strong>&gt;2/3 stake</strong> quorum is what makes finality deterministic: as long as fewer than one-third of validators are malicious or offline, an endorsed block cannot be reverted. A failed round (proposer offline, or block fails to reach quorum before the round&rsquo;s timeout, which grows with the round number) hands off to the next proposer, selected via a round-incremented seed. Every level starts again at round 0. A validator that endorsed a block in one round is locked on it: it pre-endorses no other block at that level unless it sees a pre-endorsement quorum for that block from a later round, which is what keeps two rounds from finalizing two different blocks (see <a href="https://github.com/vaneeckhoutnicolas/kern/blob/main/docs/consensus-locking.md" target="_blank" rel="noopener"><code>consensus-locking.md</code></a>).</p>
+<p><img alt="One level of consensus, from proposal to final block" src="figures/consensus-level.svg" /></p>
+<p><em>Figure 3 (<code>docs/figures/consensus-level.svg</code>, original). Each level starts at round 0. More than two thirds of the stake of pre-endorsements form a certificate and lock the validators; more than two thirds of endorsements finalize the block. Without a certificate the round times out, the next round lasts longer, and its proposer offers the locked block again with its proof.</em></p>
+<p><img alt="The fork caused by message delay alone, and how the lock closes it" src="figures/fork-and-lock.svg" /></p>
+<p><em>Figure 4 (<code>docs/figures/fork-and-lock.svg</code>, original). The same delays in both panels. Without a lock, two blocks became final at one level and nobody had signed anything slashable. With the lock and the valid round, the validators that endorsed B refuse a new block and finalize B again.</em></p>
 <h3 id="54-the-block-reward-and-where-it-goes">5.4 The block reward, and where it goes</h3>
 <p>Each finalized block mints a fresh reward (the issuance — see §11) and splits it deterministically:</p>
 <pre><code>  Newly minted reward (100%)
@@ -1629,7 +1654,7 @@
 <pre><code class="language-bash">git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
 cd kern
 pip install -e &quot;.[dev,explorer,docs]&quot;
-pytest tests/                # 1033 tests should pass in about 2 minutes
+pytest tests/                # 1048 tests should pass in about 2 minutes
 python networks/devnet_bootstrap.py    # local 3-validator devnet
 python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 </code></pre>
@@ -1674,7 +1699,7 @@ python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 <li>43 Python modules (protocol, explorer, tools)</li>
 <li>68 markdown specifications and guides</li>
 <li>10 Skald example contracts (vault, counter, 3 STOs, QF, RPGF, 3 oracle/marketplace)</li>
-<li><strong>1033 passing tests</strong>, none skipped</li>
+<li><strong>1048 passing tests</strong>, none skipped</li>
 <li>4 internal originality checks pass (no copied code, all files SPDX-licensed, founder attribution on all modules)</li>
 </ul>
 <p>The repository is at https://github.com/vaneeckhoutnicolas/kern (or wherever the Foundation chooses to host it post-incorporation).</p>

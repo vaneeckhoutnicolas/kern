@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" font-family="Helvetica, Arial, sans-serif">
+  <title>The fork that message delay alone caused, and what the lock changes</title>
+  <desc>Four honest validators of equal stake, the same message delays in both panels. Left, before Phase E: in round 0 all four pre-endorse and endorse block B, but the endorsements reach only validator 0, which finalizes B; the three others time out, and in round 1 they pre-endorse and endorse a new block C and finalize it. Two blocks are final at the same level and nobody signed two votes in one round, so there is nothing to slash. Right, with the lock of Phase E: having endorsed B in round 0, all four are locked on B. In round 1 a new block C cannot gather their pre-endorsements, because no proof newer than their lock exists for C; the proposer of round 1 proposes B again with the certificate of round 0, the locked validators vote for it, and B is final everywhere. The scenario is the scripted one of consensus-locking.md section 1, reproduced by the network simulator. No measured number appears in the figure.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8794"/></marker>
+    <marker id="arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a8642c"/></marker>
+    <marker id="arrow-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b03a2e"/></marker>
+    <marker id="arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f7d4f"/></marker>
+  </defs>
+  <rect width="960" height="600" fill="#ffffff"/>
+  <text x="480" y="34" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">Message delay alone forked the chain; the lock closes it</text>
+  <text x="480" y="56" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">four honest validators V0 to V3 of equal stake, the same delays in both panels</text>
+  <rect x="20" y="76" width="440" height="484" rx="6" fill="#ffffff" stroke="#b03a2e" stroke-width="1.5"/>
+  <text x="240" y="102" font-size="15" font-weight="bold" fill="#b03a2e" text-anchor="middle">Before Phase E: no lock</text>
+  <rect x="40" y="120" width="400" height="72" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="142" font-size="13" font-weight="bold" fill="#1f2933" text-anchor="start">Round 0</text>
+  <text x="52" y="162" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">V0 to V3 pre-endorse block B: a certificate forms;</text>
+  <text x="52" y="178" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">all four endorse B</text>
+  <line x1="240" y1="192" x2="240" y2="208" stroke="#7b8794" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="40" y="210" width="400" height="56" rx="6" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <text x="52" y="232" font-size="13" font-weight="bold" fill="#2f7d4f" text-anchor="start">The endorsements reach V0 only</text>
+  <text x="52" y="252" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">V0 finalizes B; its announcement of B is delayed</text>
+  <line x1="240" y1="266" x2="240" y2="282" stroke="#7b8794" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="40" y="284" width="400" height="72" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="306" font-size="13" font-weight="bold" fill="#1f2933" text-anchor="start">Round 1, on V1, V2, V3</text>
+  <text x="52" y="326" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">they time out; the proposer offers a new block C;</text>
+  <text x="52" y="342" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">nothing remembers that they endorsed B</text>
+  <line x1="240" y1="356" x2="240" y2="372" stroke="#7b8794" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="40" y="374" width="400" height="56" rx="6" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="52" y="396" font-size="13" font-weight="bold" fill="#b03a2e" text-anchor="start">V1, V2, V3 pre-endorse and endorse C</text>
+  <text x="52" y="416" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">more than 2/3 of the stake: C is final</text>
+  <line x1="240" y1="430" x2="240" y2="446" stroke="#7b8794" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="40" y="448" width="400" height="72" rx="6" fill="#fbeeec" stroke="#b03a2e" stroke-width="1.5"/>
+  <text x="52" y="470" font-size="14" font-weight="bold" fill="#b03a2e" text-anchor="start">Two final blocks at the same level</text>
+  <text x="52" y="490" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">nobody signed two votes in one round:</text>
+  <text x="52" y="506" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">no fault to slash, only message delay</text>
+  <rect x="500" y="76" width="440" height="484" rx="6" fill="#ffffff" stroke="#2f7d4f" stroke-width="1.5"/>
+  <text x="720" y="102" font-size="15" font-weight="bold" fill="#2f7d4f" text-anchor="middle">Phase E: lock and valid round</text>
+  <rect x="520" y="120" width="400" height="72" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="532" y="142" font-size="13" font-weight="bold" fill="#1f2933" text-anchor="start">Round 0</text>
+  <text x="532" y="162" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">V0 to V3 pre-endorse block B: a certificate forms;</text>
+  <text x="532" y="178" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">all four endorse B and lock on (0, B)</text>
+  <line x1="720" y1="192" x2="720" y2="208" stroke="#7b8794" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="520" y="210" width="400" height="56" rx="6" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <text x="532" y="232" font-size="13" font-weight="bold" fill="#2f7d4f" text-anchor="start">The endorsements reach V0 only</text>
+  <text x="532" y="252" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">V0 finalizes B; its announcement of B is delayed</text>
+  <line x1="720" y1="266" x2="720" y2="282" stroke="#7b8794" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="520" y="284" width="400" height="72" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="532" y="306" font-size="13" font-weight="bold" fill="#2f5f8f" text-anchor="start">Round 1, on V1, V2, V3</text>
+  <text x="532" y="326" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">a new block C cannot pass: no proof newer than</text>
+  <text x="532" y="342" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">their lock exists for C, so they refuse it</text>
+  <line x1="720" y1="356" x2="720" y2="372" stroke="#7b8794" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="520" y="374" width="400" height="72" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="532" y="396" font-size="13" font-weight="bold" fill="#2f5f8f" text-anchor="start">The proposer offers B again</text>
+  <text x="532" y="416" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">with valid round 0 and its certificate; the locked</text>
+  <text x="532" y="432" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">validators vote for B, which keeps its hash</text>
+  <line x1="720" y1="446" x2="720" y2="462" stroke="#7b8794" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <rect x="520" y="464" width="400" height="72" rx="6" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1.5"/>
+  <text x="532" y="486" font-size="14" font-weight="bold" fill="#2f7d4f" text-anchor="start">One final block: B everywhere</text>
+  <text x="532" y="506" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">cert_round may differ between nodes (0 or 1);</text>
+  <text x="532" y="522" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the block does not</text>
+  <text x="480" y="580" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle" font-style="italic">scripted scenario of consensus-locking.md section 1, reproduced on the network simulator; rules in section 4.4</text>
+</svg>

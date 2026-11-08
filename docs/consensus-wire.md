@@ -88,6 +88,10 @@ validator ever pre-endorses a hash whose block it has not executed. Valid
 proposals are re-gossiped, so a proposer that sends two different blocks
 for one round to two halves of the network is seen by everyone.
 
+![What a validator does with a proposal, in order](figures/proposal-checks.svg)
+
+*Figure 1 (`docs/figures/proposal-checks.svg`, original). Six checks before a vote is possible. The first signed PROPOSE occupies the round; any other signed PROPOSE for that round is kept as evidence and never voted on.*
+
 ## commits vs endorsements
 
 A finalized block carries two signature lists, both made of
@@ -193,6 +197,10 @@ Equivocation (two conflicting signed votes of the same kind at the same
 level and round) is slashable evidence (`SlashingEvidence`); two
 different PROPOSE messages from one proposer for one (level, round) are
 kept as `ProposalEquivocation` evidence, not slashable yet.
+
+![One level of consensus, from proposal to final block](figures/consensus-level.svg)
+
+*Figure 2 (`docs/figures/consensus-level.svg`, original). Each level starts at round 0. More than two thirds of the stake of pre-endorsements form a certificate and lock the validators; more than two thirds of endorsements finalize the block. Without a certificate the round times out, the next round lasts longer, and its proposer offers the locked block again with its proof.*
 
 ## Catch-up sync
 
@@ -327,6 +335,10 @@ final line cut by a crash is ignored, because the signature it announced
 was never produced; in the block file, a cut final line is removed and
 every append starts on a fresh line. Records below the finalized height are compacted
 every 64 levels.
+
+![The signing journal: write, sync, then sign](figures/signing-journal.svg)
+
+*Figure 3 (`docs/figures/signing-journal.svg`, original). Every signature is recorded on disk before it exists, so a restarted validator restores its lock and refuses to sign anything that conflicts with what it already signed. A journal that cannot be trusted makes it fail closed.*
 
 **Limits.** No nil votes yet: a round that cannot gather a certificate
 ends by timeout, which costs time, not safety. Proposal equivocation is

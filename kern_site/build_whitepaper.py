@@ -28,7 +28,6 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-import markdown
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_SOURCE = HERE / "../docs/whitepaper.md"
@@ -44,6 +43,10 @@ def convert_markdown(text: str) -> tuple[str, list[dict]]:
 
     toc_items is a list of {level, id, title} dicts for the sidebar.
     """
+    # Imported here: only the conversion needs it, and the tests of the
+    # helpers below run where it is not installed (the CI).
+    import markdown
+
     md = markdown.Markdown(
         extensions=[
             "extra",        # tables, fenced_code, def_list, attr_list, footnotes
@@ -117,6 +120,40 @@ def link_repo_files_to_github(body: str, source: Path) -> str:
     return re.sub(r'href="([^"]+)"', repl, body)
 
 
+def publish_figures(body: str, source: Path, out_dir: Path) -> tuple[str, list[Path]]:
+    """Copy the images the white paper shows next to whitepaper.html.
+
+    The markdown shows figures from docs/figures with a relative path
+    (`figures/consensus-level.svg`). The site publishes kern_site/, not
+    docs/, so each image that resolves to a file of the repository is
+    copied to `<out_dir>/figures/` and its src rewritten to that copy.
+    Returns the new body and the copied files. An image that does not
+    resolve to a file is an error: the page would show a broken image."""
+    base = source.resolve().parent
+    dest = out_dir / "figures"
+    copied: list[Path] = []
+
+    def repl(m: re.Match) -> str:
+        src = m.group(1)
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", src) or src.startswith("/"):
+            return m.group(0)
+        target = (base / src).resolve()
+        if not target.is_file():
+            raise FileNotFoundError(f"image not found: {src} (from {source})")
+        dest.mkdir(parents=True, exist_ok=True)
+        copy = dest / target.name
+        data = target.read_bytes()
+        if not copy.exists() or copy.read_bytes() != data:
+            copy.write_bytes(data)
+        copied.append(copy)
+        return f'src="figures/{target.name}"'
+
+    def per_img(m: re.Match) -> str:
+        return re.sub(r'\bsrc="([^"]+)"', repl, m.group(0))
+
+    return re.sub(r"<img\b[^>]*>", per_img, body), copied
+
+
 def add_drop_cap_to_sections(body: str) -> str:
     """Wrap the first letter of each section's first paragraph in a drop-cap span.
 
@@ -159,7 +196,7 @@ def add_drop_cap_to_sections(body: str) -> str:
             continue
         # Replace the FIRST <p>...</p> in this section
         sec_new = re.sub(
-            r"<p>(\S)(.*?)</p>",
+            r"<p>([^\s<])(.*?)</p>",
             lambda m: f'<p class="lede"><span class="dropcap">{m.group(1)}</span>{m.group(2)}</p>',
             sec, count=1, flags=re.DOTALL,
         )
@@ -811,6 +848,23 @@ PAGE_TEMPLATE = """<!--
       font-variation-settings: "opsz" 18, "SOFT" 100, "WONK" 1;
     }}
     .article blockquote p {{ margin-bottom: 0.6rem; }}
+
+    /* Figures: SVG diagrams drawn on white, followed by an italic caption */
+    .article img {{
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 2rem auto 0.75rem;
+      background: #ffffff;
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+    }}
+    .article p:has(> img) + p > em:only-child {{
+      display: block;
+      font-size: 0.9rem;
+      color: var(--ink-secondary);
+      margin-bottom: 2rem;
+    }}
     .article blockquote p:last-child {{ margin-bottom: 0; }}
 
     /* Tables — keep them legible at narrow widths */
@@ -1179,6 +1233,7 @@ def main() -> int:
 
     body, toc_items = convert_markdown(md_text)
     body = link_repo_files_to_github(body, source)
+    body, figures = publish_figures(body, source, out.parent)
 
     # Strip the H1 + leading byline lines (we render them in the cover)
     body, title, byline = strip_first_h1_and_meta(body)
@@ -1219,6 +1274,8 @@ def main() -> int:
 
     out.write_text(html, encoding="utf-8")
     print(f"Wrote {out} ({out.stat().st_size:,} bytes)")
+    if figures:
+        print(f"Copied {len(set(figures))} figure(s) to {out.parent / 'figures'}")
     print(f"  sections: {n_sections}")
     print(f"  words:    {word_count:,}")
     print(f"  reading:  ~{reading_time} min")

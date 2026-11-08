@@ -2,15 +2,23 @@
 
 > **⚠ Notice.** This is pre-audit software, provided "as is" without warranty. The author accepts no liability for any deployment, financial loss, or regulatory consequence arising from use of this code. Discussion of EU regulation is informational, not a compliance assurance. **Read [`docs/disclaimer.md`](docs/disclaimer.md) before using.**
 
-
-
 > *The noyau. The kernel. The grain of state that endures.*
+
+<p align="center">
+  <a href="kern_site/media/kern-explainer.mp4" title="Watch the Kern explainer (MP4, 2 min 32 s)"><img src="docs/figures/kern-explainer-poster.jpg" alt="Kern explainer video: click to play (2 min 32 s)" width="720"></a>
+  <br>
+  <sub><b>Kern in 2 min 32 s</b>: what the chain is for, how it reaches finality, and where it stands. Click the image to play (MP4, 19 MB).</sub>
+</p>
 
 **Kern** is a Layer-1 blockchain protocol that combines EVM tooling and developer-ecosystem compatibility with native on-chain governance, formal verifiability, and bonded Proof-of-Stake with delegation. Smart contracts are written in **Skald**, a small statically typed language (scalar types `int`, `bool`, `string`, `address`; no recursion, no loops) with declared invariants that the runtime re-checks after every entry call.
 
 **Bonded Proof-of-Stake** means that the KRN securing the chain are locked in the protocol while they do so. Validators bond their own stake, and holders who do not run a node can delegate by bonding KRN to a validator; the protocol holds the bond, never the validator. A bond gives consensus weight and a share of rewards, can be slashed if its validator signs conflicting votes, and returns to its owner only after an unbonding period. There is no derivative token. Unlike liquid staking, bonded KRN cannot be spent while they secure the chain. Details: [`docs/staking.md`](docs/staking.md).
 
 > **Status.** Kern is a Layer-1 protocol with a Python reference implementation, at devnet stage; no public network is in operation. The repository's `genesis.json` is a devnet file whose keys are public placeholders. Nothing here has been professionally audited, and nothing here has monetary value (see [docs/disclaimer.md](docs/disclaimer.md)).
+
+![Kern, its validators and what sits around it](docs/figures/architecture.svg)
+
+*Figure 1 (`docs/figures/architecture.svg`, original). The validators secure the layer 1 with bonded stake; the chain settles, governs, attests and registers; EVM rollups commit to it and can be challenged; Heimdall, Prometheus and Grafana make it observable. Pre-audit, and not yet run by independent operators.*
 
 This repository is the **v1.1 release candidate** — building on the v1.0-rc audit-frozen foundation with **slashable attestations** as a new L1 primitive, three **tokenized-securities Skald templates** for the EU securities regime — MiFID II / Prospectus Regulation / AIFMD, *not* MiCA, which excludes financial instruments under Art. 2(4) (startup equity, institutional fund, real estate; see [docs/sto-mica.md](docs/sto-mica.md)), **public goods funding primitives** (Quadratic Funding + Retroactive PGF), an **oracle network** (generic data + DeFi prices + schema marketplace), **ZK-claims** for privacy-preserving attestations (a Groth16 verifier over BN254 against registered verifier keys; no circuits, trusted setup or prover are shipped), and **Heimdall** — the official block explorer + monitoring stack that surfaces the institutional-legibility features Kern was built to support. See [docs/v11rc-changes.md](docs/v11rc-changes.md) for the full vertical and [docs/setup-heimdall-operator.md](docs/setup-heimdall-operator.md) for the explorer.
 
@@ -73,7 +81,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1033 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1048 tests passing.**
 
 ```
 kern/
@@ -125,7 +133,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 1033 tests, none skipped
+├── tests/                      # 1048 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -186,7 +194,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 1033 passed in about 2 minutes (the multi-process consensus tests start real nodes)
+# 1048 passed in about 2 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### A multi-node devnet in one command (Docker)
@@ -200,6 +208,10 @@ python scripts/devnet.py down --reset
 ```
 
 Each validator runs in its own container with its own data and signing journal, over a real network; stop one, stop two, cut one from the network, and watch the chain continue, stop without forking, and recover. Details: [`docs/devnet.md`](docs/devnet.md).
+
+![The Docker devnet](docs/figures/devnet.svg)
+
+*Figure 2 (`docs/figures/devnet.svg`, original). Four validator containers, each with its own volume and signing journal, in a full peer to peer mesh; Heimdall reads baker0; Prometheus and Grafana with --monitoring. Every port is published on 127.0.0.1 only.*
 
 ### Open the block explorer (Heimdall)
 

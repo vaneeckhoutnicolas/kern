@@ -16,7 +16,7 @@ Kern combines five primitives that together support this thesis. None of them is
 
 We describe the protocol architecture, the four application verticals it enables (compliance-by-construction Security Token Offerings, public goods funding, generic data oracle networks, and ZK-claims-based identity), and the operational path from the v1.1-rc reference implementation to the Midgard mainnet. We are explicit about what Kern is not, what audits are required before launch, and which design decisions are deliberate trade-offs.
 
-The reference implementation is open-source under Apache-2.0 and ships with 1033 passing tests, none skipped. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.
+The reference implementation is open-source under Apache-2.0 and ships with 1048 passing tests, none skipped. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.
 
 ### Table of contents
 
@@ -82,7 +82,7 @@ These five constraints, in conjunction, produce the rest of the protocol mechani
 
 What Kern ships, concretely:
 
-1. A **Layer-1 blockchain protocol** with the design above, running with Python reference implementation (Apache-2.0, ~33,000 LOC, 1033 passing tests).
+1. A **Layer-1 blockchain protocol** with the design above, running with Python reference implementation (Apache-2.0, ~33,000 LOC, 1048 passing tests).
 2. **KRN**, the native token, with a 100M genesis supply distributed per the Ethereum 2014 template.
 3. **Skald**, a contract language with first-class runtime-enforced invariants, plus a static type system, plus a deterministic interpreter (the Kern Virtual Machine).
 4. **A dual-track governance system** (protocol amendments + treasury) with equivocation slashing.
@@ -94,6 +94,10 @@ What Kern ships, concretely:
 10. **An internal security review** documenting seven findings (two Critical, two Major, two Medium, one Minor) all fixed prior to engaging the mandatory professional audit.
 
 The deliverables are reference-implementation-grade. Production deployment requires the professional audit (Phase 2 in the post-code roadmap), the Foundation incorporation (Phase 1), and the public testnet stability validation (Phase 3). See §12 for the security path and the [post-code roadmap](post-code-roadmap.md) for the full operational timeline.
+
+![Kern, its validators and what sits around it](figures/architecture.svg)
+
+*Figure 1 (`docs/figures/architecture.svg`, original). The validators secure the layer 1 with bonded stake; the chain settles, governs, attests and registers; EVM rollups commit to it and can be challenged; Heimdall, Prometheus and Grafana make it observable. Pre-audit, and not yet run by independent operators.*
 
 ---
 
@@ -391,6 +395,10 @@ Slashing applies to:
 
 Proposing two different blocks is not slashable on its own; only the votes are. For an offence at level L, the slash removes 30% of the validator's own stake (10% of the slashed amount goes to the reporter, the rest is burned) and burns 30% of every delegated tranche that was backing the validator at L. The validator's consensus weight drops at once. The attestation primitive (§8) applies the same 30% rate to attestation bonds.
 
+![The life of a bond and what a slash can reach](figures/bonded-stake.svg)
+
+*Figure 2 (`docs/figures/bonded-stake.svg`, original). A bond weighs from the next epoch boundary, loses its weight at once when undelegated, and stays locked and slashable while unbonding. A slash for an offence at level L burns 30% of the delegated tranches that were backing the validator at L; the others are not touched. Durations are defaults, not measurements.*
+
 ### 5.3 The block lifecycle, step by step
 
 A block is produced in a four-move round. Most blocks settle in round 0; rounds 1, 2, … are fallbacks if a proposer fails.
@@ -409,6 +417,14 @@ A block is produced in a four-move round. Most blocks settle in round 0; rounds 
 ```
 
 The **>2/3 stake** quorum is what makes finality deterministic: as long as fewer than one-third of validators are malicious or offline, an endorsed block cannot be reverted. A failed round (proposer offline, or block fails to reach quorum before the round's timeout, which grows with the round number) hands off to the next proposer, selected via a round-incremented seed. Every level starts again at round 0. A validator that endorsed a block in one round is locked on it: it pre-endorses no other block at that level unless it sees a pre-endorsement quorum for that block from a later round, which is what keeps two rounds from finalizing two different blocks (see [`consensus-locking.md`](consensus-locking.md)).
+
+![One level of consensus, from proposal to final block](figures/consensus-level.svg)
+
+*Figure 3 (`docs/figures/consensus-level.svg`, original). Each level starts at round 0. More than two thirds of the stake of pre-endorsements form a certificate and lock the validators; more than two thirds of endorsements finalize the block. Without a certificate the round times out, the next round lasts longer, and its proposer offers the locked block again with its proof.*
+
+![The fork caused by message delay alone, and how the lock closes it](figures/fork-and-lock.svg)
+
+*Figure 4 (`docs/figures/fork-and-lock.svg`, original). The same delays in both panels. Without a lock, two blocks became final at one level and nobody had signed anything slashable. With the lock and the valid round, the validators that endorsed B refuse a new block and finalize B again.*
 
 ### 5.4 The block reward, and where it goes
 
@@ -822,7 +838,7 @@ Quick start to run Kern locally:
 git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
 cd kern
 pip install -e ".[dev,explorer,docs]"
-pytest tests/                # 1033 tests should pass in about 2 minutes
+pytest tests/                # 1048 tests should pass in about 2 minutes
 python networks/devnet_bootstrap.py    # local 3-validator devnet
 python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 ```
@@ -887,7 +903,7 @@ The Kern reference implementation is open-source under Apache-2.0. As of v1.1-rc
 - 43 Python modules (protocol, explorer, tools)
 - 68 markdown specifications and guides
 - 10 Skald example contracts (vault, counter, 3 STOs, QF, RPGF, 3 oracle/marketplace)
-- **1033 passing tests**, none skipped
+- **1048 passing tests**, none skipped
 - 4 internal originality checks pass (no copied code, all files SPDX-licensed, founder attribution on all modules)
 
 The repository is at https://github.com/vaneeckhoutnicolas/kern (or wherever the Foundation chooses to host it post-incorporation).

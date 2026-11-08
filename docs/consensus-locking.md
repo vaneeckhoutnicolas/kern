@@ -19,6 +19,10 @@ Evidence, from `tests/test_phase_e_consensus_harness.py` (simulator in `tests/bf
 | Endorsements of round 0 reach one node only (each of the 4 nodes in turn) | 4 forks out of 4 |
 | 200 random schedules: random delays up to 2 s and 10% loss until t = 15 s, then delivery within 50 ms | 41 forks, 0 stuck levels |
 
+![The fork caused by message delay alone, and how the lock closes it](figures/fork-and-lock.svg)
+
+*Figure 1 (`docs/figures/fork-and-lock.svg`, original). The same delays in both panels. Without a lock, two blocks became final at one level and nobody had signed anything slashable. With the lock and the valid round, the validators that endorsed B refuse a new block and finalize B again.*
+
 ## 2. Why a lock alone is not enough
 
 The textbook fix is the Tendermint lock: a validator that endorsed B in round r pre-endorses nothing else afterwards, unless it sees a more recent pre-endorsement certificate for another block. A scratch experiment (not delivered) added only that lock to the engine and ran the same harness:
@@ -90,6 +94,10 @@ valid_hash     the block of that certificate
 7. **Timeouts grow with the round**: `timeout(r) = base + r * step`, so that after stabilization a round eventually lasts long enough for a whole round trip.
 
 Why this closes the fork: if X is finalized in round r, more than two thirds of stake endorsed X in r and are locked on X from r. A pre-endorsement certificate for another block Y in a later round needs more than two thirds of stake, so it needs at least one honest validator locked on X, which only pre-endorses Y with a proof for Y from a round after r. By induction on the rounds after r, no such proof exists, so no certificate for Y forms after round r. Rule 1 prevents the late votes found in section 2. This is the standard Tendermint argument; the reviewer is asked to check that the Kern specifics (stake weights from the epoch snapshot, certificates bound to the proposed block since Phase C) do not break it.
+
+![One level of consensus, from proposal to final block](figures/consensus-level.svg)
+
+*Figure 2 (`docs/figures/consensus-level.svg`, original). Each level starts at round 0. More than two thirds of the stake of pre-endorsements form a certificate and lock the validators; more than two thirds of endorsements finalize the block. Without a certificate the round times out, the next round lasts longer, and its proposer offers the locked block again with its proof.*
 
 ### 4.5 Chain validation
 

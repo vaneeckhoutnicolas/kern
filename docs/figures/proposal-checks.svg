@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="670" viewBox="0 0 960 670" font-family="Helvetica, Arial, sans-serif">
+  <title>What a validator does with a proposal, in order</title>
+  <desc>A proposal arrives as an envelope with the full block, the signed PROPOSE message and the proof of its valid round. The node decodes it and checks its level; checks the PROPOSE signature and that the signer is the proposer selected for the level and round, so nobody else can occupy a round. The first signed PROPOSE of the level and round then occupies it: any other signed PROPOSE for that round, for another block or for the same block with another valid round, is kept as equivocation evidence with the first, both are relayed once, and it is never validated, kept or voted on. Next the valid round and payload round, which the proposer signed, must fit the block, or the round stays occupied and the validator does not vote in it; the proof, which the proposer does not sign, must verify, or it is refused and the same signed proposal may come back with a valid proof. Then the block is executed in full; an invalid block is remembered and validated only once. Only a validated block reaches the consensus engine, the only path that can lead to a vote, under the lock rules. No measured number appears in the figure.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8794"/></marker>
+    <marker id="arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a8642c"/></marker>
+    <marker id="arrow-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b03a2e"/></marker>
+    <marker id="arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f7d4f"/></marker>
+  </defs>
+  <rect width="960" height="670" fill="#ffffff"/>
+  <text x="480" y="34" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">What a validator does with a proposal, in order</text>
+  <text x="480" y="56" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">only a block that passes every step reaches the engine, the only path to a vote</text>
+  <rect x="40" y="80" width="470" height="72" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="102" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">1  Decode</text>
+  <text x="52" y="122" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the block, the signed PROPOSE, the proof;</text>
+  <text x="52" y="138" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the level must be head + 1</text>
+  <rect x="580" y="84" width="340" height="56" rx="6" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="592" y="106" font-size="13" font-weight="bold" fill="#b03a2e" text-anchor="start">dropped</text>
+  <text x="592" y="126" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">malformed, or another level</text>
+  <line x1="510" y1="116" x2="578" y2="116" stroke="#b03a2e" stroke-width="1.4" marker-end="url(#arrow-no)"/>
+  <line x1="275" y1="152" x2="275" y2="166" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="40" y="168" width="470" height="72" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="190" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">2  Signature and proposer</text>
+  <text x="52" y="210" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the PROPOSE signature verifies, and its signer</text>
+  <text x="52" y="226" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">is the proposer selected for (level, round)</text>
+  <rect x="580" y="172" width="340" height="56" rx="6" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="592" y="194" font-size="13" font-weight="bold" fill="#b03a2e" text-anchor="start">dropped</text>
+  <text x="592" y="214" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">nobody else can occupy a round</text>
+  <line x1="510" y1="204" x2="578" y2="204" stroke="#b03a2e" stroke-width="1.4" marker-end="url(#arrow-no)"/>
+  <line x1="275" y1="240" x2="275" y2="254" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="40" y="256" width="470" height="72" rx="6" fill="#fbf3ec" stroke="#a8642c" stroke-width="1"/>
+  <text x="52" y="278" font-size="14" font-weight="bold" fill="#a8642c" text-anchor="start">3  The first signed PROPOSE occupies the round</text>
+  <text x="52" y="298" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">recorded for (level, round), valid or not,</text>
+  <text x="52" y="314" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">before anything else is checked</text>
+  <rect x="580" y="260" width="340" height="88" rx="6" fill="#fbf3ec" stroke="#a8642c" stroke-width="1"/>
+  <text x="592" y="282" font-size="13" font-weight="bold" fill="#a8642c" text-anchor="start">evidence, never a vote</text>
+  <text x="592" y="302" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">another signed PROPOSE for this round, other</text>
+  <text x="592" y="318" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">block or same block with another valid round:</text>
+  <text x="592" y="334" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">kept with the first, both relayed once</text>
+  <line x1="510" y1="292" x2="578" y2="292" stroke="#a8642c" stroke-width="1.4" marker-end="url(#arrow-acc)"/>
+  <line x1="275" y1="328" x2="275" y2="342" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="40" y="358" width="470" height="72" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="380" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">4  Valid round and its proof</text>
+  <text x="52" y="400" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">signed by the proposer: must fit the block;</text>
+  <text x="52" y="416" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the proof (not signed) must verify</text>
+  <rect x="580" y="362" width="340" height="88" rx="6" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="592" y="384" font-size="13" font-weight="bold" fill="#b03a2e" text-anchor="start">no vote in this round</text>
+  <text x="592" y="404" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">a misfit is the proposer's fault; a bad proof</text>
+  <text x="592" y="420" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">is refused, and the same signed message may</text>
+  <text x="592" y="436" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">come back with a valid proof</text>
+  <line x1="510" y1="394" x2="578" y2="394" stroke="#b03a2e" stroke-width="1.4" marker-end="url(#arrow-no)"/>
+  <line x1="275" y1="430" x2="275" y2="444" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="40" y="460" width="470" height="72" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="482" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">5  Full validation</text>
+  <text x="52" y="502" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">execute the block: header, proposer of its</text>
+  <text x="52" y="518" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">payload round, transactions, state root</text>
+  <rect x="580" y="464" width="340" height="56" rx="6" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="592" y="486" font-size="13" font-weight="bold" fill="#b03a2e" text-anchor="start">no vote, validated once</text>
+  <text x="592" y="506" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">an invalid block is remembered</text>
+  <line x1="510" y1="496" x2="578" y2="496" stroke="#b03a2e" stroke-width="1.4" marker-end="url(#arrow-no)"/>
+  <line x1="275" y1="532" x2="275" y2="546" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="40" y="548" width="470" height="72" rx="6" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <text x="52" y="570" font-size="14" font-weight="bold" fill="#2f7d4f" text-anchor="start">6  Consensus engine</text>
+  <text x="52" y="590" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">on_proposal: pre-endorse under the lock rules</text>
+  <text x="52" y="606" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">(see the figure of one level)</text>
+  <text x="480" y="654" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle" font-style="italic">consensus-wire.md, Proposals travel as full blocks; consensus-locking.md sections 10.8 to 10.10</text>
+</svg>

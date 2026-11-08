@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640" font-family="Helvetica, Arial, sans-serif">
+  <title>The Docker devnet: four validators, an explorer and optional monitoring on one machine</title>
+  <desc>python scripts/devnet.py up generates networks/devnet (validator keys, genesis, docker-compose.yml), builds one image from docker/Dockerfile and starts four validator containers, baker0 to baker3. Each has its own data volume holding the chain and its signing journal, and connects to the three others over peer-to-peer on the compose network. Heimdall, the explorer, indexes the chain from the RPC of baker0. With --monitoring, Prometheus scrapes the metrics of every validator and of Heimdall and loads the alert rules, and Grafana shows the dashboard Kern Devnet consensus. Every port is published on 127.0.0.1 only. The commands status and check read every validator and compare their blocks level by level. Stopping one validator leaves the others producing blocks; stopping half the stake stops the chain without a fork; restarting them lets them catch up. No measured number appears in the figure.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8794"/></marker>
+    <marker id="arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a8642c"/></marker>
+    <marker id="arrow-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b03a2e"/></marker>
+    <marker id="arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f7d4f"/></marker>
+  </defs>
+  <rect width="960" height="640" fill="#ffffff"/>
+  <text x="480" y="34" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">The Docker devnet: one command, four validators, observable</text>
+  <text x="480" y="56" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">python scripts/devnet.py up [--monitoring]; one image built from docker/Dockerfile; every port on 127.0.0.1 only</text>
+  <rect x="30" y="76" width="640" height="400" rx="6" fill="#ffffff" stroke="#7b8794" stroke-width="1" stroke-dasharray="6 4"/>
+  <text x="46" y="96" font-size="12" font-weight="bold" fill="#52606d" text-anchor="start">compose network kern-devnet_default</text>
+  <rect x="390" y="116" width="230" height="104" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="402" y="138" font-size="14" font-weight="bold" fill="#2f5f8f" text-anchor="start">baker0</text>
+  <text x="402" y="158" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">validator, bonded stake</text>
+  <text x="402" y="174" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">volume baker0-data: chain,</text>
+  <text x="402" y="190" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">signing journal</text>
+  <text x="612" y="138" font-size="11" font-weight="normal" fill="#52606d" text-anchor="end">127.0.0.1:18732</text>
+  <rect x="70" y="116" width="230" height="104" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="82" y="138" font-size="14" font-weight="bold" fill="#2f5f8f" text-anchor="start">baker1</text>
+  <text x="82" y="158" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">validator, bonded stake</text>
+  <text x="82" y="174" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">volume baker1-data: chain,</text>
+  <text x="82" y="190" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">signing journal</text>
+  <text x="292" y="138" font-size="11" font-weight="normal" fill="#52606d" text-anchor="end">127.0.0.1:18733</text>
+  <rect x="70" y="330" width="230" height="104" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="82" y="352" font-size="14" font-weight="bold" fill="#2f5f8f" text-anchor="start">baker2</text>
+  <text x="82" y="372" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">validator, bonded stake</text>
+  <text x="82" y="388" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">volume baker2-data: chain,</text>
+  <text x="82" y="404" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">signing journal</text>
+  <text x="292" y="352" font-size="11" font-weight="normal" fill="#52606d" text-anchor="end">127.0.0.1:18734</text>
+  <rect x="390" y="330" width="230" height="104" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="402" y="352" font-size="14" font-weight="bold" fill="#2f5f8f" text-anchor="start">baker3</text>
+  <text x="402" y="372" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">validator, bonded stake</text>
+  <text x="402" y="388" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">volume baker3-data: chain,</text>
+  <text x="402" y="404" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">signing journal</text>
+  <text x="612" y="352" font-size="11" font-weight="normal" fill="#52606d" text-anchor="end">127.0.0.1:18735</text>
+  <line x1="300" y1="168" x2="390" y2="168" stroke="#a8642c" stroke-width="1.6"/>
+  <line x1="300" y1="382" x2="390" y2="382" stroke="#a8642c" stroke-width="1.6"/>
+  <line x1="185" y1="220" x2="185" y2="330" stroke="#a8642c" stroke-width="1.6"/>
+  <line x1="505" y1="220" x2="505" y2="330" stroke="#a8642c" stroke-width="1.6"/>
+  <line x1="280" y1="220" x2="410" y2="330" stroke="#a8642c" stroke-width="1.6"/>
+  <line x1="410" y1="220" x2="280" y2="330" stroke="#a8642c" stroke-width="1.6"/>
+  <rect x="270" y="262" width="150" height="26" rx="13" fill="#fbf3ec" stroke="#a8642c" stroke-width="1"/>
+  <text x="345" y="280" font-size="12" font-weight="bold" fill="#a8642c" text-anchor="middle">P2P, full mesh</text>
+  <rect x="710" y="92" width="220" height="92" rx="6" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <text x="722" y="114" font-size="14" font-weight="bold" fill="#2f7d4f" text-anchor="start">Heimdall explorer</text>
+  <text x="722" y="134" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">indexes the chain from</text>
+  <text x="722" y="150" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">baker0's RPC</text>
+  <text x="722" y="166" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">127.0.0.1:8800</text>
+  <line x1="620" y1="140" x2="708" y2="140" stroke="#2f7d4f" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="710" y="214" width="220" height="108" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="722" y="236" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">Prometheus  (--monitoring)</text>
+  <text x="722" y="256" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">scrapes /metrics of every</text>
+  <text x="722" y="272" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">validator and of Heimdall;</text>
+  <text x="722" y="288" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">alert rules loaded</text>
+  <text x="722" y="304" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">127.0.0.1:9090</text>
+  <rect x="710" y="352" width="220" height="108" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="722" y="374" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">Grafana  (--monitoring)</text>
+  <text x="722" y="394" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">dashboard "Kern, Devnet</text>
+  <text x="722" y="410" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">consensus": rounds, timeouts,</text>
+  <text x="722" y="426" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">peers, equivocations</text>
+  <text x="722" y="442" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">127.0.0.1:3000</text>
+  <line x1="820" y1="322" x2="820" y2="350" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="672" y1="268" x2="708" y2="268" stroke="#1f2933" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <text x="690" y="258" font-size="10" font-weight="normal" fill="#52606d" text-anchor="middle">scrape</text>
+  <rect x="30" y="498" width="430" height="112" rx="6" fill="#eef1f5" stroke="#7b8794" stroke-width="1"/>
+  <text x="42" y="520" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">The script: scripts/devnet.py</text>
+  <text x="42" y="540" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">doctor: checks Python, Docker, compose, free ports</text>
+  <text x="42" y="556" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">up, status, logs, stop and start a validator, down</text>
+  <text x="42" y="572" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">check: same block at every level on every validator?</text>
+  <text x="42" y="588" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">exits non-zero on any divergence</text>
+  <rect x="490" y="498" width="440" height="112" rx="6" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="502" y="520" font-size="14" font-weight="bold" fill="#b03a2e" text-anchor="start">Failures to try</text>
+  <text x="502" y="540" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">stop one validator: the others continue</text>
+  <text x="502" y="556" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">stop half the stake: the chain stops, no fork</text>
+  <text x="502" y="572" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">start them again: they catch up, the chain resumes</text>
+  <text x="502" y="588" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">cut a container off the network, then heal it</text>
+  <text x="480" y="630" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle" font-style="italic">docs/devnet.md; one machine, so latency, bandwidth and clocks are those of a single host</text>
+</svg>

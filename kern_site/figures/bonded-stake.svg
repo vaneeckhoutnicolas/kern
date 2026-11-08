@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640" font-family="Helvetica, Arial, sans-serif">
+  <title>Bonded Proof-of-Stake: the life of a bond, and what a slash can reach</title>
+  <desc>A holder delegates with DELEGATE_STAKE: the amount leaves the spendable balance and is held by the protocol in a bond to one validator, recorded as a tranche with its level and amount; there is no derivative token. The bond adds to the validator's consensus weight from the next epoch boundary (epochs of 120 blocks by default) and earns a share of its rewards. UNDELEGATE_STAKE removes the weight at once and starts an unbonding period (86 400 blocks by default) during which the bond stays locked and slashable for offences committed before; at its end the amount returns to the balance, minus any slash. For an offence at level L, a slash removes 30 percent of the validator's own stake, a tenth of which goes to the reporter, and burns 30 percent of every tranche exposed at L: bonded at or before L and not unbonding before L. A tranche bonded after L, or unbonding before L, is not touched, and liquid balances never are. Consensus evidence older than the unbonding period is rejected, and an offence is slashed once. The durations and percentages are protocol defaults, not measurements.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8794"/></marker>
+    <marker id="arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a8642c"/></marker>
+    <marker id="arrow-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b03a2e"/></marker>
+    <marker id="arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f7d4f"/></marker>
+  </defs>
+  <rect width="960" height="640" fill="#ffffff"/>
+  <text x="480" y="34" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">Bonded Proof-of-Stake: the life of a bond</text>
+  <text x="480" y="56" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">the protocol holds the bond, never the validator; weight always has slashable collateral behind it</text>
+  <line x1="40" y1="200" x2="920" y2="200" stroke="#1f2933" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <circle cx="90" cy="200" r="6" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
+  <text x="90" y="226" font-size="12" font-weight="bold" fill="#1f2933" text-anchor="middle">DELEGATE_STAKE</text>
+  <text x="90" y="242" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">level D</text>
+  <circle cx="300" cy="200" r="6" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
+  <text x="300" y="226" font-size="12" font-weight="bold" fill="#1f2933" text-anchor="middle">epoch boundary</text>
+  <text x="300" y="242" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">weight counts</text>
+  <circle cx="560" cy="200" r="6" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
+  <text x="560" y="226" font-size="12" font-weight="bold" fill="#1f2933" text-anchor="middle">UNDELEGATE_STAKE</text>
+  <text x="560" y="242" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">level U</text>
+  <circle cx="850" cy="200" r="6" fill="#ffffff" stroke="#1f2933" stroke-width="1.6"/>
+  <text x="850" y="226" font-size="12" font-weight="bold" fill="#1f2933" text-anchor="middle">release</text>
+  <text x="850" y="242" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">U + unbonding</text>
+  <rect x="40" y="86" width="250" height="92" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="108" font-size="13" font-weight="bold" fill="#1f2933" text-anchor="start">Bonded, no weight yet</text>
+  <text x="52" y="128" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">held by the protocol in a tranche</text>
+  <text x="52" y="144" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">{level, amount}; not spendable,</text>
+  <text x="52" y="160" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">no derivative token</text>
+  <rect x="300" y="86" width="250" height="92" rx="6" fill="#fbf3ec" stroke="#a8642c" stroke-width="1"/>
+  <text x="312" y="108" font-size="13" font-weight="bold" fill="#a8642c" text-anchor="start">Bonded and weighing</text>
+  <text x="312" y="128" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">counts in consensus weight;</text>
+  <text x="312" y="144" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">earns a share of the rewards;</text>
+  <text x="312" y="160" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">slashed with the validator</text>
+  <rect x="560" y="86" width="280" height="92" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="572" y="108" font-size="13" font-weight="bold" fill="#2f5f8f" text-anchor="start">Unbonding: no weight, still locked</text>
+  <text x="572" y="128" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">weight drops at once; 86 400 blocks</text>
+  <text x="572" y="144" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">by default; still slashable for</text>
+  <text x="572" y="160" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">offences committed before U</text>
+  <text x="895" y="132" font-size="12" font-weight="bold" fill="#2f7d4f" text-anchor="middle">back to</text>
+  <text x="895" y="148" font-size="12" font-weight="bold" fill="#2f7d4f" text-anchor="middle">balance</text>
+  <text x="40" y="280" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">A new or larger bond weighs only from the next epoch boundary (120 blocks by default): nobody can move weight into a validator just before a vote.</text>
+  <text x="40" y="298" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">Inside an epoch, a validator's weight can only go down.</text>
+  <text x="40" y="340" font-size="15" font-weight="bold" fill="#b03a2e" text-anchor="start">A slash for an offence at level L</text>
+  <rect x="150" y="362" width="610" height="26" rx="4" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="158" y="380" font-size="12" font-weight="normal" fill="#1f2933" text-anchor="start">tranche bonded before L, still bonded</text>
+  <text x="925" y="380" font-size="12" font-weight="bold" fill="#b03a2e" text-anchor="end">exposed: 30% burned</text>
+  <rect x="150" y="398" width="610" height="26" rx="4" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <rect x="600" y="398" width="160" height="26" rx="4" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1" stroke-dasharray="6 4"/>
+  <text x="158" y="416" font-size="12" font-weight="normal" fill="#1f2933" text-anchor="start">bonded before L, unbonding after L</text>
+  <text x="925" y="416" font-size="12" font-weight="bold" fill="#b03a2e" text-anchor="end">exposed: 30% burned</text>
+  <rect x="560" y="434" width="200" height="26" rx="4" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <text x="568" y="452" font-size="12" font-weight="normal" fill="#1f2933" text-anchor="start">bonded after L</text>
+  <text x="925" y="452" font-size="12" font-weight="bold" fill="#2f7d4f" text-anchor="end">not touched</text>
+  <rect x="150" y="470" width="490" height="26" rx="4" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <rect x="320" y="470" width="320" height="26" rx="4" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1" stroke-dasharray="6 4"/>
+  <text x="158" y="488" font-size="12" font-weight="normal" fill="#1f2933" text-anchor="start">unbonding started before L</text>
+  <text x="925" y="488" font-size="12" font-weight="bold" fill="#2f7d4f" text-anchor="end">not touched</text>
+  <line x1="470" y1="352" x2="470" y2="520" stroke="#b03a2e" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="470" y="534" font-size="12" font-weight="bold" fill="#b03a2e" text-anchor="middle">offence at level L</text>
+  <rect x="40" y="552" width="880" height="66" rx="6" fill="#eef1f5" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="574" font-size="13" font-weight="bold" fill="#1f2933" text-anchor="start">And</text>
+  <text x="52" y="594" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the validator loses 30% of its own stake (a tenth of it to the reporter, the rest burned) and its weight at once;</text>
+  <text x="52" y="610" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">liquid balances are never touched; consensus evidence older than the unbonding period is rejected; one slash per offence</text>
+</svg>
