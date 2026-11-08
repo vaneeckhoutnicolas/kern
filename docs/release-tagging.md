@@ -1,4 +1,4 @@
-# Release Tagging — v1.0.0rc1 and beyond
+# Release Tagging
 
 This document explains how to tag releases of Kern. It is the canonical reference for the release process.
 
@@ -42,7 +42,7 @@ grep '^version' pyproject.toml
 
 # 3. Run the full test suite
 pytest tests/
-# Expected: 1031 passed, none skipped (v1.1-rc)
+# Expected: 1033 passed, none skipped (v1.1-rc)
 
 # 4. Run the originality audit
 grep -rni "copied from\|adapted from\|fork of" --include="*.py" . | \
@@ -92,108 +92,88 @@ If any check fails, **do not tag**. Fix and re-verify.
 
 ---
 
-## Step 1 — Sign the commit (recommended for founder)
+## Step 1 — Signing (SSH)
 
-The founder's release commits should be GPG-signed. This creates a cryptographic attestation of authorship that survives even if GitHub goes away.
-
-```bash
-# One-time setup of GPG signing
-gpg --full-generate-key   # if you don't have a key already
-gpg --list-secret-keys --keyid-format LONG   # find your key ID
-git config user.signingkey <YOUR_KEY_ID>
-git config commit.gpgsign true
-git config tag.gpgsign true   # also sign tags
-```
-
-Verify:
+Every commit and tag of the founder is signed with a dedicated SSH key (`id_ed25519_signing`); the `protect-main` ruleset requires signed commits. One-time setup:
 
 ```bash
-git config --get user.signingkey
-git config --get commit.gpgsign   # true
-git config --get tag.gpgsign      # true
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519_signing.pub
+git config --global commit.gpgsign true
+git config --global tag.gpgsign true
 ```
+
+To verify signatures locally, git needs the list of allowed signers:
+
+```bash
+echo "$(git config user.email) $(cat ~/.ssh/id_ed25519_signing.pub)" >> ~/.ssh/allowed_signers
+git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
+```
+
+On GitHub, the same public key is registered as a **signing key** (Settings, SSH and GPG keys, New SSH key, type "Signing key"), so that signed commits and tags show as "Verified".
 
 ---
 
-## Step 2 — Tag the release
+## Step 2 — Citation and archive (before the first tag of a version)
 
-For v1.0.0rc1:
+1. `CITATION.cff` carries the version being tagged (`version: "1.1.0-rc2"` for `v1.1.0-rc2`; `tests/test_citation.py` keeps it equal to `pyproject.toml`). Validate it: `pip install cffconvert && cffconvert --validate`.
+2. **Enable the repository in Zenodo before publishing the release**: on zenodo.org, log in with GitHub, open the GitHub tab of your profile, and switch `vaneeckhoutnicolas/kern` on. Zenodo archives every GitHub release published after that switch, pre-releases included, each with a permanent DOI that cannot be withdrawn: tag only what you are ready to have cited.
+
+---
+
+## Step 3 — Tag the release
 
 ```bash
-git tag -a v1.0.0-rc1 -m "Kern v1.0.0rc1
+git switch main
+git pull --ff-only
+git status --short          # must print nothing
+git tag -s v1.1.0-rc2 -m "Kern v1.1.0-rc2
 
-First release candidate. Code-frozen for audit cycle 1.
+Release candidate 2 of v1.1. Pre-audit.
 
-Highlights:
-- Liquid PoS baking delegation (DELEGATE_STAKE, UNDELEGATE_STAKE)
-- Genesis 100M KRN with Ethereum 2014-style distribution
-  (70% public / 10% founder / 14% Foundation / 3% contributors / 2% validators / 1% bootstrap validator stake)
-- EVM Yellow Paper compliance (dynamic gas in vm.py::step)
-- Real BN254 pairing via py_ecc (Groth16 identity verified)
-- Slashing transaction (SLASH_EQUIVOCATION) closing the equivocation loop
-- API stability spec frozen for v1.0
-- 9 setup guides published
-- Originality audit passed; founder attribution verified across 55 files
+- Phase E consensus: Tendermint lock and valid round, persistent signing
+  journal, one signed proposal per round, proposal equivocation evidence
+  (docs/consensus-locking.md, sections 9 and 10)
+- Bonded Proof-of-Stake delegation with slashing
+- One-command multi-node devnet in Docker with Heimdall, Prometheus and
+  Grafana (docs/devnet.md)
+- Listening addresses (--rpc-bind, --p2p-bind); consensus metrics
 
-This release is the input to audit cycle 1. After audit findings are
-remediated, v1.0.0 (stable) will follow.
+Validated on a network simulator, real node processes and a containerized
+devnet; not yet on a network of independent operators; not audited.
 
 Founder: Nicolas Van Eeckhout
-License: Apache-2.0
-Test count: 378 passing, 2 chaos tests intentionally skipped"
+License: Apache-2.0 (code), CC-BY-SA-4.0 (documentation)"
 ```
 
-If your GPG signing is configured (Step 1), the tag is automatically signed. To force signing on a single tag without global config:
+`-s` signs the tag with the SSH key of Step 1.
+
+---
+
+## Step 4 — Verify and push the tag
 
 ```bash
-git tag -s v1.0.0-rc1 -m "..."   # explicit -s for signed
+git tag -v v1.1.0-rc2       # expected: Good "git" signature for <your email>
+git push origin v1.1.0-rc2
 ```
 
 ---
 
-## Step 3 — Verify the tag
+## Step 5 — Create the GitHub release (Zenodo archives it)
 
-```bash
-git tag -v v1.0.0-rc1
-# Expected: "Good signature from <Nicolas Van Eeckhout>"
-# (Will say "no public key" if you haven't published your key yet —
-# publish via gpg --keyserver hkps://keys.openpgp.org --send-keys <KEY_ID>)
-```
+On `https://github.com/vaneeckhoutnicolas/kern/releases/new`:
 
-Display the tag:
+- **Tag**: `v1.1.0-rc2` (existing)
+- **Title**: `Kern v1.1.0-rc2`
+- **Description**: the body of the tag message
+- **Set as a pre-release**: checked for any `-rcN` tag
 
-```bash
-git show v1.0.0-rc1
-```
+Publish. Within minutes Zenodo archives the source of the tag and assigns two DOIs: one for this version, and a concept DOI that always resolves to the latest version. Zenodo takes its metadata from `CITATION.cff`.
 
----
+Then, in a follow-up commit (signed, through a pull request):
 
-## Step 4 — Push the tag
-
-```bash
-# Push the commit history first if needed
-git push origin main
-
-# Then push the tag itself
-git push origin v1.0.0-rc1
-```
-
-GitHub will display the tag at `https://github.com/vaneeckhoutnicolas/kern/releases/tag/v1.0.0-rc1`.
-
----
-
-## Step 5 — Create a GitHub release
-
-On GitHub, navigate to:
-`https://github.com/vaneeckhoutnicolas/kern/releases/new`
-
-- **Tag**: `v1.0.0-rc1` (existing)
-- **Title**: `Kern v1.0.0rc1 — First release candidate`
-- **Description**: paste the tag message body
-- **Pre-release checkbox**: ✓ checked (because this is `-rc`, not stable)
-- **Assets**: optionally upload a `kern-1.0.0rc1.tar.gz` for users who don't use git
-
-Click "Publish release".
+1. Add the version DOI and the concept DOI to `CITATION.cff` (`doi:` and `identifiers:`, as in quantum-cortex) and to the "How to cite" section of the README.
+2. Ask Software Heritage to archive the repository (`https://archive.softwareheritage.org/save/`), then add the `swh:1:dir:` identifier of the tag's tree to `CITATION.cff`.
 
 ---
 
