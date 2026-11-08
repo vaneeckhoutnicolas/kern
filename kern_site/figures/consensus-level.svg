@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" font-family="Helvetica, Arial, sans-serif">
+  <title>One level of Kern consensus: rounds until a block is final</title>
+  <desc>Each level starts at round 0. In round r, the proposer selected by stake from the parent hash and the round sends a PROPOSE with the full block, its valid round and a proof. Validators check the message and execute the block, then pre-endorse it if they are not locked, are locked on the same block, or the proposal proves a pre-endorsement certificate newer than their lock. More than two thirds of the stake of pre-endorsements form a certificate: validators lock on the block and endorse it, once per round. More than two thirds of the stake of endorsements finalize the block, at whatever round they form. Without a certificate before the timeout, the validators move to round r plus one, whose timeout is longer, and its proposer proposes the locked valid block again with its proof; more than one third of the stake already in a later round makes a node jump there. Votes are signed only for the current round. No measured number appears in the figure.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8794"/></marker>
+    <marker id="arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a8642c"/></marker>
+    <marker id="arrow-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b03a2e"/></marker>
+    <marker id="arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f7d4f"/></marker>
+  </defs>
+  <rect width="960" height="560" fill="#ffffff"/>
+  <text x="480" y="36" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">One level of consensus: rounds until a block is final</text>
+  <text x="480" y="58" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">every level starts at round 0; a validator signs votes only for its current round</text>
+  <rect x="22" y="104" width="138" height="108" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="91.0" y="126" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="middle">Proposer</text>
+  <text x="91.0" y="145" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">of round r, chosen by</text>
+  <text x="91.0" y="160" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">stake, seeded by the</text>
+  <text x="91.0" y="175" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">parent hash and r</text>
+  <line x1="160" y1="158" x2="174" y2="158" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="175" y="104" width="138" height="108" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="244.0" y="126" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="middle">PROPOSE</text>
+  <text x="244.0" y="145" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">the full block, its</text>
+  <text x="244.0" y="160" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">valid round and the</text>
+  <text x="244.0" y="175" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">proof of that round</text>
+  <line x1="313" y1="158" x2="327" y2="158" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="328" y="104" width="138" height="108" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="397.0" y="126" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="middle">Check</text>
+  <text x="397.0" y="145" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">signature, selected</text>
+  <text x="397.0" y="160" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">proposer, valid round;</text>
+  <text x="397.0" y="175" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">execute the block</text>
+  <line x1="466" y1="158" x2="480" y2="158" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="481" y="104" width="138" height="108" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="550.0" y="126" font-size="14" font-weight="bold" fill="#2f5f8f" text-anchor="middle">PREENDORSE</text>
+  <text x="550.0" y="145" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">if not locked, locked</text>
+  <text x="550.0" y="160" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">on this block, or the</text>
+  <text x="550.0" y="175" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">proof beats the lock</text>
+  <line x1="619" y1="158" x2="633" y2="158" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="634" y="104" width="138" height="108" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="703.0" y="126" font-size="14" font-weight="bold" fill="#2f5f8f" text-anchor="middle">ENDORSE</text>
+  <text x="703.0" y="145" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">once per round, after</text>
+  <text x="703.0" y="160" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">a certificate: lock</text>
+  <text x="703.0" y="175" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">on (r, block)</text>
+  <line x1="772" y1="158" x2="786" y2="158" stroke="#7b8794" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="787" y="104" width="138" height="108" rx="6" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <text x="856.0" y="126" font-size="14" font-weight="bold" fill="#2f7d4f" text-anchor="middle">Final</text>
+  <text x="856.0" y="145" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">certificate at any</text>
+  <text x="856.0" y="160" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">round; cert_round</text>
+  <text x="856.0" y="175" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle">stored; next level</text>
+  <text x="627" y="94" font-size="11" font-weight="bold" fill="#2f5f8f" text-anchor="middle">each vote step: more than 2/3 of the stake = a certificate</text>
+  <path d="M 507 212 L 507 300 L 91 300 L 91 214" fill="none" stroke="#b03a2e" stroke-width="1.5" marker-end="url(#arrow-no)" stroke-dasharray="5 4"/>
+  <rect x="185" y="282" width="300" height="36" rx="5" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="335" y="305" font-size="13" font-weight="bold" fill="#b03a2e" text-anchor="middle">no certificate before the timeout</text>
+  <rect x="22" y="340" width="440" height="132" rx="6" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="34" y="362" font-size="14" font-weight="bold" fill="#b03a2e" text-anchor="start">Round r + 1</text>
+  <text x="34" y="382" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the timeout grows with the round: base + r × base / 2</text>
+  <text x="34" y="398" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">its proposer proposes the valid block again, with the</text>
+  <text x="34" y="414" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">certificate that proves it, so a validator locked on it</text>
+  <text x="34" y="430" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">can vote for it; otherwise a new block</text>
+  <text x="34" y="446" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">a validator that sees more than 1/3 of the stake in a</text>
+  <text x="34" y="462" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">later round jumps there (round skip)</text>
+  <rect x="490" y="340" width="448" height="132" rx="6" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <text x="502" y="362" font-size="14" font-weight="bold" fill="#2f7d4f" text-anchor="start">Why a final block stays final</text>
+  <text x="502" y="382" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">a final block X has endorsements from more than 2/3</text>
+  <text x="502" y="398" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">of the stake, all locked on X; a certificate for another</text>
+  <text x="502" y="414" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">block needs at least one of them, who votes for it only</text>
+  <text x="502" y="430" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">with a proof newer than its lock, which cannot exist</text>
+  <text x="502" y="446" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">(the Tendermint argument, consensus-locking.md 4.4)</text>
+  <rect x="22" y="499" width="16" height="12" rx="2" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="44" y="510" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">proposal</text>
+  <rect x="192" y="499" width="16" height="12" rx="2" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="214" y="510" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">votes and lock</text>
+  <rect x="362" y="499" width="16" height="12" rx="2" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <text x="384" y="510" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">finality</text>
+  <rect x="532" y="499" width="16" height="12" rx="2" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="554" y="510" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">timeout path</text>
+  <text x="938" y="540" font-size="11" font-weight="normal" fill="#52606d" text-anchor="end" font-style="italic">rules: consensus-wire.md, Phase E; design: consensus-locking.md section 4</text>
+</svg>

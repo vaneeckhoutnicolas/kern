@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="574" viewBox="0 0 960 574" font-family="Helvetica, Arial, sans-serif">
+  <title>The signing journal: write, sync, then sign; read it back at restart</title>
+  <desc>Before any signature, a validator first appends the block it is about to sign over to signing_journal.blocks.jsonl and syncs it, then appends a record of the signature it is about to produce to signing_journal.jsonl and syncs it: format version, chain id, kind, level, round, block hash, signed valid round, the lock and valid state after the step, and the pre-endorsement certificate of the valid round. Only then does it sign and send. A crash before the signature is harmless: no signature exists yet, and a record already written only forbids signing something else there. At restart the node restores the lock, the valid round with its certificate after checking it against the validator set, the round of the level in progress and the kept blocks, validated again, and refuses to sign anything that conflicts with a record. A journal that cannot be trusted is moved aside and the validator does not sign at the level in progress: it fails closed. No measured number appears in the figure.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7b8794"/></marker>
+    <marker id="arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a8642c"/></marker>
+    <marker id="arrow-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b03a2e"/></marker>
+    <marker id="arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f7d4f"/></marker>
+  </defs>
+  <rect width="960" height="574" fill="#ffffff"/>
+  <text x="480" y="34" font-size="18" font-weight="bold" fill="#1f2933" text-anchor="middle">The signing journal: write, sync, then sign</text>
+  <text x="480" y="56" font-size="13" font-weight="normal" fill="#52606d" text-anchor="middle">a lock never names a block the node could lose, and a restarted validator cannot sign twice</text>
+  <text x="40" y="92" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">Before every signature (PROPOSE, PREENDORSE, ENDORSE, self-commit)</text>
+  <rect x="40" y="106" width="250" height="112" rx="6" fill="#f5f7fa" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="128" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">1  Keep the block</text>
+  <text x="52" y="148" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">append it to</text>
+  <text x="52" y="164" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">signing_journal.blocks.jsonl</text>
+  <text x="52" y="180" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">and sync to disk</text>
+  <rect x="335" y="106" width="280" height="112" rx="6" fill="#fbf3ec" stroke="#a8642c" stroke-width="1"/>
+  <text x="347" y="128" font-size="14" font-weight="bold" fill="#a8642c" text-anchor="start">2  Record the signature</text>
+  <text x="347" y="148" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">append to signing_journal.jsonl</text>
+  <text x="347" y="164" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">and sync: kind, level, round,</text>
+  <text x="347" y="180" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">block hash, signed valid round,</text>
+  <text x="347" y="196" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">lock, valid round, its certificate</text>
+  <rect x="660" y="106" width="260" height="112" rx="6" fill="#edf7f0" stroke="#2f7d4f" stroke-width="1"/>
+  <text x="672" y="128" font-size="14" font-weight="bold" fill="#2f7d4f" text-anchor="start">3  Sign and send</text>
+  <text x="672" y="148" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">only now is the signature</text>
+  <text x="672" y="164" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">produced and broadcast</text>
+  <line x1="290" y1="162" x2="333" y2="162" stroke="#7b8794" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="615" y1="162" x2="658" y2="162" stroke="#7b8794" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="480" y="244" font-size="12" font-weight="normal" fill="#52606d" text-anchor="middle" font-style="italic">a crash before step 3 is harmless: no signature exists yet, and a record left by step 2 only forbids signing something else there</text>
+  <text x="40" y="290" font-size="14" font-weight="bold" fill="#1f2933" text-anchor="start">At restart</text>
+  <rect x="40" y="304" width="430" height="152" rx="6" fill="#eef4fa" stroke="#2f5f8f" stroke-width="1"/>
+  <text x="52" y="326" font-size="14" font-weight="bold" fill="#2f5f8f" text-anchor="start">Restore and refuse</text>
+  <text x="52" y="346" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the lock (round, block) of the level in progress</text>
+  <text x="52" y="362" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the valid round, with its certificate, checked</text>
+  <text x="52" y="378" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">against the validator set before use</text>
+  <text x="52" y="394" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the round, and the kept blocks, validated again</text>
+  <text x="52" y="410" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">refuse any signature that conflicts with a record:</text>
+  <text x="52" y="426" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">same kind, level, round, another block or valid round</text>
+  <rect x="490" y="304" width="430" height="152" rx="6" fill="#fbeeec" stroke="#b03a2e" stroke-width="1"/>
+  <text x="502" y="326" font-size="14" font-weight="bold" fill="#b03a2e" text-anchor="start">Fail closed</text>
+  <text x="502" y="346" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">a journal that is unreadable, in an older format,</text>
+  <text x="502" y="362" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">for another chain, or with a malformed record, and a</text>
+  <text x="502" y="378" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">missing journal on a chain past genesis: moved aside;</text>
+  <text x="502" y="394" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">the validator does not sign at the level in progress,</text>
+  <text x="502" y="410" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">and resumes once others have finalized it</text>
+  <text x="502" y="426" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">a final line cut by a crash: ignored, or removed</text>
+  <rect x="40" y="474" width="880" height="58" rx="6" fill="#eef1f5" stroke="#7b8794" stroke-width="1"/>
+  <text x="52" y="496" font-size="13" font-weight="bold" fill="#1f2933" text-anchor="start">Kept small</text>
+  <text x="52" y="516" font-size="12" font-weight="normal" fill="#52606d" text-anchor="start">records below the finalized height are compacted every 64 levels; a certificate that fails its check costs liveness, never safety</text>
+  <text x="480" y="558" font-size="11" font-weight="normal" fill="#52606d" text-anchor="middle" font-style="italic">consensus-wire.md, Phase E (Signing journal); consensus-locking.md sections 9.2, 10.5 to 10.7</text>
+</svg>

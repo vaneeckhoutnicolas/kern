@@ -17,3 +17,6 @@ keys/
 networks/devnet/
 *.sqlite
 *.sqlite-*
+
+# The explainer video is published with the site, never needed by the image.
+kern_site/media/

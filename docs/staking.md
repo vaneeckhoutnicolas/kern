@@ -14,6 +14,10 @@ This document is the reference for how staking works in Kern as the code stands 
 
 The lock is the point: consensus weight always has collateral behind it that can be slashed. The cost is liquidity for the holder.
 
+![The life of a bond and what a slash can reach](figures/bonded-stake.svg)
+
+*Figure 1 (`docs/figures/bonded-stake.svg`, original). A bond weighs from the next epoch boundary, loses its weight at once when undelegated, and stays locked and slashable while unbonding. A slash for an offence at level L burns 30% of the delegated tranches that were backing the validator at L; the others are not touched. Durations are defaults, not measurements.*
+
 ## Overview
 
 Kern uses **bonded Proof-of-Stake delegation**. Delegated KRN leave the delegator's spendable balance and are held, at protocol level, in a bond to one validator. A bond counts toward that validator's consensus weight, earns a share of its rewards, and is slashed with it. Undelegating starts an unbonding period during which the bond carries no weight but stays locked, and slashable for offences committed before the undelegation. There is no derivative token and no smart-contract counterparty.

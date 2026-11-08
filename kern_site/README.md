@@ -14,6 +14,8 @@ Public-facing marketing site for Kern. Single-file HTML pages, no build pipeline
 | `github.html` | Source page — repo overview, quick-start terminal mockup, repo tree, docs index, contribute paths |
 | `favicon.svg` / `favicon-dark.svg` / `apple-touch-icon.svg` | Site favicons (Kaun rune ᚴ, drawn as SVG paths to render identically without runic fonts) |
 | `build_whitepaper.py` | Generator script — reads `../docs/whitepaper.md` and produces `whitepaper.html` |
+| `figures/` | The figures of the whitepaper, copied from `../docs/figures/` by `build_whitepaper.py`; never edit them here |
+| `media/kern-explainer.mp4` | The explainer video (2 min 32 s), linked from the repository README |
 
 ## Design system
 
@@ -33,11 +35,11 @@ After editing `../docs/whitepaper.md`:
 python3 build_whitepaper.py
 ```
 
-The script auto-generates the sidebar TOC, drop caps, § section markers, and reading time from the markdown source.
+The script auto-generates the sidebar TOC, drop caps, § section markers, and reading time from the markdown source, and copies the figures the whitepaper shows into `figures/`; it stops with an error if one is missing.
 
 ## Deploy
 
-The site is fully static. Drop the four HTML files anywhere :
+The site is fully static. Deploy the whole `kern_site/` folder, including `figures/` (the whitepaper shows them) and `media/`:
 
 - **Netlify**: drag-and-drop the `kern_site/` folder on https://app.netlify.com/drop
 - **Cloudflare Pages**: `wrangler pages deploy kern_site/`

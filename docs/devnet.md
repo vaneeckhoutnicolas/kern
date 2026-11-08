@@ -37,6 +37,10 @@ python scripts/devnet.py down --reset        # stop and delete the chain and key
 
 Every port is published on `127.0.0.1` only. Inside the containers the RPC listens on every interface (`--rpc-bind 0.0.0.0`) so that the published port reaches it; peer-to-peer traffic stays on the compose network.
 
+![The Docker devnet](figures/devnet.svg)
+
+*Figure 1 (`docs/figures/devnet.svg`, original). Four validator containers, each with its own volume and signing journal, in a full peer to peer mesh; Heimdall reads baker0; Prometheus and Grafana with --monitoring. Every port is published on 127.0.0.1 only.*
+
 ## Exercising failures
 
 ```bash
