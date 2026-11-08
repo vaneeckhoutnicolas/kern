@@ -1,0 +1,19 @@
+# Build context of docker/Dockerfile: the image copies only requirements.txt,
+# kern/, kern_explorer/ and scripts/. Keep everything else out of the context,
+# above all generated keys and chain data.
+.git/
+.github/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+site/
+data/
+keys/
+networks/devnet/
+*.sqlite
+*.sqlite-*

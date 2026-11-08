@@ -259,10 +259,13 @@ class Indexer:
     async def _index_block(self, conn, rpc: KernRpcClient, level: int) -> None:
         """Fetch block at `level`, write its rows, advance the cursor."""
         block = await rpc.block(level)
-        ts = block.get("timestamp", int(time.time()))
+        # The node returns {"hash", "header": {...}, "transactions", ...}
+        # (docs/api.md); older test fixtures put the fields at the top level.
+        header = block.get("header") or {}
+        ts = header.get("timestamp", block.get("timestamp", int(time.time())))
         block_hash = block.get("hash", "")
-        parent_hash = block.get("parent_hash")
-        baker = block.get("baker")
+        parent_hash = header.get("parent_hash", block.get("parent_hash"))
+        baker = header.get("proposer", block.get("baker"))
         txs = block.get("transactions") or block.get("operations") or []
         tx_count = len(txs)
         indexed_at = int(time.time())

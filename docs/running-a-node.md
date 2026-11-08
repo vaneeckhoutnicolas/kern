@@ -158,7 +158,9 @@ python scripts/send_transfer.py \
 
 ## Docker
 
-A `docker-compose.yml` is provided in [`docker/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/docker) for spinning up the three-node setup with one command:
+For a multi-node devnet with the explorer and optional monitoring, in one command, see [devnet.md](devnet.md) (`python scripts/devnet.py up`).
+
+A smaller `docker-compose.yml` is also provided in [`docker/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/docker) for spinning up the three-node setup with one command:
 
 ```bash
 cd docker

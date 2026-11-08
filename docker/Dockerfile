@@ -2,12 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first for layer caching.
+# Install dependencies first for layer caching. The second line is the
+# [explorer] extra of pyproject.toml (Heimdall), so that the same image runs
+# a node or the explorer (tests/test_devnet_bootstrap.py keeps them equal).
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+ && pip install --no-cache-dir "fastapi>=0.141.1" "uvicorn[standard]>=0.53.0" "httpx>=0.28.1" "jinja2>=3.1.6"
 
 # Copy the rest of the source.
 COPY kern/ ./kern/
+COPY kern_explorer/ ./kern_explorer/
 COPY scripts/ ./scripts/
 
 # At container start, the entrypoint expects:

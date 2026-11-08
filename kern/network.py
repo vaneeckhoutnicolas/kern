@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Awaitable, Callable, List, Optional, Set, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
 LOG = logging.getLogger("kern.network")
 
@@ -100,8 +100,11 @@ class Network:
         self.on_consensus = on_consensus
         self.get_blocks_fn = get_blocks_fn
         self.on_peer_level = on_peer_level
+        # Outgoing peers this node is connected to now (an entry is removed
+        # when its connection closes, so that the node can connect again).
         self.peers: Set[Tuple[str, int]] = set()
         self._writers: List[asyncio.StreamWriter] = []
+        self._outgoing: Dict[asyncio.StreamWriter, Tuple[str, int]] = {}
         self._server: Optional[asyncio.AbstractServer] = None
 
     async def start(self) -> None:
@@ -124,16 +127,29 @@ class Network:
             except asyncio.TimeoutError:
                 LOG.warning("server close timed out; continuing shutdown")
 
-    async def connect(self, peer_host: str, peer_port: int) -> None:
+    @property
+    def connection_count(self) -> int:
+        """Open peer connections, incoming and outgoing."""
+        return len(self._writers)
+
+    def is_connected_to(self, peer_host: str, peer_port: int) -> bool:
+        return (peer_host, peer_port) in self.peers
+
+    async def connect(self, peer_host: str, peer_port: int, *, quiet: bool = False) -> bool:
+        """Open an outgoing connection. Returns False if it failed; the
+        node retries its configured peers (Node._maintain_peers)."""
         try:
             reader, writer = await asyncio.open_connection(peer_host, peer_port)
         except OSError as e:
-            LOG.warning("failed to connect to %s:%d: %s", peer_host, peer_port, e)
-            return
+            (LOG.debug if quiet else LOG.warning)(
+                "failed to connect to %s:%d: %s", peer_host, peer_port, e)
+            return False
         self.peers.add((peer_host, peer_port))
+        self._outgoing[writer] = (peer_host, peer_port)
         self._writers.append(writer)
         await _write_msg(writer, {"kind": "hello", "level": self.get_head_level()})
         asyncio.create_task(self._reader_loop(reader, writer))
+        return True
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         if len(self._writers) >= MAX_CONNECTIONS:
@@ -163,6 +179,9 @@ class Network:
                 pass
             if writer in self._writers:
                 self._writers.remove(writer)
+            peer = self._outgoing.pop(writer, None)
+            if peer is not None:
+                self.peers.discard(peer)
 
     async def _dispatch(self, msg: dict, writer: asyncio.StreamWriter) -> None:
         kind = msg.get("kind")
