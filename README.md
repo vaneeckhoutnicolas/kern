@@ -409,7 +409,7 @@ For specific operational guides on each phase, see [`docs/setup-foundation.md`](
 
 ## How to cite
 
-If you use Kern, its reference implementation or its consensus design, please cite it. The metadata are in [`CITATION.cff`](CITATION.cff) (GitHub shows a "Cite this repository" button). The v1.1.0-rc2 edition is archived on Zenodo under the DOI [10.5281/zenodo.24046904](https://doi.org/10.5281/zenodo.24046904); the concept DOI [10.5281/zenodo.24046903](https://doi.org/10.5281/zenodo.24046903) always resolves to the latest archived version.
+If you use Kern, its reference implementation or its consensus design, please cite it. The metadata are in [`CITATION.cff`](CITATION.cff) (GitHub shows a "Cite this repository" button). The v1.1.0-rc2 edition is archived on Zenodo under the DOI [10.5281/zenodo.24046904](https://doi.org/10.5281/zenodo.24046904); the concept DOI [10.5281/zenodo.24046903](https://doi.org/10.5281/zenodo.24046903) always resolves to the latest archived version. Software Heritage archives the signed tag as [`swh:1:rel:5b23398b47c4585379011dc86a05635604c29df0`](https://archive.softwareheritage.org/swh:1:rel:5b23398b47c4585379011dc86a05635604c29df0) and its source tree as [`swh:1:dir:5e8448555a4e5e0cdfe9cfe5158a1d3d8b727ae7`](https://archive.softwareheritage.org/swh:1:dir:5e8448555a4e5e0cdfe9cfe5158a1d3d8b727ae7).
 
 ```bibtex
 @software{van_eeckhout_kern,
