@@ -1,5 +1,7 @@
 # KERN
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24046903.svg)](https://doi.org/10.5281/zenodo.24046903)
+
 > **⚠ Notice.** This is pre-audit software, provided "as is" without warranty. The author accepts no liability for any deployment, financial loss, or regulatory consequence arising from use of this code. Discussion of EU regulation is informational, not a compliance assurance. **Read [`docs/disclaimer.md`](docs/disclaimer.md) before using.**
 
 > *The noyau. The kernel. The grain of state that endures.*
@@ -81,7 +83,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1048 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1050 tests passing.**
 
 ```
 kern/
@@ -133,7 +135,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 1048 tests, none skipped
+├── tests/                      # 1050 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -194,7 +196,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 1048 passed in about 2 minutes (the multi-process consensus tests start real nodes)
+# 1050 passed in about 2 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### A multi-node devnet in one command (Docker)
@@ -407,7 +409,7 @@ For specific operational guides on each phase, see [`docs/setup-foundation.md`](
 
 ## How to cite
 
-If you use Kern, its reference implementation or its consensus design, please cite it. The metadata are in [`CITATION.cff`](CITATION.cff) (GitHub shows a "Cite this repository" button); each tagged release is archived on Zenodo with a DOI.
+If you use Kern, its reference implementation or its consensus design, please cite it. The metadata are in [`CITATION.cff`](CITATION.cff) (GitHub shows a "Cite this repository" button). The v1.1.0-rc2 edition is archived on Zenodo under the DOI [10.5281/zenodo.24046904](https://doi.org/10.5281/zenodo.24046904); the concept DOI [10.5281/zenodo.24046903](https://doi.org/10.5281/zenodo.24046903) always resolves to the latest archived version.
 
 ```bibtex
 @software{van_eeckhout_kern,
@@ -415,12 +417,13 @@ If you use Kern, its reference implementation or its consensus design, please ci
   title   = {Kern: a Layer-1 settlement and registry protocol with the Skald
              contract language (reference implementation)},
   version = {1.1.0-rc2},
+  doi     = {10.5281/zenodo.24046904},
   url     = {https://github.com/vaneeckhoutnicolas/kern},
   license = {Apache-2.0}
 }
 ```
 
-The DOI of each archived edition is added here, and to `CITATION.cff`, once Zenodo has archived it.
+Each later release is archived the same way; its version DOI is added here and to `CITATION.cff`.
 
 ## License
 

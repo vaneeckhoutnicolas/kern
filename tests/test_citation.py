@@ -52,3 +52,33 @@ def test_citation_metadata_needed_by_zenodo():
     assert cff["title"] and cff["abstract"] and cff["keywords"]
     # The README's BibTeX cites the same version.
     assert f"version = {{{cff['version']}}}" in (ROOT / "README.md").read_text(encoding="utf-8")
+
+
+# The v1.1.0-rc2 edition archived by Zenodo on 8 November 2026: the version
+# DOI names this edition; the concept DOI resolves to the latest archived one.
+VERSION_DOI = "10.5281/zenodo.24046904"
+CONCEPT_DOI = "10.5281/zenodo.24046903"
+
+
+def test_citation_carries_the_zenodo_dois():
+    cff = _cff()
+    assert cff["doi"] == VERSION_DOI
+    dois = {i["value"]: i["description"] for i in cff["identifiers"] if i["type"] == "doi"}
+    assert set(dois) == {VERSION_DOI, CONCEPT_DOI}
+    assert "v1.1.0-rc2" in dois[VERSION_DOI]
+    assert "concept DOI" in dois[CONCEPT_DOI]
+    assert str(cff["date-released"]) == "2026-11-08"
+
+
+def test_readme_badge_and_citation_use_the_dois():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    # The badge, right under the title, points to the concept DOI: it never
+    # needs updating when a new version is archived.
+    head = readme.split("\n## ", 1)[0]
+    assert (f"[![DOI](https://zenodo.org/badge/DOI/{CONCEPT_DOI}.svg)]"
+            f"(https://doi.org/{CONCEPT_DOI})") in head
+    assert readme.index(CONCEPT_DOI) < readme.index("Notice.")
+    cite = readme.split("## How to cite", 1)[1].split("\n## ", 1)[0]
+    assert f"doi     = {{{VERSION_DOI}}}" in cite
+    assert f"https://doi.org/{VERSION_DOI}" in cite
+    assert f"https://doi.org/{CONCEPT_DOI}" in cite
