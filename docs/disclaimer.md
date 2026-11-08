@@ -62,7 +62,7 @@ The KRN token, the mukrn unit, the planned token distribution (documented in [to
 
 ## 6. No security guarantee
 
-The reference implementation, while internally tested (1048 tests passing as of this writing, including property-based fuzzing) and internally reviewed, **has not yet undergone an independent professional security audit**. Two independent audits are a gating item before the Yggdrasil public testnet, and the audit cycle is documented in [post-code-roadmap.md](post-code-roadmap.md) Phase 3 and [setup-auditor.md](setup-auditor.md). Until those audits are complete and their findings remediated, the reference implementation **must be treated as pre-audit software** unsuitable for production deployment with material value at stake.
+The reference implementation, while internally tested (1050 tests passing as of this writing, including property-based fuzzing) and internally reviewed, **has not yet undergone an independent professional security audit**. Two independent audits are a gating item before the Yggdrasil public testnet, and the audit cycle is documented in [post-code-roadmap.md](post-code-roadmap.md) Phase 3 and [setup-auditor.md](setup-auditor.md). Until those audits are complete and their findings remediated, the reference implementation **must be treated as pre-audit software** unsuitable for production deployment with material value at stake.
 
 Even after the planned audits, the Software is published under Apache-2.0's "as is" terms; no audit removes that. Bugs may exist; consensus may stall; contracts may fail; data may be lost. Run the Software at your own risk.
 

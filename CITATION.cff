@@ -10,12 +10,20 @@ authors:
     affiliation: "Win2Win SRL, Brussels, Belgium"
 repository-code: "https://github.com/vaneeckhoutnicolas/kern"
 url: "https://kern-protocol.dev"
+doi: 10.5281/zenodo.24046904
 identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24046904
+    description: "The archived v1.1.0-rc2 edition on Zenodo (this version; deposited 2026-11-08 from the GitHub release of the tag)."
+  - type: doi
+    value: 10.5281/zenodo.24046903
+    description: "The concept DOI of the archive: every archived version, resolving to the latest one."
   - type: url
     value: "https://github.com/vaneeckhoutnicolas/kern/releases/tag/v1.1.0-rc2"
     description: "The GitHub release of this edition."
 license: Apache-2.0
 version: "1.1.0-rc2"
+date-released: "2026-11-08"
 keywords:
   - blockchain
   - layer 1

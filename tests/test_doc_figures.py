@@ -82,8 +82,8 @@ def test_every_figure_has_a_caption_naming_its_file():
         text = md.read_text(encoding="utf-8")
         for m in MD_IMAGE.finditer(text):
             ref = m.group(1)
-            if not ref.endswith(".svg"):
-                continue
+            if not ref.endswith(".svg") or not _local(ref):
+                continue   # a remote badge is not a figure of the repository
             after = text[m.end():m.end() + 200]
             name = Path(ref).name
             assert re.match(r"\s*\n\s*\*Figure \d+ \(`docs/figures/" + re.escape(name) + "`",
