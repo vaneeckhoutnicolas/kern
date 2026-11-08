@@ -73,7 +73,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1031 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1033 tests passing.**
 
 ```
 kern/
@@ -125,7 +125,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 1031 tests, none skipped
+├── tests/                      # 1033 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -186,7 +186,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 1031 passed in about 2 minutes (the multi-process consensus tests start real nodes)
+# 1033 passed in about 2 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### A multi-node devnet in one command (Docker)
@@ -392,6 +392,23 @@ This is a **reference implementation and protocol specification**, not yet a pro
 The professional audit (Phase 2) is **mandatory before mainnet** and is the gating quality-assurance step. Until it completes, Kern remains a reference implementation.
 
 For specific operational guides on each phase, see [`docs/setup-foundation.md`](docs/setup-foundation.md), [`docs/setup-auditor.md`](docs/setup-auditor.md), [`docs/setup-validator.md`](docs/setup-validator.md), and [`docs/pre-mainnet-checklist.md`](docs/pre-mainnet-checklist.md).
+
+## How to cite
+
+If you use Kern, its reference implementation or its consensus design, please cite it. The metadata are in [`CITATION.cff`](CITATION.cff) (GitHub shows a "Cite this repository" button); each tagged release is archived on Zenodo with a DOI.
+
+```bibtex
+@software{van_eeckhout_kern,
+  author  = {Van Eeckhout, Nicolas},
+  title   = {Kern: a Layer-1 settlement and registry protocol with the Skald
+             contract language (reference implementation)},
+  version = {1.1.0-rc2},
+  url     = {https://github.com/vaneeckhoutnicolas/kern},
+  license = {Apache-2.0}
+}
+```
+
+The DOI of each archived edition is added here, and to `CITATION.cff`, once Zenodo has archived it.
 
 ## License
 

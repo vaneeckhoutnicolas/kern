@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use Kern, its reference implementation, its consensus design or any derivative work, please cite it as below and retain the NOTICE file (Apache License 2.0, Section 4(d))."
+title: "Kern: a Layer-1 settlement and registry protocol with the Skald contract language (reference implementation)"
+abstract: "Kern is a Layer-1 blockchain protocol designed for institutional legibility: a narrow base layer that settles, governs, attests and registers, and pushes general execution out to optimistic EVM rollups. This is its reference implementation in Python: Tenderbake-style BFT consensus with a Tendermint lock and valid round, a persistent signing journal and proposal equivocation evidence; bonded Proof-of-Stake delegation with slashing; the Skald contract language, whose declared invariants the runtime enforces; slashable generic attestations; dual-track on-chain governance; the Heimdall explorer; and a one-command multi-node devnet in Docker. The release candidate is pre-audit: consensus safety is validated on a network simulator, on real node processes and on a containerized devnet, but not yet on a network of independent operators, and it has not been professionally audited."
+type: software
+authors:
+  - family-names: "Van Eeckhout"
+    given-names: "Nicolas"
+    orcid: "https://orcid.org/0000-0002-5256-3185"
+    affiliation: "Win2Win SRL, Brussels, Belgium"
+repository-code: "https://github.com/vaneeckhoutnicolas/kern"
+url: "https://kern-protocol.dev"
+identifiers:
+  - type: url
+    value: "https://github.com/vaneeckhoutnicolas/kern/releases/tag/v1.1.0-rc2"
+    description: "The GitHub release of this edition."
+license: Apache-2.0
+version: "1.1.0-rc2"
+keywords:
+  - blockchain
+  - layer 1
+  - Byzantine fault tolerance
+  - Tendermint
+  - proof of stake
+  - smart contracts
+  - runtime invariants
+  - Skald
+  - attestations
+  - on-chain governance
+  - optimistic rollups
