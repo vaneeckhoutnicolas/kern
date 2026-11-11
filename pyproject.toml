@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
     "httpx>=0.28.1",                    # used by the FastAPI TestClient too
     "pyyaml>=6.0.3",                      # used by the Heimdall alert-rule tests
     "fastapi>=0.141.1",                 # Heimdall explorer tests import the app
