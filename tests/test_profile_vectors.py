@@ -4,12 +4,20 @@
 
 docs/hybrid-signatures.md specifies the release in preparation byte for
 byte: canonical JSON, the hash function, Merkle trees, key derivation,
-signing contexts, addresses, the leaves of the second root of a block, and
-one rule for the verification of Ed25519. Before any of it is implemented
-in the node, the specification is held by vectors that two independent
+signing contexts, addresses, the leaves of the second root of a block, the
+state trie and the state root, the data hashed under every domain, and one
+rule for the verification of Ed25519. Before any of it is implemented in
+the node, the specification is held by vectors that two independent
 implementations reproduce: tests/profile_reference.py and
 tests/ed25519_reference.py (Python standard library, checked here), and
-tests/vectors/kern/profile_check.go (Go standard library, run by hand).
+tests/vectors/kern/profile_check.go (Go standard library, run by the
+continuous integration on every pull request).
+
+The two programs also exchange composite signatures, kept in
+tests/vectors/kern/composite_signatures.json. The Go program verifies them
+whole. What needs no ML-DSA is checked here: the message both components
+sign and the Ed25519 half, since the node does not depend on an ML-DSA
+library yet.
 
 Nothing below touches the node: it still hashes with BLAKE2b and signs
 with Ed25519.
@@ -17,7 +25,9 @@ with Ed25519.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import random
 import re
 import sys
 from pathlib import Path
@@ -35,13 +45,15 @@ import profile_reference as ref
 ROOT = Path(__file__).resolve().parent.parent
 NOTE = (ROOT / "docs" / "hybrid-signatures.md").read_text(encoding="utf-8")
 VECTORS = json.loads(ref.VECTORS.read_text(encoding="utf-8"))
+SIGNED = json.loads(ref.SIGNATURES.read_text(encoding="utf-8"))
 CASES = json.loads(ed.CASES.read_text(encoding="utf-8"))["cases"]
 NETWORK = bytes.fromhex(VECTORS["network_id"])
 OTHER = bytes(range(0xC0, 0xE0))
 H = bytes.fromhex
 
-# The three values of each derivation that need ML-DSA: one implementation
-# computed them, and the tests of the implementation will check them.
+# The three values of each derivation that need ML-DSA. The `cryptography`
+# package computed them when the vectors were built and the Go program
+# computes them with crypto/mldsa; the tests of the implementation will too.
 NEEDS_MLDSA = {"mldsa65_public_key_sha3_384", "composite_public_key_sha3_384", "address"}
 
 
@@ -228,6 +240,233 @@ def test_the_witness_leaf_covers_the_identifier_the_key_and_every_signature():
 
 
 # ---------------------------------------------------------------------------
+# What is hashed under the other domains, byte for byte
+# ---------------------------------------------------------------------------
+
+def test_the_proposer_draw_is_eight_bytes_of_the_hash_of_the_parent_and_the_round():
+    for entry in VECTORS["proposer"]:
+        parent, round_ = H(entry["parent_hash"]), entry["round"]
+        data = parent + round_.to_bytes(4, "big")                       # 48 bytes, then the round on 4 bytes
+        assert data.hex() == entry["data"] and len(data) == 52
+        draw = int.from_bytes(ref.H("kern.proposer", NETWORK, data)[:8], "big")
+        assert str(draw) == entry["draw"] == str(ref.proposer_draw(NETWORK, parent, round_))
+    assert [e["round"] for e in VECTORS["proposer"]] == [0, 1, 258, 2**32 - 1]
+    assert len({e["draw"] for e in VECTORS["proposer"]}) == 4
+    parent = H(VECTORS["proposer"][0]["parent_hash"])
+    assert ref.proposer_draw(OTHER, parent, 0) != ref.proposer_draw(NETWORK, parent, 0)
+    for bad_parent, bad_round in ((parent[:47], 0), (parent, -1), (parent, 2**32)):
+        with pytest.raises(ValueError):
+            ref.proposer_draw(NETWORK, bad_parent, bad_round)
+
+
+def test_a_contract_address_is_the_hash_of_its_origination_under_its_own_domain():
+    c = VECTORS["contract_address"]
+    tx_id = H(c["transaction_id"])
+    digest = ref.H("kern.addr.contract", NETWORK, tx_id)
+    assert digest.hex() == c["hash"]
+    assert ref.contract_address(NETWORK, tx_id) == c["address"] == ref.address_from_hash(NETWORK, digest)
+    assert len(c["address"]) == 75 and c["address"].startswith("kn1")
+    # Not the domain of accounts: the same bytes hashed as a key give another address.
+    assert ref.address_from_hash(NETWORK, ref.H("kern.addr", NETWORK, tx_id)) != c["address"]
+    assert ref.contract_address(OTHER, tx_id) != c["address"]
+    with pytest.raises(ValueError):
+        ref.contract_address(NETWORK, tx_id[:47])
+
+
+def test_the_addresses_of_the_mini_evm_are_twenty_bytes_of_a_hash_of_kern():
+    e = VECTORS["evm"]
+    creator, salt, code = H(e["creator"]), H(e["salt"]), H(e["creation_code"])
+    assert (len(creator), len(salt), e["nonce"]) == (20, 32, 258)
+    # CREATE: the creator on 20 bytes, then its nonce on 8 bytes.
+    create = ref.H("kern.evm.create", NETWORK, creator + (258).to_bytes(8, "big"))[:20]
+    assert create.hex() == e["create"] == ref.evm_create_address(NETWORK, creator, 258).hex()
+    # CREATE2: the creator, the salt on 32 bytes, then the hash of the creation code, 48 bytes.
+    code_hash = ref.H("kern.evm.code", NETWORK, code)
+    assert code_hash.hex() == e["code_hash"] and len(code_hash) == 48
+    create2 = ref.H("kern.evm.create2", NETWORK, creator + salt + code_hash)[:20]
+    assert create2.hex() == e["create2"] == ref.evm_create2_address(NETWORK, creator, salt, code).hex()
+    # Another nonce, salt, code or network: another address.
+    assert len({create, create2, ref.evm_create_address(NETWORK, creator, 259),
+                ref.evm_create_address(OTHER, creator, 258),
+                ref.evm_create2_address(NETWORK, creator, salt[::-1], code),
+                ref.evm_create2_address(NETWORK, creator, salt, code + b"\x00")}) == 6
+    for bad in ((creator[:19], 0), (creator, -1), (creator, 2**64)):
+        with pytest.raises(ValueError):
+            ref.evm_create_address(NETWORK, *bad)
+    with pytest.raises(ValueError):
+        ref.evm_create2_address(NETWORK, creator, salt[:31], code)
+    # Precompile 0x01 returns twenty bytes for the Ed25519 key it verified: a hash under a
+    # domain of the Mini-EVM, not the address of an account, whose key is composite.
+    key = H(e["signer_public_key"])
+    assert e["signer_public_key"] == VECTORS["derivation"][0]["ed25519_standalone_public_key"]
+    signer = ref.H("kern.evm.signer", NETWORK, key)[:20]
+    assert signer.hex() == e["signer"] == ref.evm_signer_address(NETWORK, key).hex()
+    assert signer != ref.H("kern.addr", NETWORK, key)[:20] and signer != ref.H("kern.addr", NETWORK, b"\x01" + key)[:20]
+    assert ref.evm_signer_address(OTHER, key) != signer
+    with pytest.raises(ValueError):
+        ref.evm_signer_address(NETWORK, key + b"\x00")
+
+
+@pytest.mark.parametrize("entry", VECTORS["objects"], ids=lambda e: e["domain"])
+def test_an_object_is_hashed_as_its_canonical_json(entry):
+    encoding = H(entry["encoding"])
+    assert ref.canonical_json(entry["object"]) == encoding
+    assert ref.decode_canonical(encoding) == entry["object"]
+    assert ref.H(entry["domain"], NETWORK, encoding).hex() == entry["digest"]
+
+
+def test_the_header_example_has_the_nine_fields_of_the_note():
+    (header,) = [e["object"] for e in VECTORS["objects"] if e["domain"] == "kern.block"]
+    assert sorted(header) == sorted(["version", "level", "payload_round", "timestamp", "parent_hash",
+                                     "state_root", "txs_root", "witness_root", "proposer"])
+    assert header["version"] == 1
+    for name in ("parent_hash", "state_root", "txs_root", "witness_root"):
+        assert re.fullmatch(r"[0-9a-f]{96}", header[name]), name
+    for name in sorted(header):
+        assert f"`{name}`" in NOTE, name
+
+
+def _bits(key: bytes) -> str:
+    return "".join(f"{byte:08b}" for byte in key)
+
+
+def test_a_trie_leaf_states_how_many_bits_of_its_key_it_holds():
+    account = VECTORS["trie"]["accounts"][0]
+    key, value = H(account["position"]), H(account["value"])
+    bits = _bits(key)
+    assert [leaf["depth"] for leaf in VECTORS["trie"]["leaves"]] == list(ref.LEAF_DEPTHS)
+    for leaf in VECTORS["trie"]["leaves"]:
+        depth = leaf["depth"]
+        left = bits[depth:]                                             # the bits of the key that are left
+        packed = int(left.ljust(-(-len(left) // 8) * 8, "0") or "0", 2).to_bytes(-(-len(left) // 8), "big")
+        data = len(left).to_bytes(2, "big") + packed + len(value).to_bytes(4, "big") + value
+        assert ref.H("kern.trie.leaf", NETWORK, data).hex() == leaf["digest"], depth
+        assert ref.trie_leaf(NETWORK, key, depth, value).hex() == leaf["digest"]
+    assert len({leaf["digest"] for leaf in VECTORS["trie"]["leaves"]}) == len(ref.LEAF_DEPTHS)
+    # At depth 0 the leaf holds the whole key; at depth 384 it holds no bit.
+    assert ref.trie_leaf(NETWORK, key, 0, value) == ref.H(
+        "kern.trie.leaf", NETWORK, (384).to_bytes(2, "big") + key + len(value).to_bytes(4, "big") + value)
+    assert ref.trie_leaf(NETWORK, key, 384, value) == ref.H(
+        "kern.trie.leaf", NETWORK, bytes(2) + len(value).to_bytes(4, "big") + value)
+    # The number of bits is hashed, not the number of bytes: "1" and "10" fill the
+    # same byte, 0x80, and are two leaves.
+    one, one_zero = bytes(47) + b"\x01", bytes(47) + b"\x02"
+    assert _bits(one)[383:] == "1" and _bits(one_zero)[382:] == "10"
+    assert ref.trie_leaf(NETWORK, one, 383, value) != ref.trie_leaf(NETWORK, one_zero, 382, value)
+    for bad_key, bad_depth in ((key[:47], 0), (key, -1), (key, 385)):
+        with pytest.raises(ValueError):
+            ref.trie_leaf(NETWORK, bad_key, bad_depth, value)
+
+
+def _two_entries_by_hand(first: tuple[bytes, bytes], second: tuple[bytes, bytes]) -> bytes:
+    """The root of a trie of two entries, built from the bottom: the two
+    leaves under the branch where their keys part, then one branch with a
+    single child for every bit they share."""
+    a, b = _bits(first[0]), _bits(second[0])
+    shared = next(i for i in range(384) if a[i] != b[i])
+    leaves = {a[shared]: ref.trie_leaf(NETWORK, first[0], shared + 1, first[1]),
+              b[shared]: ref.trie_leaf(NETWORK, second[0], shared + 1, second[1])}
+    node = ref.H("kern.trie.branch", NETWORK, leaves["0"] + leaves["1"])
+    for i in range(shared - 1, -1, -1):
+        node = ref.H("kern.trie.branch", NETWORK, node + bytes(48) if a[i] == "0" else bytes(48) + node)
+    return node
+
+
+def test_the_state_trie_has_one_shape_for_one_set_of_accounts():
+    trie = VECTORS["trie"]
+    entries = [(H(a["position"]), H(a["value"])) for a in trie["accounts"]]
+    for account in trie["accounts"]:
+        assert ref.trie_key(NETWORK, account["address"]).hex() == account["position"]
+        assert ref.canonical_json(account["object"]).hex() == account["value"]
+        assert len(account["address"]) == 75 and len(H(account["position"])) == 48
+    assert [r["accounts"] for r in trie["roots"]] == [0, 1, 2, 3, 4]
+    for r in trie["roots"]:
+        assert ref.trie_node(NETWORK, entries[:r["accounts"]]).hex() == r["root"]
+    assert trie["roots"][0]["root"] == "00" * 48                           # no account: 48 zero bytes
+    assert trie["roots"][1]["root"] == ref.trie_leaf(NETWORK, entries[0][0], 0, entries[0][1]).hex()   # one: a leaf
+    assert len({r["root"] for r in trie["roots"]}) == 5
+    # A branch is the hash of its two children; an empty child is 48 zero bytes.
+    branch = trie["branch"]
+    assert ref.H("kern.trie.branch", NETWORK, H(branch["left"]) + H(branch["right"])).hex() == branch["digest"]
+    assert branch["right"] == "00" * 48
+    # Two entries, every pair, against a tree built by hand from the bottom.
+    for i in range(4):
+        for j in range(i + 1, 4):
+            assert ref.trie_node(NETWORK, [entries[i], entries[j]]) == _two_entries_by_hand(entries[i], entries[j])
+    # The vectors hold a pair whose keys share more than their first byte: it sits
+    # under at least nine branches with a single child.
+    shared = max(next(k for k in range(384) if _bits(entries[i][0])[k] != _bits(entries[j][0])[k])
+                 for i in range(4) for j in range(i + 1, 4))
+    assert shared >= 9
+    # The order in which the accounts are given changes nothing.
+    root = ref.trie_node(NETWORK, entries)
+    shuffled = list(entries)
+    for seed in range(5):
+        random.Random(seed).shuffle(shuffled)
+        assert ref.trie_node(NETWORK, shuffled) == root
+    assert ref.trie_node(OTHER, entries) != root
+    with pytest.raises(ValueError):
+        ref.trie_node(NETWORK, [entries[0], (entries[0][0], b"another value")])
+
+
+def test_the_state_root_covers_every_field_of_the_state_with_both_functions():
+    as_json, as_trie, other_stake = VECTORS["state"]
+    for entry in VECTORS["state"]:
+        hashed = ref.hashed_state(NETWORK, entry["state"])
+        assert ref.canonical_json(hashed).hex() == entry["hashed"]
+        assert ref.H("kern.state", NETWORK, H(entry["hashed"])).hex() == entry["root"]
+        assert ref.state_root(NETWORK, entry["state"]).hex() == entry["root"]
+    assert len({entry["root"] for entry in VECTORS["state"]}) == 3
+    # With the function json, the object that is hashed is the state, whole.
+    state = as_json["state"]
+    assert state["state_root_function"] == "json" and ref.hashed_state(NETWORK, state) == state
+    # With the function trie, the three maps keyed by address become one root, and
+    # every other field stays.
+    state = as_trie["state"]
+    hashed = ref.hashed_state(NETWORK, state)
+    assert set(hashed) == (set(state) - {"balances", "nonces", "contracts"}) | {"accounts_root"}
+    assert all(hashed[name] == state[name] for name in hashed if name != "accounts_root")
+    assert hashed["accounts_root"] == VECTORS["trie"]["roots"][4]["root"] == ref.accounts_root(NETWORK, state).hex()
+    # A field outside the accounts changes the root with both functions.
+    assert other_stake["state"]["validators"] != state["validators"]
+    assert ref.accounts_root(NETWORK, other_stake["state"]) == ref.accounts_root(NETWORK, state)
+    assert other_stake["root"] != as_trie["root"]
+    for function in ("json", "trie"):
+        base = dict(state, state_root_function=function)
+        roots = {ref.state_root(NETWORK, base),
+                 ref.state_root(NETWORK, dict(base, total_supply=base["total_supply"] + 1)),
+                 ref.state_root(NETWORK, dict(base, validators=[])),
+                 ref.state_root(NETWORK, dict(base, a_new_field={"x": 1})),
+                 ref.state_root(NETWORK, dict(base, balances={**base["balances"], "kn1new": 1})),
+                 ref.state_root(OTHER, base)}
+        assert len(roots) == 6, function
+    # The state names its function, and the name is hashed with the rest.
+    for bad in ({k: v for k, v in state.items() if k != "state_root_function"},
+                dict(state, state_root_function="other")):
+        with pytest.raises(ValueError):
+            ref.state_root(NETWORK, bad)
+
+
+def test_an_account_of_the_trie_is_a_balance_a_nonce_and_for_a_contract_two_hashes():
+    state = VECTORS["state"][0]["state"]
+    by_address = {a["address"]: a["object"] for a in VECTORS["trie"]["accounts"]}
+    assert set(by_address) == set(state["balances"]) | set(state["nonces"]) | set(state["contracts"])
+    (contract,) = state["contracts"]
+    for address, account in by_address.items():
+        assert account == ref.account_object(NETWORK, state, address)
+        assert account["balance"] == state["balances"].get(address, 0)      # absent from a map: zero
+        assert account["nonce"] == state["nonces"].get(address, 0)
+        assert set(account) == ({"balance", "nonce", "code_hash", "storage_root"} if address == contract
+                                else {"balance", "nonce"})
+    entry = state["contracts"][contract]
+    assert by_address[contract]["code_hash"] == ref.H("kern.code", NETWORK, entry["code"].encode()).hex()
+    assert by_address[contract]["storage_root"] == ref.H(
+        "kern.storage", NETWORK, ref.canonical_json(entry["storage"])).hex()
+    (code,) = [h for h in VECTORS["hash"] if h["domain"] == "kern.code"]
+    assert code["digest"] == by_address[contract]["code_hash"]
+
+
+# ---------------------------------------------------------------------------
 # Ed25519: one verdict
 # ---------------------------------------------------------------------------
 
@@ -291,11 +530,111 @@ def test_the_reference_agrees_with_libsodium_on_ordinary_keys_and_signatures():
 
 
 # ---------------------------------------------------------------------------
+# Composite signatures made by two programs
+# ---------------------------------------------------------------------------
+
+MLDSA_KEY, MLDSA_SIG = ref.MLDSA_PUBLIC_KEY_BYTES, ref.MLDSA_SIGNATURE_BYTES
+
+# The cases of `invalid` whose Ed25519 half is right: only their ML-DSA half
+# refuses them. The Go program checks that; the node will once it has ML-DSA.
+WRONG_IN_MLDSA_ONLY = {
+    "ML-DSA part of another message, Ed25519 part right",
+    "one bit changed in the ML-DSA part",
+    "ML-DSA part signed with an empty ML-DSA context instead of the Label",
+}
+
+
+def _ed25519_half_is_valid(public_key: bytes, message: bytes, signature: bytes, context: bytes) -> bool:
+    """What can be checked of a composite signature without ML-DSA: the
+    lengths, the message both components sign, and the Ed25519 component
+    under the rule of section 2.5."""
+    if len(public_key) != ref.PUBLIC_KEY_BYTES or len(signature) != ref.SIGNATURE_BYTES:
+        return False
+    return _rule_over_libsodium(public_key[MLDSA_KEY:], ref.message_representative(message, context),
+                                signature[MLDSA_SIG:])
+
+
+def test_both_components_sign_the_message_representative_of_rfc_10073():
+    context = ref.signing_context("kern.tx", NETWORK)
+    message = H(SIGNED["message"])
+    representative = ref.message_representative(message, context)
+    assert representative == (b"CompositeAlgorithmSignatures2025" + b"COMPSIG-MLDSA65-Ed25519-SHA512"
+                              + bytes([len(context)]) + context + hashlib.sha512(message).digest())
+    assert len(representative) == 32 + 30 + 1 + 40 + 64
+    assert ref.message_representative(message, b"") == (ref.PREFIX + ref.LABEL + b"\x00"
+                                                        + hashlib.sha512(message).digest())
+    assert ref.message_representative(message, bytes(255))[62] == 255
+    with pytest.raises(ValueError):
+        ref.message_representative(message, bytes(256))
+    for stated in ("CompositeAlgorithmSignatures2025", "COMPSIG-MLDSA65-Ed25519-SHA512"):
+        assert stated in NOTE
+
+
+def test_the_signed_key_is_the_one_of_the_derivation_vectors():
+    derivation = VECTORS["derivation"][0]
+    assert (SIGNED["seed"], SIGNED["network_id"]) == (derivation["seed"], derivation["network_id"])
+    public_key = H(SIGNED["public_key"])
+    assert len(public_key) == 1984
+    assert public_key[MLDSA_KEY:].hex() == derivation["ed25519_public_key"]
+    assert hashlib.sha3_384(public_key[:MLDSA_KEY]).hexdigest() == derivation["mldsa65_public_key_sha3_384"]
+    assert hashlib.sha3_384(public_key).hexdigest() == derivation["composite_public_key_sha3_384"]
+    assert ref.account_address(NETWORK, public_key) == derivation["address"]
+
+
+@pytest.mark.parametrize("maker", ["python", "go"])
+def test_signatures_of_both_programs_have_a_valid_ed25519_half_in_their_context_only(maker):
+    public_key, message = H(SIGNED["public_key"]), H(SIGNED["message"])
+    assert [c["purpose"] for c in SIGNED[maker]] == list(ref.PURPOSES)
+    for c in SIGNED[maker]:
+        signature = H(c["signature"])
+        assert len(signature) == 3373
+        assert _ed25519_half_is_valid(public_key, message, signature, ref.signing_context(c["purpose"], NETWORK))
+        for other in ref.PURPOSES:
+            if other != c["purpose"]:
+                assert not _ed25519_half_is_valid(public_key, message, signature, ref.signing_context(other, NETWORK))
+        assert not _ed25519_half_is_valid(public_key, message, signature, ref.signing_context(c["purpose"], OTHER))
+        assert not _ed25519_half_is_valid(public_key, message + b" ", signature,
+                                          ref.signing_context(c["purpose"], NETWORK))
+    # One of them with the arithmetic of RFC 8032 and no library.
+    first = SIGNED[maker][0]
+    representative = ref.message_representative(message, ref.signing_context(first["purpose"], NETWORK))
+    assert ed.strict_verify(public_key[MLDSA_KEY:], representative, H(first["signature"])[MLDSA_SIG:])
+    # Ed25519 is deterministic: both programs give the same half for the same message. The
+    # ML-DSA halves differ, since one program signs in the randomized mode.
+    for mine, theirs in zip(SIGNED["python"], SIGNED["go"]):
+        assert mine["signature"][2 * MLDSA_SIG:] == theirs["signature"][2 * MLDSA_SIG:]
+        assert mine["signature"][:2 * MLDSA_SIG] != theirs["signature"][:2 * MLDSA_SIG]
+    assert len({c["signature"] for c in SIGNED["python"] + SIGNED["go"]}) == 14
+
+
+def test_what_a_verifier_must_refuse_is_refused_as_far_as_ed25519_tells():
+    public_key, message = H(SIGNED["public_key"]), H(SIGNED["message"])
+    context = ref.signing_context("kern.tx", NETWORK)
+    passing = set()
+    for c in SIGNED["invalid"]:
+        key = H(c["public_key"]) if "public_key" in c else public_key
+        if _ed25519_half_is_valid(key, message, H(c["signature"]), context):
+            passing.add(c["why"])
+    assert passing == WRONG_IN_MLDSA_ONLY
+    reasons = [c["why"] for c in SIGNED["invalid"]]
+    assert len(reasons) == 17 == len(set(reasons))
+    # The case of section 2.5: a key whose Ed25519 part is the point of order 1, with
+    # the signature a verifier that only follows RFC 8032 accepts for it.
+    (case,) = [c for c in SIGNED["invalid"] if c["why"].startswith("Ed25519 public key of order 1")]
+    key, signature = H(case["public_key"]), H(case["signature"])
+    representative = ref.message_representative(message, context)
+    assert ed.lenient_verify(key[MLDSA_KEY:], representative, signature[MLDSA_SIG:])
+    assert not ed.strict_verify(key[MLDSA_KEY:], representative, signature[MLDSA_SIG:])
+    assert key[:MLDSA_KEY] == public_key[:MLDSA_KEY]                       # the ML-DSA part is the right one
+
+
+# ---------------------------------------------------------------------------
 # The note and the vectors say the same thing
 # ---------------------------------------------------------------------------
 
 def test_the_note_states_what_the_vectors_were_computed_with():
     for stated in ("tests/vectors/kern/profile.json", "tests/vectors/kern/ed25519_edge_cases.json",
+                   "tests/vectors/kern/composite_signatures.json",
                    "tests/vectors/kern/profile_check.go", "`KERN-KEY-DERIVATION-V1`",
                    "`0x" + ref.ADDRESS_PREFIX.hex() + "`", "SHA3-384( len(domain) || domain || network_id || data )"):
         assert stated in NOTE, stated
@@ -304,7 +643,35 @@ def test_the_note_states_what_the_vectors_were_computed_with():
     for component in ref.COMPONENTS:
         assert f"`{component}`" in NOTE, component
     # Every domain the reference hashes under is in the table of domains of the note.
-    table = set(re.findall(r"^\| `(kern\.[a-z0-9_.]+)` \|", NOTE, re.M))
+    table = _domains_of_the_note()
     used = set(re.findall(r'H\("(kern\.[a-z0-9_.]+)"', Path(ref.__file__).read_text(encoding="utf-8")))
     assert used and used <= table, used - table
     assert "31 cases" in NOTE and "16 of them" in NOTE
+
+
+def _domains_of_the_note() -> set[str]:
+    purposes = set(ref.PURPOSES) - {"kern.tx", "kern.batch"}               # two names are both
+    return set(re.findall(r"^\| `(kern\.[a-z0-9_.]+)` \|", NOTE, re.M)) - purposes
+
+
+# Where the vectors exercise a domain without naming it.
+DOMAINS_BY_SECTION = {
+    "merkle": {"kern.merkle.empty", "kern.merkle.leaf", "kern.merkle.node"},
+    "address": {"kern.addr", "kern.checksum"},
+    "contract_address": {"kern.addr.contract"},
+    "witness": {"kern.witness"},
+    "proposer": {"kern.proposer"},
+    "evm": {"kern.evm.code", "kern.evm.create", "kern.evm.create2", "kern.evm.signer"},
+    "trie": {"kern.trie.key", "kern.trie.leaf", "kern.trie.branch", "kern.code", "kern.storage"},
+    "state": {"kern.state"},
+}
+
+
+def test_every_domain_of_the_note_has_a_vector_and_there_is_no_other():
+    table = _domains_of_the_note()
+    assert len(table) == 27
+    exercised = {entry["domain"] for entry in VECTORS["hash"] + VECTORS["objects"]}
+    for section, domains in DOMAINS_BY_SECTION.items():
+        assert VECTORS[section], section
+        exercised |= domains
+    assert exercised == table, exercised ^ table

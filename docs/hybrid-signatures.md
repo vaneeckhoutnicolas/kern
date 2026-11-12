@@ -4,7 +4,7 @@
 
 Kern is not in production, so its formats can still change without migrating anyone. The decision is to make the protocol post-quantum by construction, in a dedicated release (1.2), before any network beyond the devnet exists. This note is the cryptographic profile of that release: what is signed and how, how keys are derived, how objects are encoded and hashed.
 
-This is its fourth version. Three reviews, all on 12 November 2026, are recorded in sections 12 to 14; the choices they led to are marked **decided**. The third one approved the architecture and asked that everything two implementations must agree on be specified to the byte and held by vectors. This version does that: section 15 describes the vectors, which two independent implementations reproduce, and section 16 is the list of conditions for freezing the profile. Code is written once that list is accepted.
+This is its fifth version. Four reviews, all on 12 November 2026, are recorded in sections 12 to 15; the choices they led to are marked **decided**. The third one approved the architecture and asked that everything two implementations must agree on be specified to the byte and held by vectors. The fourth recomputed those vectors on its own, froze the architecture, and asked for four things before the profile itself is frozen: the exact bytes hashed under every domain, a decision on the addresses of the Mini-EVM, a rule against the reuse of keys, and a rule for several rotations in one block. This version makes them. Section 16 describes the vectors, which two independent implementations reproduce, and section 17 is the list of conditions for freezing the profile. Code is written once that list is accepted.
 
 ## 1. The profile in one table
 
@@ -18,21 +18,24 @@ This is its fourth version. Three reviews, all on 12 November 2026, are recorded
 | Hash size | 384 bits for every commitment, identifier and address (**decided**) |
 | Encoding | Canonical JSON, with one encoding per object (**decided**) |
 | Merkle trees | The structure of RFC 6962, with separate domains for the empty tree, leaves and nodes |
+| State root | Every field of the state, whichever function computes it (**decided**) |
 | Addresses | `kn1` and base 58 as today, 75 characters, valid on one network |
 | Text forms | `kpk1.` and `ksig1.` followed by base64url, one text per value |
 | Where keys live | Stored once in the state (the account key registry), never repeated in messages; registry and rotation in this release (**decided**) |
+| Key reuse | A public key is recorded once on a network, for one address; a rotation takes no part of an earlier key of the address; one rotation per address and per block (**decided**) |
 | Signing contexts | Seven purposes. Every signature states its purpose and its network |
 | Ed25519 verification | One rule, written as mathematics, the same in every client |
 | Blocks | The header has a structure version and commits to the signatures of its transactions; a block that contains an invalid signature is invalid |
 | Sizes | The fee floor and the block size cap count the signature |
 | Classical leftovers | Precompile 0x01 (Ed25519) and the Groth16 verifier (BN254) stay, documented as classical |
+| Mini-EVM | Its own derivation of contract addresses, on 160 bits, stated as not the one of Ethereum (**decided**) |
 | Release | 1.2.0rc1; a devnet started with an earlier version has to be reset |
 
 ## 2. The signature scheme
 
 ### 2.1 A standard mechanism, a Kern profile
 
-Combining two signature schemes looks trivial and has traps: which bytes each one signs, how the two are tied together, how a signature made for one purpose is kept from serving another. The IETF has specified this as **Composite ML-DSA**, published as RFC 10073 in October 2026 (from [draft-ietf-lamps-pq-composite-sigs](https://datatracker.ietf.org/doc/draft-ietf-lamps-pq-composite-sigs/19/)). Kern uses it instead of defining its own.
+Combining two signature schemes looks trivial and has traps: which bytes each one signs, how the two are tied together, how a signature made for one purpose is kept from serving another. The IETF has specified this as **Composite ML-DSA**, published as [RFC 10073](https://www.rfc-editor.org/rfc/rfc10073.html) in November 2026 (until then draft-ietf-lamps-pq-composite-sigs). Kern uses it instead of defining its own.
 
 RFC 10073 is written for certificates. Kern takes its mechanism and nothing else: how the keys are generated, what the two components sign, how keys and signatures are serialized. It takes none of the X.509 structures, and a Kern signature is not meant to be read by software that handles certificates. Around that mechanism Kern defines its own profile, which is the rest of this note: network identity, key derivation, hashing and encoding, contexts, text forms, addresses.
 
@@ -62,7 +65,7 @@ Two contexts appear, and they are not the same thing. `ctx` is the context of th
 
 To verify, rebuild `M'` and verify both components. If either fails, the signature is invalid.
 
-This construction has been run against the test vectors published with the RFC for this combination: the published private key gives the published public key, the two published signatures verify (without a context and with one), and every altered case is refused.
+This construction has been run against the test vectors published with the RFC for this combination: the published private key gives the published public key, the two published signatures verify (without a context and with one), and every altered case is refused. Two programs written independently, one in Python and one in Go, also verify each other's signatures in the seven contexts of section 6.2 and refuse the same invalid ones (section 16).
 
 ### 2.2 Why these parameters
 
@@ -101,10 +104,12 @@ Kern therefore fixes one rule. It is a definition of Kern, written as mathematic
 
 With 2 and 5, `R` is in the subgroup of prime order as well: no separate check is needed. A signature accepted under this rule is valid under RFC 8032.
 
+**Byte order.** Every number here is read as RFC 8032 writes it, least significant byte first (little-endian). `A` and `R` are 32 bytes each: the y coordinate on 255 bits, and the sign of x in the top bit of the last byte (section 5.1.2 of the RFC). `S` is the last 32 bytes of the signature, read as a number in that order. `k` is the 64 bytes of SHA-512(`R` || `A` || message), read as a number in that order and then reduced modulo `L`.
+
 - **Where it applies.** To the Ed25519 component of every composite signature, and to precompile 0x01. Rule 2 is also checked when a key is recorded: in the genesis, at the first transaction of an account, in `rotate_key` (section 6.4). A key that fails it is never recorded.
 - **The identity as `R`.** It is in the subgroup, and a deterministic signer produces it with a probability of about 2^-252. Refusing it is a restriction that Kern takes on purpose: such a signature gives the secret away, since `S` divided by `k` is the secret scalar.
-- **Measured.** On 31 cases built for this note from RFC 8032, one is valid under the rule: an ordinary signature. The standard library of Go (1.24) and OpenSSL (4.0), left alone, accept 17: 16 of them are refused by the rule. libsodium, the library behind PyNaCl, accepts 3: it takes a public key of mixed order, which the rule refuses. The 210 Ed25519 vectors of Project Wycheproof leave 29 cases to the implementation, all of them with a public key of small or mixed order; the rule refuses the 29.
-- **Implemented three times.** The rule gives the same verdict on the 31 cases when it is computed as plain arithmetic with no library, with libsodium doing the arithmetic, and with the standard library of Go after the checks 2 to 4 (section 15).
+- **Measured.** On 31 cases built for this note from RFC 8032, one is valid under the rule: an ordinary signature. The standard library of Go (1.24 and 1.27) and OpenSSL (4.0), left alone, accept 17: 16 of them are refused by the rule. libsodium, the library behind PyNaCl, accepts 3: it takes a public key of mixed order, which the rule refuses. The 210 Ed25519 vectors of Project Wycheproof leave 29 cases to the implementation, all of them with a public key of small or mixed order; the rule refuses the 29.
+- **Implemented three times.** The rule gives the same verdict on the 31 cases when it is computed as plain arithmetic with no library, with libsodium doing the arithmetic, and with the standard library of Go after the checks 2 to 4 (section 16).
 
 ## 3. Network identity and keys
 
@@ -143,17 +148,18 @@ The four fields of `info`, in this order: the 22 ASCII characters `KERN-KEY-DERI
 
 The composite private key is the output for `mldsa65` followed by the output for `ed25519`: 64 bytes, which is the serialization of RFC 10073. The three outputs come from three independent expansions of the same PRK.
 
-- **Allowed by the standard.** RFC 10073 (section 3.1) allows a deterministic generation in which one seed is expanded into the seeds of both components. It leaves the expansion to the application, and requires that both component keys be fresh and never used outside the composite.
+- **Allowed by the standard.** RFC 10073 (section 3.1.1) allows a deterministic generation in which one seed is expanded into the seeds of both components. It leaves the expansion to the application, and section 3.1 requires that both component keys be fresh and never used anywhere else.
 - **A standard construction.** HKDF is among the key derivation mechanisms that the selection guide of ANSSI recommends. It is in the standard library of Go, and Python builds it from HMAC in a few lines.
 - **Versioned.** The first field of the info is the version of the derivation. Another derivation is another label, and a key file records the version it was made with. The scheme number is a separate thing: the chain never sees how a key was derived.
 - **One seed, one identity.** A seed gives one account key per network. Several accounts are several seeds, drawn independently; this version of the derivation has no account index.
 - **Bound to one network.** The same seed gives another key pair and another address for every network identifier. A key exposed on a test network says nothing about the key of another network.
 
-Section 15 gives a complete vector: seed, PRK, the three infos, the three outputs and the public keys they give.
+Section 16 gives a complete vector: seed, PRK, the three infos, the three outputs and the public keys they give.
 
 ### 3.3 What a key is never used for
 
 - **Never a component alone.** RFC 10073 forbids using a component key outside the composite (sections 3.1 and 9.3): a key that also signs alone weakens the composite it belongs to. No function of Kern signs with one component, and none returns a component key.
+- **Never in two keys.** Section 3.1 of the RFC also forbids a component key that is used in another combination. The derivation gives every seed, on every network, two component keys of its own, and no tool of Kern builds a public key from parts taken elsewhere: a wallet that did would break this rule. What the chain itself refuses is in section 6.4, with the reason it does not refuse more.
 - **Precompile 0x01.** It verifies Ed25519 signatures of 32-byte messages. `M'` is always longer, so the Ed25519 component of a composite signature cannot be replayed through it. That says nothing about the key itself: the holder of a seed could, by his own means, sign a 32-byte message with the Ed25519 component key. The rule of Kern is that no tool of Kern does. A key meant for a contract is the one derived under `ed25519-standalone`: the same mechanism, another secret.
 - **Rotation, and its limit.** The operation `rotate_key` (section 6.4) lets an account replace its key. It does not save an account whose seed is stolen if the thief acts first. A second key, kept offline and able to take the account back, is a possible later addition.
 - **Storage.** A seed is a file in clear text today, and this release does not change that: whoever reads the file holds the account. A hybrid scheme does nothing for a stolen seed. Encrypted key files and hardware modules are listed in section 8.
@@ -174,36 +180,51 @@ With the network identifier in every preimage, two networks never share a hash b
 
 Today the code hashes with BLAKE2b, keyed with the same names. BLAKE2b has no known weakness. But it is not a standard of NIST, and it is not among the hash functions that the selection guide of ANSSI recommends, which are those of the SHA-2 and SHA-3 families. A protocol that addresses institutions is asked about both. Every hash changes size in this release, so changing the function at the same time costs nothing more. SHA3-384 is in the standard library of both client languages.
 
-The domains are the following, and there is no other. A hash under a name that is not in this table is not a hash of the protocol.
+The domains are the following, and there is no other. A hash under a name that is not in these tables is not a hash of the protocol.
 
-| Domain | What is hashed |
-|---|---|
-| `kern.tx` | A transaction, without what it carries besides what it signs: its identifier |
-| `kern.block` | A block header without its signature: the hash of the block |
-| `kern.merkle.empty` | Nothing: the root of a tree with no item (section 4.4) |
-| `kern.merkle.leaf` | One item of a tree |
-| `kern.merkle.node` | The two subtrees of a node |
-| `kern.witness` | What a transaction carries besides what it signs (section 6.3) |
-| `kern.state` | The state, in `json` mode |
-| `kern.trie.leaf` | A leaf of the state trie |
-| `kern.trie.branch` | A branch of the state trie |
-| `kern.trie.key` | The position of an address in the state trie |
-| `kern.storage` | The storage of a contract, inside its trie leaf |
-| `kern.code` | The code of a contract, inside its trie leaf |
-| `kern.addr` | The scheme number and the public key of an account: its address |
-| `kern.addr.contract` | The identifier of the transaction that originates a contract: its address |
-| `kern.checksum` | The prefix and the hash of an address: its checksum, the first 4 bytes |
-| `kern.proposer` | The hash of the parent block and the round: the public draw of the proposer, the first 8 bytes |
-| `kern.batch` | A rollup batch without its signature |
-| `kern.rollup.program` | The program a rollup batch executed |
-| `kern.mailbox` | A forced inclusion request |
-| `kern.gov.id` | A governance proposal: its identifier |
-| `kern.attestation.id` | An attestation: its identifier |
-| `kern.zk_claims.vk` | A Groth16 verifier key: its identifier |
-| `kern.evm` | A state of the Mini-EVM, for fraud proofs |
-| `kern.evm.code` | The creation code hashed into a `CREATE2` address |
-| `kern.evm.create` | The creator and its nonce: an address inside the Mini-EVM, the first 20 bytes |
-| `kern.evm.create2` | The creator, a salt and the hash of the code: an address inside the Mini-EVM, the first 20 bytes |
+**What is hashed, to the byte.** For every domain, `data` is one of two things, and the tables say which:
+
+- **an object**: its canonical JSON, the one of section 4.3. Its fields are those of its schema;
+- **a string of bytes**, made of the fields the table lists, in that order, with nothing between them. The number of bytes of a field is given in brackets when it is fixed. A number is unsigned and written with its most significant byte first (big-endian). A hash is its 48 bytes, never its hexadecimal text. An address is its 75 characters, in ASCII. A text is its UTF-8 bytes.
+
+Domains whose data is a string of bytes:
+
+| Domain | Data | What the hash is |
+|---|---|---|
+| `kern.merkle.empty` | Nothing: no byte | The root of a tree with no item (section 4.4) |
+| `kern.merkle.leaf` | The item | A leaf of a tree |
+| `kern.merkle.node` | The root of the left subtree (48), the root of the right subtree (48) | A node of a tree |
+| `kern.witness` | The transaction identifier (48), the flags (1), the public key if the flags say so (1,984), the signature (3,373), the second signature if the flags say so (3,373) | A leaf of the witness tree of a block (section 6.3) |
+| `kern.addr` | The scheme number, `0x01` (1), the public key (1,984) | The hash inside the address of an account (section 5) |
+| `kern.addr.contract` | The identifier of the transaction that originates the contract (48) | The hash inside the address of a contract |
+| `kern.checksum` | The prefix of an address (3), the hash inside it (48) | Its first 4 bytes are the checksum of the address |
+| `kern.proposer` | The hash of the parent block (48), the round (4) | Its first 8 bytes, read as a number, are the public draw of the proposer of that round |
+| `kern.trie.key` | The address (75) | The position of an account in the state trie (section 4.6) |
+| `kern.trie.leaf` | The number of bits (2), the bits, the length of the value (4), the value | A leaf of the state trie (section 4.6) |
+| `kern.trie.branch` | The left child (48), the right child (48) | A branch of the state trie |
+| `kern.code` | The code of a contract, as text | `code_hash` in the account of the contract (section 4.6) |
+| `kern.rollup.program` | The program a rollup batch executed, as the bytes that are run | `tx_data_hash` in the batch |
+| `kern.evm.code` | The creation code of a contract of the Mini-EVM | The code hash inside a `CREATE2` address |
+| `kern.evm.create` | The creator (20), its nonce (8) | Its first 20 bytes are an address inside the Mini-EVM (section 8) |
+| `kern.evm.create2` | The creator (20), the salt (32), the hash of the creation code under `kern.evm.code` (48) | Its first 20 bytes are an address inside the Mini-EVM |
+| `kern.evm.signer` | The Ed25519 public key whose signature precompile 0x01 has verified (32) | Its first 20 bytes are what the precompile returns: the address of that key inside the Mini-EVM (section 8) |
+
+Domains whose data is an object:
+
+| Domain | Object | Fields |
+|---|---|---|
+| `kern.tx` | A transaction without its witness: what its sender signs. The hash is the identifier of the transaction | The schema of transactions. The public key of its sender and the signatures a transaction carries are not part of it (section 6.3) |
+| `kern.block` | A block header without its signature. The hash is the hash of the block | The nine fields of section 6.3 |
+| `kern.state` | The state. The hash is the state root (section 4.6) | Every field of the state |
+| `kern.storage` | The storage of a contract. The hash is `storage_root` in the account of the contract | The fields the contract declares |
+| `kern.batch` | A rollup batch without its signature | `rollup_id`, `batch_index`, `parent_state_root`, `state_root`, `tx_hashes`, `tx_data_hash`, `timestamp`, `sequencer` |
+| `kern.mailbox` | A forced inclusion request | `rollup_id`, `sender`, `l2_tx_payload`, `posted_at_l1_level`, `posted_at_l1_timestamp`, `deadline_blocks` |
+| `kern.gov.id` | A governance proposal. The hash is its identifier | `submitter`, `payload`, `salt` |
+| `kern.attestation.id` | An attestation. The hash is its identifier | `issuer`, `schema_id`, `subject`, `claim`, `attest_nonce` |
+| `kern.zk_claims.vk` | A Groth16 verifier key. The hash is its identifier | `alpha1`, `beta2`, `gamma2`, `delta2`, `ic`. Every coordinate is a string of decimal digits |
+| `kern.evm` | A state of the Mini-EVM, for fraud proofs | `pc`, `stack`, `memory`, `gas`, `halted`, `output`, `reverted`, `storage`, `context`. A word of the machine is a string of decimal digits, bytes are hexadecimal text, and `storage` is an object that maps a word to a word |
+
+The draw of `kern.proposer` picks the proposer as today: the number is taken modulo the total stake, and the proposer is the first validator, in the order of the epoch snapshot, at which the running total of the stakes exceeds it.
 
 What is not `H`, and stays as it is: SHA-512 inside the signatures (the pre-hash of RFC 10073, and Ed25519) and in the key derivation; the hash functions inside ML-DSA; and the hash functions that contracts call (the `SHA3` opcode, precompiles 0x02 and 0x03, the placeholder at 0x09), which are interfaces for contracts and not commitments of the protocol.
 
@@ -225,7 +246,7 @@ Four values keep a size of their own, and say so:
 - the checksum of an address, 32 bits: it catches typing errors;
 - the pre-hash of a signature, SHA-512, fixed by RFC 10073;
 - the public draw of the proposer, 64 bits taken from a hash;
-- the addresses inside the Mini-EVM of the rollup framework, 160 bits. They are values of that virtual machine, whose words are 256 bits and whose instructions assume this size. A contract address computed in advance there has the collision margin of a 160-bit hash, as on the chains that share this model. Widening it is a decision for the rollup framework, outside this profile (section 8).
+- the addresses inside the Mini-EVM of the rollup framework, 160 bits. They are values of that virtual machine, whose words are 256 bits and whose instructions assume this size. This is not the margin of the rest of the profile, and it is not a post-quantum margin: finding two contracts with one address costs about 2^80 evaluations today and about 2^53 under the bound of the table above, where 384 bits give 2^192 and 2^128. Widening these addresses is a decision for the rollup framework, outside this profile (section 8).
 
 ### 4.3 One encoding
 
@@ -255,7 +276,9 @@ What is hashed or signed is the canonical JSON of an object: one sequence of byt
 
 For objects whose keys are ASCII and whose integers stay within 2^53, this is the output of the JSON Canonicalization Scheme ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)). Kern does not follow that RFC for numbers: it has no floating point, and its integers go up to 64 bits.
 
-The fields of each object, their types and their bounds are the schema of that object. Schemas are written in [api-stability.md](api-stability.md) when the formats are implemented, each with its vectors; this note fixes the encoding they all share.
+The fields of each object, their types and their bounds are the schema of that object. Schemas are written in [api-stability.md](api-stability.md) when the formats are implemented, each with its vectors; this note fixes the encoding they all share, and section 4.1 names the fields of the objects that are hashed.
+
+**One version for all schemas.** A schema belongs to a structure version, the `version` of the block header (section 6.3). Everything a block of version 1 holds or refers to has the schema of version 1: its header, its transactions, the consensus messages of its level, the state it commits to, and the byte layouts of section 4.1. Changing any of them is another version, introduced by a protocol amendment.
 
 ### 4.4 Merkle trees
 
@@ -273,7 +296,7 @@ root(D[0:n])    = H("kern.merkle.node", root(D[0:k]) || root(D[k:n]))      for n
 - Nothing is repeated to fill a level. The tree used today repeats the last hash when a level is odd, which gives one root to a list and to the same list with its last item twice.
 - A leaf is never taken for a node: they are hashed under two domains, so an item that happens to be the concatenation of two hashes is still an item.
 
-The transactions of a block have two such trees (section 6.3). The state trie has its own structure and its own domains; it is unchanged except for `H`.
+The transactions of a block have two such trees (section 6.3). The state trie has its own structure and its own domains (section 4.6).
 
 ### 4.5 What an address designates
 
@@ -284,6 +307,39 @@ The size makes collisions between addresses out of reach. The rules below hold i
 3. **No second presentation.** Once a key is recorded for an address, a transaction for that address that carries a public key is refused, whatever the key.
 4. **A key is checked before it is recorded.** It has the right length, and its Ed25519 part passes rule 2 of section 2.5. Any 1,952 bytes are an ML-DSA-65 public key, so that part has nothing more to check.
 5. **Genesis.** An account funded in the genesis without a key follows rule 2 at its first transaction. The key of a validator is recorded by the genesis, in the registry.
+6. **A key is recorded once.** A public key is the key of one address, once in the life of a network. It is recorded by the first transaction of the account whose address is its hash, or by one `rotate_key`, and never again after that, for that address or for another (section 6.4). A genesis records no key twice.
+
+### 4.6 The state root
+
+A block header commits to the state through one hash, and that hash covers every field of the state (**decided**). The state names the function that computes it, in its field `state_root_function`; a protocol amendment can change it.
+
+```
+json:  state_root = H("kern.state", the state)
+trie:  state_root = H("kern.state", the state, in which the fields balances, nonces and contracts
+                                    are replaced by one field: accounts_root)
+```
+
+In both cases the data is the canonical JSON of an object, and every field of the state is in it, `state_root_function` included. With `trie`, the three maps keyed by address leave the object, and what they hold is committed through the state trie, whose root is written in `accounts_root` as 96 hexadecimal characters. The name `accounts_root` is reserved: the state itself has no such field.
+
+The key registry, the validator set and every other field are hashed as they are, with both functions. The registry is not in the trie in this version: a proof of an account by the trie proves a balance, a nonce and a contract, not a key. Moving it there is left to a later structure version.
+
+**The state trie.** A binary trie. The account of an address is reached by following the bits of a key, from the most significant bit of its first byte.
+
+```
+key(address)  = H("kern.trie.key", address)                                 384 bits
+value         = the canonical JSON of the account
+node(S, d)    = 48 zero bytes                                               if S is empty
+              = H("kern.trie.leaf", count || bits || length || value)       if S holds one account
+              = H("kern.trie.branch", node(S0, d + 1) || node(S1, d + 1))   otherwise
+accounts_root = node(every account, 0)
+```
+
+`S` is a set of accounts whose keys share their first `d` bits. `S0` holds the accounts of `S` whose next bit is 0, and `S1` those whose next bit is 1. In a leaf, `count` is the number of bits of the key that the path has not used, 384 - d, on 2 bytes; `bits` are those bits, the first one in the top of the first byte, completed with zero bits to a whole number of bytes; `length` is the number of bytes of the value, on 4 bytes.
+
+- **Accounts.** An account is an address that is a key of `balances`, `nonces` or `contracts`. Its object has a `balance` and a `nonce`, zero when the address is not in that map. For a contract it also has `code_hash` and `storage_root`, the hashes of its code and of its storage under `kern.code` and `kern.storage`, each as 96 hexadecimal characters.
+- **One shape.** The trie depends on the set of accounts alone, not on the order in which they appeared. A leaf sits at the first depth where no other key shares its path. Where several keys share a run of bits, the branches of that run have one child; the other one is empty, 48 zero bytes.
+- **A leaf states its number of bits.** Today it states a number of bytes, so the paths `1` and `10`, which fill the same byte, are hashed alike.
+- **One position per address.** Two addresses at the same position would take a collision of `H`.
 
 ## 5. Identifiers and text forms
 
@@ -317,7 +373,7 @@ address  = base58( prefix || hash || checksum )
 
 A composite public key is 2.6 kilobytes of text; today a 53-character key travels in every transaction, block header and vote.
 
-- **The registry** (**decided**: in this release). The state gains a key registry, under the rules of section 4.5. For each address it holds the key that is current, and the keys the address had before, each with the level from which it was current. Nothing is ever removed from it.
+- **The registry** (**decided**: in this release). The state gains a key registry, under the rules of section 4.5. For each address it holds the key that is current, and the keys the address had before, each with the level from which it was current. Nothing is ever removed from it, and a key is recorded in it once (section 6.4).
 - **Accounts.** The first transaction of an account carries its public key, which must hash to the address and is recorded. Later transactions carry none.
 - **Validators.** The validator set and its epoch snapshot hold addresses and stakes, never keys. The key of a validator is read from the registry, like any other. Consensus messages, quorum certificates and block headers carry the address of the validator and its signature; the fields `validator_pubkey` and `proposer_pubkey` go.
 - **Rollups.** The sequencer of a rollup is an address, and its key is read from the registry; batches drop `sequencer_pubkey`.
@@ -397,6 +453,11 @@ If the transaction is in the block of level `H`:
 - **No overlap.** For a given level, one key is valid for an address. The old key signs nothing from `H` + 1 on, and the new key nothing before.
 - **History.** The registry keeps the old key with the levels at which it was current, so that a vote or a proposal of level `H` - 10 is still verified, in evidence, with the key of that level.
 - **The second signature covers** the network (through its context), the address, the new key and the nonce, which fixes the place of the rotation in the history of the account. The level of activation follows from the block that includes it.
+- **One rotation per block** (**decided**). If a block holds several `rotate_key` of one address, the first one in the order of the block is applied. The others fail, as a transaction that breaks a rule of the state does, and record nothing. The key that is current from `H` + 1 is never in doubt.
+- **A key is recorded once** (**decided**). `rotate_key` is refused if its new key is, or has ever been, the key of an address: this one or another, by a first transaction or by a rotation. And a key that a rotation gave to an address cannot open the account it hashes to: the first transaction of that account is refused. One public key, one address, for the life of the network (section 4.5, rule 6).
+- **No part of an earlier key** (**decided**). `rotate_key` is refused if the ML-DSA part of the new key is the ML-DSA part of a key this address has had, or if its Ed25519 part is the Ed25519 part of one. A rotation replaces both components.
+- **What the chain does not refuse, and why.** RFC 10073 (section 3.1) forbids a component key that is used in another combination, and the tools of Kern never make one (section 3.3). The chain enforces it inside the history of an address, where only the holder acts. It does not refuse a key because one of its two parts is a part of the key of another address. A public key is seen before it is recorded: in the first transaction of its account, or in a `rotate_key`, while they wait to be included. If it did, whoever can forge one of the two schemes could record first a key of his own built on a part of the key he has just seen, with a forged signature for that part, and the honest key would be refused for ever. Breaking one component must give nothing, the power to lock an account out included. To get ahead of a whole key, the same attacker has to forge both.
+- **Why reuse would yield little here.** Every signed object names the address of its signer: `sender` in a transaction, `proposer` in a header, `validator` in a consensus message, `sequencer` in a batch. A signature is never the statement of another address, whatever two keys have in common.
 
 ## 7. Sizes and measurements
 
@@ -421,8 +482,8 @@ With the present default cap of one mebibyte per block, a block holds about 210 
 Replacing signatures does not make a chain post-quantum everywhere. What this release leaves as it is, and says so:
 
 - **Zero-knowledge claims.** The Groth16 verifier on BN254 stays, documented as classical. A proof system built on hash functions is the later answer; it does not block this release.
-- **Precompile 0x01.** It keeps its Ed25519 interface for contracts, documented as classical, under the verification rule of section 2.5. No rule of the protocol itself may rely on it, and no account key is ever used through it (section 3.3). A precompile that verifies composite signatures is planned for contracts, after this release.
-- **The Mini-EVM.** Its addresses stay at 160 bits and its `SHA3` opcode stays what it is (section 4.2). Its states and its code are committed with `H` like everything else.
+- **Precompile 0x01.** It keeps its Ed25519 interface for contracts, documented as classical, under the verification rule of section 2.5. For a valid signature it returns 12 zero bytes and the address of the key inside the Mini-EVM, which is the first 20 bytes of `H("kern.evm.signer", public key)`; that is not the address of an account, whose key is composite. No rule of the protocol itself may rely on it, and no account key is ever used through it (section 3.3). A precompile that verifies composite signatures is planned for contracts, after this release.
+- **The Mini-EVM** (**decided**). It is the machine of the fraud proofs of the rollup framework. It is not the virtual machine of Ethereum, and does not claim to be: its `SHA3` opcode computes SHA3-256 and not Keccak-256, its precompile 0x01 verifies Ed25519, and it derives the address of a contract in its own way. `CREATE` gives the first 20 bytes of `H("kern.evm.create", creator || nonce)`, and `CREATE2` the first 20 bytes of `H("kern.evm.create2", creator || salt || code_hash)`, where `code_hash` is `H("kern.evm.code", creation code)`. The creator is written on 20 bytes, its nonce on 8 and the salt on 32. Ethereum takes the last 20 bytes of a Keccak-256, computed for `CREATE` over an encoding of its own (RLP): a contract does not get there the address it gets here, and nothing in Kern assumes that it does. A rollup that needs the semantics of Ethereum runs an execution layer of Ethereum ([rollups.md](rollups.md)). The two derivations belong to structure version 1 and are held by vectors. The addresses stay at 160 bits and the `SHA3` opcode stays what it is (section 4.2). The states and the code of the machine are committed with `H` like everything else.
 - **Peer connections.** They are neither encrypted nor authenticated today. The plan, with the hardening of the network layer, is TLS 1.3 with a standard hybrid key exchange and peers authenticated by a composite signature. ML-KEM establishes a secret and authenticates nobody, and Kern does not design a handshake of its own.
 - **Root signatures.** The genesis, release tags and integrity manifests are signed rarely and must hold for decades. SLH-DSA (FIPS 205), built on hash functions alone, is the planned scheme for them: another family than ML-DSA, large and slow signatures that these uses can afford.
 - **Key storage.** A seed in a file in clear text is the weakest point of an account, before and after this release. Encrypted key files and hardware security modules for validators come later.
@@ -441,6 +502,10 @@ Replacing signatures does not make a chain post-quantum everywhere. What this re
 - **Keys leave the validator set.** The snapshot of an epoch holds addresses and stakes; keys are read from the registry.
 - **Everything is regenerated.** Every address changes. The genesis of the repository, the devnet generator, the wallet, the explorer and the examples of the documentation are regenerated; a devnet has to be reset.
 - **One more dependency.** The `cryptography` package joins PyNaCl and py_ecc in the inventory.
+- **The state root.** With the function `trie`, what is hashed is the state with its accounts replaced by the root of the trie (section 4.6). The leaf of the trie states a number of bits, and the name of the function is hashed with the rest of the state.
+- **A registry that remembers.** It refuses a key it has ever recorded, a second rotation of an address in a block, and a rotation that takes a part of an earlier key of the address (section 6.4).
+- **The proposer draw.** It hashes the 48 bytes of the parent hash under `kern.proposer`, where it hashes their hexadecimal text without a domain today.
+- **The Mini-EVM.** `CREATE` and `CREATE2` hash with `H`, the code hash of `CREATE2` is 48 bytes, and the state of the machine writes its storage as an object. Precompile 0x01 hashes the key it verified under `kern.evm.signer`, where it uses the domain of account addresses today.
 
 ## 10. Tests that come before the words
 
@@ -451,23 +516,24 @@ The [inventory](cryptographic-inventory.md) refuses any claim of resistance unti
 3. **Either component broken.** At every place a signature is checked (transaction, block header, proposal, vote, quorum certificate, rollup batch, slashing evidence, key rotation), a message whose Ed25519 component is valid and whose ML-DSA component is not must be refused. And the reverse.
 4. **No fallback.** An Ed25519 signature alone is refused at each of those places.
 5. **Contexts.** A signature made for one of the seven purposes is refused for each of the six others, and a signature made for one network identifier is refused for another. The context bytes are part of the vectors.
-6. **Key derivation.** The vectors of section 15: PRK, infos, the three outputs, the public keys and the address. The same seed and the same chain name with another network identifier give other keys and another address, and nothing signed for one network is accepted on the other.
+6. **Key derivation.** The vectors of section 16: PRK, infos, the three outputs, the public keys and the address. The same seed and the same chain name with another network identifier give other keys and another address, and nothing signed for one network is accepted on the other.
 7. **Signature bytes.** The same transaction, vote or proposal signed twice, or with its Ed25519 component replaced by another valid one, keeps its identifier, is counted once, leads to no second vote and is evidence of nothing. For proposals this already holds on the present code (`tests/test_signature_bytes.py`).
-8. **Ed25519.** The 31 cases of section 15 and the Wycheproof vectors get the verdict of section 2.5, in the composite, through precompile 0x01 and when a key is recorded.
+8. **Ed25519.** The 31 cases of section 16 and the Wycheproof vectors get the verdict of section 2.5, in the composite, through precompile 0x01 and when a key is recorded.
 9. **Component keys.** The key derived for a contract is not the Ed25519 component of the account key, and no function of the repository signs with a component alone or returns one.
-10. **Encoding.** The canonical encodings of section 15, and every non-canonical form refused, at decoding and at reception.
-11. **Hashes and trees.** The digests and roots of section 15: empty tree, one item, odd numbers of items. Every hash is 96 hexadecimal characters; a shorter, longer or truncated value is refused wherever a hash is decoded.
+10. **Encoding.** The canonical encodings of section 16, and every non-canonical form refused, at decoding and at reception.
+11. **Hashes and trees.** The digests and roots of section 16: empty tree, one item, odd numbers of items; and, for every domain, the data that section 4.1 lays out. Every hash is 96 hexadecimal characters; a shorter, longer or truncated value is refused wherever a hash is decoded.
 12. **Text forms.** Every spelling of a key or a signature other than the canonical one is refused.
-13. **Key registry.** First recording, a key that fails its check, a second key presented for an address that has one, a transaction that carries a key after one is recorded, an account of the genesis without a key.
+13. **Key registry.** First recording, a key that fails its check, a second key presented for an address that has one, a transaction that carries a key after one is recorded, an account of the genesis without a key, a key recorded twice: for two addresses, or by a rotation and then by the account it hashes to.
 14. **Addresses.** The rules of section 4.5: no transaction from an address that holds a contract, no contract at an address that has a key, no address listed twice in a genesis; an address of another network fails its checksum.
 15. **Blocks.** A copy of a block in which a signature was changed, or its last transaction repeated, does not match its header; a block that contains a transaction with an invalid signature is invalid.
-16. **Rotation.** The old key up to `H`, the new one from `H` + 1 and never both; a rotation without a valid second signature is refused; a vote of an earlier level is still verified, in evidence, with the key of that level.
-17. **Two clients.** The same keys, addresses, encodings, roots, verdicts on signatures and certificates, and results of execution in Python and in Go.
+16. **Rotation.** The old key up to `H`, the new one from `H` + 1 and never both; a rotation without a valid second signature is refused; a vote of an earlier level is still verified, in evidence, with the key of that level. Two rotations of one address in one block: the first is applied and the second fails. A rotation to a key that was ever recorded, or that takes a part of an earlier key of the address, is refused.
+17. **Two clients.** The same keys, addresses, encodings, roots, verdicts on signatures and certificates, and results of execution in Python and in Go. Each client verifies the signatures of the other, in the seven contexts, and both refuse the same invalid ones; they need not produce the same bytes, since signing is randomized. The two programs of section 16 already do this, outside the node.
 18. The existing consensus simulator and the tests with real processes, unchanged in what they assert.
+19. **State root.** A change in any field of the state changes the root, with both functions; the trie has one shape for one set of accounts, whatever the order in which they appeared.
 
 ## 11. Order of work
 
-1. **Freeze the profile.** This note and its vectors, once the conditions of section 16 are accepted.
+1. **Freeze the profile.** This note and its vectors, once the conditions of section 17 are accepted.
 2. **Implement**, behind the tests of section 10: the signature mechanism and the functions of the profile (derivation, contexts, hash, encoding, trees, text forms, addresses), with the official vectors; then formats and state (the new hash everywhere, network identifier, no fallback, the two roots of a block, genesis, devnet, wallet, explorer); then the key registry, `rotate_key` and size accounting.
 3. **Measure**, and choose the default block size cap.
 4. **Second client.** Conformance vectors and differential tests with the Go client. Release 1.2.0rc1.
@@ -520,7 +586,7 @@ A third review read the third version in full. It approved the architecture, ans
 
 | Point raised | Outcome |
 |---|---|
-| The derivation written out step by step, the ML-DSA seed stated as the input of KeyGen_internal, a vector of its own for the key of contracts, one seed for one identity | Section 3.2, vectors of section 15 |
+| The derivation written out step by step, the ML-DSA seed stated as the input of KeyGen_internal, a vector of its own for the key of contracts, one seed for one identity | Section 3.2, vectors of section 16 |
 | The genesis is the reference of trust for a wallet. A network identity is immutable: a fork is a new network, and its migration is defined apart | Accepted. Section 3.1 replaces the sentence that let a fork change its identifier at a given level |
 | The network identifier in every protocol hash; an exhaustive, normative table of domains; the exceptions stated | Section 4.1 |
 | Canonical JSON specified in full: integers and their limits, escapes, absent fields, and refusal at reception of bytes that are not canonical. No binary encoding needed | Accepted (decided). Section 4.3 |
@@ -540,50 +606,84 @@ Found while writing this version:
 | The keys of a map of data, such as the storage of a contract, are not ASCII field names | The same order applies to them. Section 4.3 |
 | The address of an account and the address of a contract were hashed under one domain | Two domains. Sections 4.1 and 4.5 |
 
-## 15. Reference vectors
+## 15. Fourth review, 12 November 2026
+
+A fourth review read the fourth version and its vectors, and recomputed part of them on its own: the PRK, the three outputs of the derivation on both networks, the Ed25519 public keys, digests of `H`, the Merkle roots for zero to eight items, the four witness leaves and the address. All of them matched. It approved the three points the fourth version had added, declared the architecture frozen (the scheme, the derivation, the hash function, the network identifier, the encoding, the trees, the registry and its rotation, the witness root), and listed what remained before the profile itself is.
+
+| Point raised | Outcome |
+|---|---|
+| The bytes hashed under every domain are not all stated: which data is canonical JSON, which is a string of bytes, and how each is laid out | Section 4.1, in two tables, with vectors for every domain |
+| `CREATE` and `CREATE2` in the Mini-EVM are not the formulas of Ethereum. Keep its semantics, or state a derivation of Kern, versioned and tested; say how the code is hashed | A derivation of Kern (**decided**). Section 8. It is what the code does today, with another hash function |
+| The 160 bits of the addresses of the Mini-EVM are not the margin of the rest, and not a post-quantum margin | Said in those words. Section 4.2 |
+| Two `rotate_key` of one address in one block: nothing says which key becomes current | One rotation per address and per block, the first in the order of the block (**decided**). Section 6.4 |
+| RFC 10073 forbids the reuse of component keys, and a key could be given to several addresses by rotations. Refuse a key that was already used, and any component already used in another key | A key is recorded once on a network, and a rotation takes no part of an earlier key of the address (**decided**). The chain does not refuse a key for one part shared with another address: section 6.4 says why |
+| Three values of each derivation come from one implementation of ML-DSA, and Go has one since version 1.27 | The Go program computes them. Section 16 |
+| Composite signatures are to be verified in both directions, in the seven contexts, with invalid cases. The two implementations need not give the same bytes | Done between the two programs, with a file of signatures. Section 16. Between the two clients: section 10, test 17 |
+| Say that `S` and `k` are read least significant byte first | Section 2.5 |
+| RFC 10073 was published in November 2026, not in October. Link the published text | Corrected. Section 2.1 and the references |
+| The schemas of the objects are to be normative, each tied to a version that can be named | One structure version for all of them. Section 4.3 |
+| A migration stays explicitly outside the profile | Unchanged. Section 3.1 |
+
+Found while writing this version:
+
+| Point | Outcome |
+|---|---|
+| The key registry has to be committed by the state root whichever function computes it | The root covers every field of the state with both functions (**decided**). Section 4.6 |
+| The leaf of the state trie hashes the number of bytes of its path: the paths `1` and `10` are hashed alike | The leaf states its number of bits. Section 4.6 |
+| The generation of both component seeds from one seed is allowed by section 3.1.1 of the RFC, not 3.1 | Section 3.2 |
+| The proposer draw hashes the hexadecimal text of the parent hash, without a domain | Its 48 bytes, under `kern.proposer`. Section 4.1 |
+| Precompile 0x01 returns 20 bytes of a hash of the Ed25519 key it verified, computed under the domain of account addresses | A domain of its own, `kern.evm.signer`. Sections 4.1 and 8 |
+
+## 16. Reference vectors
 
 The byte rules of this note are held by vectors kept in the repository:
 
-- `tests/vectors/kern/profile.json`: canonical encodings and the forms that must be refused; digests of `H`; Merkle roots for zero to eight items; two complete key derivations (seed, PRK, the three infos, the three outputs, the composite private key, the Ed25519 public keys); the seven contexts; an address on two networks; the four shapes of a witness leaf.
+- `tests/vectors/kern/profile.json`: canonical encodings and the forms that must be refused; digests of `H`; Merkle roots for zero to eight items; two complete key derivations (seed, PRK, the three infos, the three outputs, the composite private key, the public keys and the address); the seven contexts; an address on two networks; the four shapes of a witness leaf. And the data of every domain of section 4.1: the proposer draw of four rounds, the address of a contract, the three addresses of the Mini-EVM (`CREATE`, `CREATE2`, and the one precompile 0x01 returns), nine objects with their canonical JSON, a leaf of the state trie at ten depths, the root of the trie for zero to four accounts, and the state root with both functions.
 - `tests/vectors/kern/ed25519_edge_cases.json`: the 31 cases of section 2.5, each with the verdict of the rule and the verdict of a verifier that makes only the checks RFC 8032 requires. 16 of them are accepted by such a verifier and refused by the rule.
+- `tests/vectors/kern/composite_signatures.json`: composite signatures of one message by one key in the seven contexts, seven made by each of the two programs below, and seventeen cases that must be refused: a wrong component on either side, an ML-DSA component signed outside its Label, a signature that is too short or too long, a component alone, another purpose, another network, another message, and public keys that are not keys.
 
 Two implementations written independently reproduce them:
 
 - `tests/profile_reference.py` and `tests/ed25519_reference.py`, with the Python standard library: the profile as executable text, and Ed25519 written out from RFC 8032 with no library. `tests/test_profile_vectors.py` runs them in the test suite.
-- `tests/vectors/kern/profile_check.go`, with the Go standard library, run by hand: `go run profile_check.go profile.json ed25519_edge_cases.json`.
+- `tests/vectors/kern/profile_check.go`, with the Go standard library, from version 1.27. The continuous integration runs it on every pull request: `go run profile_check.go profile.json ed25519_edge_cases.json composite_signatures.json`.
 
 libsodium is a third opinion on the Ed25519 public keys and on the rule.
 
-Three values of each derivation need ML-DSA and come from one implementation only, the `cryptography` package: the digest of the ML-DSA public key, the digest of the composite public key, and the address they give. The Go standard library has ML-DSA from version 1.27. The tests delivered with the implementation check them, together with the official vectors of RFC 10073, NIST and Wycheproof, on which the construction of section 2 and the library have already been run outside the repository.
+**The values that need ML-DSA.** Three values of each derivation need the ML-DSA key pair: the digest of the ML-DSA public key, the digest of the composite public key, and the address they give. Two libraries compute them and agree: the `cryptography` package, over OpenSSL, when the vectors are built, and `crypto/mldsa` in the Go program.
+
+**Signatures, in both directions.** The Go program verifies the seven signatures made in Python and the seven it made itself, each in its context and refused in the six others, and refuses the seventeen invalid cases. It rebuilds its own signatures byte for byte: for that it signs in the deterministic mode of ML-DSA, where the Python program signs in the randomized mode. The two programs therefore do not produce the same bytes, and do not have to. In the other direction, the Python test suite checks what needs no ML-DSA: the message both components sign, and the Ed25519 half of the fourteen signatures under the rule of section 2.5. The whole verification in Python, both halves, was run outside the repository on the fourteen signatures and the seventeen cases, with the same results. It enters the test suite with the implementation, which brings the `cryptography` package as a dependency.
+
+The tests delivered with the implementation also run the official vectors of RFC 10073, NIST and Wycheproof, on which the construction of section 2 and the library have already been run outside the repository.
 
 Neither reference is the node, which still hashes with BLAKE2b and signs with Ed25519.
 
-## 16. Conditions for freezing the profile
+## 17. Conditions for freezing the profile
 
-The third review made the freeze depend on ten conditions. Where each stands:
+The third review made the freeze depend on ten conditions. The fourth found six of them satisfied and four in part. Where each stands:
 
-| Condition | In this version |
-|---|---|
-| Derivation: complete vectors from two implementations, and the derivation of the key for contracts | Sections 3.2 and 15. The public keys that need ML-DSA come from one implementation |
-| Hash: SHA3-384, exhaustive domains, network identifier in every protocol preimage | Section 4.1, vectors |
-| Merkle: recursive construction, empty tree, one item, odd numbers, vectors | Section 4.4, vectors |
-| JSON: the canonical profile in full, large integers, encoding tests | Section 4.3, vectors. The schema of each object comes with the formats |
-| Ed25519: subgroup, `A` and `R`, exact equation, adversarial cases | Section 2.5, 31 cases computed three ways |
-| Witness root: encoding of the leaves, link to the transaction identifier, place in the header | Section 6.3, vectors |
-| Rotation: proof of possession, level of activation, old keys kept | Section 6.4 |
-| Forks: rules for the network identifier and for the migration of state | Section 3.1: no change of identifier, a fork is a new network, its migration is not defined here |
-| Composition: claims limited to what RFC 10073 establishes | Section 2.3 |
-| Interoperability: Python and Go run the same positive and negative vectors | Section 15 for the profile. For the signatures themselves, with the two clients (section 10, test 17) |
+| Condition | Fourth review | In this version |
+|---|---|---|
+| Derivation: complete vectors from two implementations, and the derivation of the key for contracts | In part | Sections 3.2 and 16. The public keys that need ML-DSA come from two implementations |
+| Hash: SHA3-384, exhaustive domains, network identifier in every protocol preimage | In part | Section 4.1: the data of every domain to the byte, with vectors; the addresses of the Mini-EVM decided (section 8) |
+| Merkle: recursive construction, empty tree, one item, odd numbers, vectors | Satisfied | Section 4.4, vectors |
+| JSON: the canonical profile in full, large integers, encoding tests | Satisfied | Section 4.3, vectors. Every schema belongs to the structure version of the block |
+| Ed25519: subgroup, `A` and `R`, exact equation, adversarial cases | Satisfied | Section 2.5, with the byte order stated; 31 cases computed three ways |
+| Witness root: encoding of the leaves, link to the transaction identifier, place in the header | Satisfied | Section 6.3, vectors |
+| Rotation: proof of possession, level of activation, old keys kept | In part | Section 6.4: one rotation per address and per block, a key recorded once, no part of an earlier key |
+| Forks: rules for the network identifier and for the migration of state | Satisfied | Section 3.1: no change of identifier, a fork is a new network, its migration is not defined here |
+| Composition: claims limited to what RFC 10073 establishes | Satisfied | Section 2.3 |
+| Interoperability: Python and Go run the same positive and negative vectors | In part | Section 16: the profile, the keys that need ML-DSA, and composite signatures in both directions between the two programs. Between the two clients, with the node: section 10, test 17 |
 
 What the freeze does not wait for: an external cryptographic audit, which comes with the implementation and before any open network.
 
 ## References
 
-- IETF, Composite ML-DSA, RFC 10073, October 2026, from [draft-ietf-lamps-pq-composite-sigs-19](https://datatracker.ietf.org/doc/draft-ietf-lamps-pq-composite-sigs/19/). The section numbers quoted here are those of the published text. RFC 9955, which it cites for the notions of non-separability.
+- IETF, Composite Module-Lattice-Based Digital Signature Algorithm (ML-DSA) for Use in X.509 Public Key Infrastructure, [RFC 10073](https://www.rfc-editor.org/rfc/rfc10073.html), November 2026 (until then draft-ietf-lamps-pq-composite-sigs). The section numbers quoted here are those of the published text. RFC 9955, which it cites for the notions of non-separability.
 - IETF, HKDF, [RFC 5869](https://www.rfc-editor.org/rfc/rfc5869); Ed25519, [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032); Certificate Transparency, [RFC 6962](https://www.rfc-editor.org/rfc/rfc6962), for the Merkle tree; JSON Canonicalization Scheme, [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785).
 - NIST, [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final), Module-Lattice-Based Digital Signature Standard, August 2024; [FIPS 202](https://csrc.nist.gov/pubs/fips/202/final), SHA-3 Standard; [FIPS 205](https://csrc.nist.gov/pubs/fips/205/final).
 - BSI TR-02102-1, version 2026-01, as summarized by [Fraunhofer AISEC](https://www.aisec.fraunhofer.de/en/spotlights/Competence-Center-PQC/developments-in-pqc.html).
 - ANSSI, [rules and recommendations on the choice and sizing of cryptographic mechanisms](https://messervices.cyber.gouv.fr/documents-guides/anssi-guide-mecanismes-crypto-3.00.pdf), version 3.00, March 2026 (section 2.1.4 on hash functions); [selection guide for cryptographic algorithms](https://messervices.cyber.gouv.fr/documents-guides/anssi-guide-selection_crypto-1.0.pdf), 2021; [views on the post-quantum cryptography transition](https://cyber.gouv.fr/publications/anssi-views-post-quantum-cryptography-transition), 2022, and [questions and answers](https://cyber.gouv.fr/cryptographie-post-quantique-faq).
 - Project Wycheproof, [test vectors](https://github.com/C2SP/wycheproof).
+- Go, package [crypto/mldsa](https://pkg.go.dev/crypto/mldsa), in the standard library from version 1.27.
 - G. Brassard, P. Høyer and A. Tapp, [Quantum Algorithm for the Collision Problem](https://arxiv.org/abs/quant-ph/9705002), 1997.
 - K. Chalkias, F. Garillot and V. Nikolaenko, [Taming the many EdDSAs](https://eprint.iacr.org/2020/1244), 2020.

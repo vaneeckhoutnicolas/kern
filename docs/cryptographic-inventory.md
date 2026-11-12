@@ -43,7 +43,7 @@ In-protocol hashing is **BLAKE2b** ([RFC 7693](https://www.rfc-editor.org/rfc/rf
 | `kern.trie.key` | 256 bits | The position of an address in the state trie | `address_to_key`, `kern/trie.py` |
 | `kern.storage` | 256 bits | The storage of a contract, inside its trie leaf | `trie_from_state`, `kern/trie.py` |
 | `kern.code` | 256 bits | The code of a contract, inside its trie leaf | `trie_from_state`, `kern/trie.py` |
-| `kern.addr` | 160 bits | An account (hash of its public key) or a contract (hash of the transaction that originated it) | `address_from_pubkey`, `kern/crypto.py`; `derive_contract_address`, `kern/chain.py` |
+| `kern.addr` | 160 bits | An account (hash of its public key) or a contract (hash of the transaction that originated it); also what precompile 0x01 returns for the key it verified | `address_from_pubkey`, `kern/crypto.py`; `derive_contract_address`, `kern/chain.py`; `_precompile_ecrecover`, `kern/evm/frames.py` |
 | `kern.batch` | 256 bits | A rollup batch | `Batch.hash`, `kern/rollup.py` |
 | `kern.rollup.program` | 256 bits | The program a rollup batch executed | `program_hash`, `kern/rollup.py` |
 | `kern.mailbox` | 256 bits | A forced inclusion request | `kern/forced_inclusion.py` |
@@ -131,7 +131,7 @@ What the plan does not solve:
 - **Zero-knowledge claims.** Groth16 on BN254 stays classical until a proof system built on hash functions is added.
 - **Certainty.** ML-DSA is a standard believed to resist quantum computers. It is not proven to, and no scheme is.
 
-The [design note on hybrid signatures](hybrid-signatures.md) is the profile of this plan. After three reviews it settles the scheme (Composite ML-DSA as standardized by the IETF, with ML-DSA-65), a network identifier drawn at random in the genesis and present in every hash, keys derived for it with HKDF-SHA-512, SHA3-384 and 384 bits for every commitment, identifier and address, one canonical JSON encoding, Merkle trees on the model of RFC 6962, base64 text for keys and signatures, one rule for the verification of Ed25519, and the account key registry in the same release. Its byte rules are held by reference vectors that two independent implementations reproduce. It is frozen once the conditions listed in its last section are accepted.
+The [design note on hybrid signatures](hybrid-signatures.md) is the profile of this plan. After four reviews it settles the scheme (Composite ML-DSA as standardized by the IETF, with ML-DSA-65), a network identifier drawn at random in the genesis and present in every hash, keys derived for it with HKDF-SHA-512, SHA3-384 and 384 bits for every commitment, identifier and address, one canonical JSON encoding, Merkle trees on the model of RFC 6962, base64 text for keys and signatures, one rule for the verification of Ed25519, a state root that covers every field of the state, and the account key registry in the same release, in which a public key is recorded once. Its byte rules, down to the data hashed under every domain, are held by reference vectors that two independent implementations reproduce, in Python and in Go; the two also verify each other's composite signatures. It is frozen once the conditions listed in its last section are accepted.
 
 Left for later, and stated as such in the note:
 
