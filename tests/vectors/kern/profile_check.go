@@ -897,7 +897,8 @@ func main() {
 	for _, c := range v.State {
 		state := mustParse(c.State).(map[string]any)
 		hashed := hashedState(network, state)
-		check("state root, "+c.What, same(hashed, c.Hashed) && same(h("kern.state", network, hashed), c.Root))
+		// The states that hold a key registry give their root only.
+		check("state root, "+c.What, (c.Hashed == "" || same(hashed, c.Hashed)) && same(h("kern.state", network, hashed), c.Root))
 	}
 
 	raw, err = os.ReadFile(os.Args[2])

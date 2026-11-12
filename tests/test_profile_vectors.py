@@ -410,13 +410,14 @@ def test_the_state_trie_has_one_shape_for_one_set_of_accounts():
 
 
 def test_the_state_root_covers_every_field_of_the_state_with_both_functions():
-    as_json, as_trie, other_stake = VECTORS["state"]
+    as_json, as_trie, other_stake = VECTORS["state"][:3]
     for entry in VECTORS["state"]:
-        hashed = ref.hashed_state(NETWORK, entry["state"])
-        assert ref.canonical_json(hashed).hex() == entry["hashed"]
-        assert ref.H("kern.state", NETWORK, H(entry["hashed"])).hex() == entry["root"]
+        hashed = ref.canonical_json(ref.hashed_state(NETWORK, entry["state"]))
+        assert hashed.hex() == entry.get("hashed", hashed.hex())           # given for the states without a registry
+        assert ref.H("kern.state", NETWORK, hashed).hex() == entry["root"]
         assert ref.state_root(NETWORK, entry["state"]).hex() == entry["root"]
-    assert len({entry["root"] for entry in VECTORS["state"]}) == 3
+    assert len(VECTORS["state"]) == 9 == len({entry["root"] for entry in VECTORS["state"]})
+    assert all("hashed" in entry for entry in VECTORS["state"][:3])
     # With the function json, the object that is hashed is the state, whole.
     state = as_json["state"]
     assert state["state_root_function"] == "json" and ref.hashed_state(NETWORK, state) == state
@@ -445,6 +446,48 @@ def test_the_state_root_covers_every_field_of_the_state_with_both_functions():
                 dict(state, state_root_function="other")):
         with pytest.raises(ValueError):
             ref.state_root(NETWORK, bad)
+
+
+def test_a_change_in_the_key_registry_changes_the_state_root_with_both_functions():
+    """The registry is what the rule of section 4.6 was written for: the key
+    that is current for an address, the keys it had before, and the level
+    from which each was current."""
+    import base64
+
+    patterns = [bytes((m * i + c) % 256 for i in range(1984)) for m, c in ((7, 3), (11, 5), (13, 7))]
+    first, rotated, another = (ref.key_text(key) for key in patterns)
+    by_function = {"json": VECTORS["state"][3:6], "trie": VECTORS["state"][6:9]}
+    for function, (base, later, other_key) in by_function.items():
+        states = [entry["state"] for entry in (base, later, other_key)]
+        assert all(state["state_root_function"] == function for state in states)
+        (address,) = states[0]["keys"]
+        # A first key, then the key a rotation gave, current from the level after its block.
+        assert states[0]["keys"][address] == [{"from": 0, "public_key": first}, {"from": 121, "public_key": rotated}]
+        assert states[1]["keys"][address] == [{"from": 0, "public_key": first}, {"from": 122, "public_key": rotated}]
+        assert states[2]["keys"][address] == [{"from": 0, "public_key": first}, {"from": 121, "public_key": another}]
+        # Nothing else differs between the three states, and each has its own root.
+        assert all({k: v for k, v in state.items() if k != "keys"} ==
+                   {k: v for k, v in states[0].items() if k != "keys"} for state in states)
+        assert len({base["root"], later["root"], other_key["root"]}) == 3
+        for state in states:
+            hashed = ref.hashed_state(NETWORK, state)
+            assert hashed["keys"] == state["keys"]                        # hashed as it is, with both functions
+            assert ("accounts_root" in hashed) == (function == "trie")
+        # The registry is not in the trie: the root of the accounts does not move, the state root does.
+        assert len({ref.accounts_root(NETWORK, state) for state in states}) == 1
+        # Without the registry the root is the one of the first vectors: the registry is what changed it.
+        bare = {k: v for k, v in states[0].items() if k != "keys"}
+        assert ref.state_root(NETWORK, bare).hex() == VECTORS["state"][0 if function == "json" else 1]["root"]
+        assert ref.state_root(NETWORK, bare).hex() != base["root"]
+    # The same registry with the two functions: two roots.
+    assert by_function["json"][0]["root"] != by_function["trie"][0]["root"]
+    # A public key in the registry is its text: kpk1. and 1,984 bytes in base64url without padding.
+    for text, key in zip((first, rotated, another), patterns):
+        assert len(text) == 2651 and text.startswith("kpk1.") and "=" not in text
+        assert base64.urlsafe_b64decode(text[5:] + "==") == key
+    with pytest.raises(ValueError):
+        ref.key_text(patterns[0][:-1])
+    assert "kpk1." in VECTORS["state_registry_rule"] and "`kpk1.`" in NOTE
 
 
 def test_an_account_of_the_trie_is_a_balance_a_nonce_and_for_a_contract_two_hashes():

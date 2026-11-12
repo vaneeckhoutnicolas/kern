@@ -23,6 +23,7 @@ given, which is the output of `go run profile_check.go -sign`.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -211,6 +212,14 @@ def address_from_hash(network_id: bytes, digest: bytes) -> str:
 
 def account_address(network_id: bytes, public_key: bytes) -> str:
     return address_from_hash(network_id, H("kern.addr", network_id, bytes([SCHEME]) + public_key))
+
+
+def key_text(public_key: bytes) -> str:
+    """The text form of a public key: `kpk1.` and its 1,984 bytes in
+    base64url without padding, 2,651 characters."""
+    if len(public_key) != PUBLIC_KEY_BYTES:
+        raise ValueError("public key of 1,984 bytes")
+    return "kpk1." + base64.urlsafe_b64encode(public_key).rstrip(b"=").decode("ascii")
 
 
 def contract_address(network_id: bytes, transaction_id: bytes) -> str:
@@ -532,6 +541,20 @@ def build_vectors() -> dict:
     }
     in_trie = dict(state, state_root_function="trie")
     other_validators = dict(in_trie, validators=[{"address": a, "stake": 101}])
+    # A key registry in the state: the first key of an account, then the key a rotation
+    # gave it, current from level 121. Its shape is an example; that it is hashed is the rule.
+    first_key, rotated_key, another_key = (
+        key_text(bytes((m * i + c) % 256 for i in range(PUBLIC_KEY_BYTES))) for m, c in ((7, 3), (11, 5), (13, 7)))
+
+    def registry(level: int, current: str) -> dict:
+        return {a: [{"from": 0, "public_key": first_key}, {"from": level, "public_key": current}]}
+
+    with_registry = [
+        (f"the function {function}, {what}", dict(state, state_root_function=function, keys=keys))
+        for function in ("json", "trie")
+        for what, keys in (("with a key registry", registry(121, rotated_key)),
+                           ("the rotated key current one level later: another root", registry(122, rotated_key)),
+                           ("another key given by the rotation: another root", registry(121, another_key)))]
     accounts = [{"address": x, "position": trie_key(network, x).hex(), "object": account_object(network, state, x),
                  "value": canonical_json(account_object(network, state, x)).hex()} for x in sorted((a, b, c, d))]
     entries = [(bytes.fromhex(x["position"]), bytes.fromhex(x["value"])) for x in accounts]
@@ -598,7 +621,13 @@ def build_vectors() -> dict:
                    "root": state_root(network, s).hex()}
                   for what, s in (("the function json: the state itself", state),
                                   ("the function trie: the accounts replaced by their root", in_trie),
-                                  ("the function trie, another stake: another root", other_validators))],
+                                  ("the function trie, another stake: another root", other_validators))]
+                 + [{"what": what, "state": s, "root": state_root(network, s).hex()} for what, s in with_registry],
+        "state_registry_rule": "In the states that hold `keys`, a public key is the text kpk1. of 1,984 bytes that "
+                               "are not a real key: byte i is (7 * i + 3), (11 * i + 5) or (13 * i + 7) mod 256. "
+                               "`from` is the level from which the key is current. The shape of the registry is "
+                               "an example: its schema comes with the registry. What these vectors fix is that "
+                               "it is hashed with the rest of the state, with both functions.",
     }
 
 
