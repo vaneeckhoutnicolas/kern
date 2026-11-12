@@ -41,3 +41,19 @@ jobs:
           pip install mypy
       - name: Type check (kern/)
         run: mypy kern/
+
+  profile-vectors:
+    name: profile vectors (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: "1.27"       # crypto/mldsa is in the standard library from 1.27
+          cache: false             # one file, standard library only: nothing to cache
+      # A second implementation of the signature profile (docs/hybrid-signatures.md),
+      # independent of the Python reference: same vectors, same verdicts, and the
+      # composite signatures of each program verified by the other.
+      - name: Recompute the reference vectors with the Go standard library
+        working-directory: tests/vectors/kern
+        run: go run profile_check.go profile.json ed25519_edge_cases.json composite_signatures.json

@@ -42,7 +42,13 @@ grep '^version' pyproject.toml
 
 # 3. Run the full test suite
 pytest tests/
-# Expected: 1114 passed, none skipped (v1.1-rc)
+# Expected: 1137 passed, none skipped (v1.1-rc)
+
+# 3b. Recompute the reference vectors of the signature profile with the Go
+#     standard library (Go 1.27 or later; the CI does it on every pull request)
+(cd tests/vectors/kern && \
+    go run profile_check.go profile.json ed25519_edge_cases.json composite_signatures.json)
+# Expected last line: same values as the Python reference
 
 # 4. Run the originality audit
 grep -rni "copied from\|adapted from\|fork of" --include="*.py" . | \
