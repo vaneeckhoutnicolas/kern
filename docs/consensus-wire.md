@@ -73,7 +73,9 @@ before step 3, and only it can go through step 4. The node remembers it
 whether or not it passes steps 3 and 4. One exception: a proof that does
 not verify is not signed by the proposer and a relay may have damaged it,
 so the same signed PROPOSE arriving later with a valid proof still goes
-on. Any other signed PROPOSE for the same (level, round), for a
+on. Two PROPOSE messages are the same when what they sign is the same;
+the bytes of the two signatures are not compared, since one statement
+can be signed more than once. Any other signed PROPOSE for the same (level, round), for a
 different block or for the same block with another valid round, is
 never validated, kept or voted on, even when the first one was invalid:
 the two signed PROPOSE messages are recorded as proposal equivocation
