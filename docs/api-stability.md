@@ -108,37 +108,49 @@ The function `state_root_hex(state)` is governance-amendable (the `state_root_fu
 
 ### 2.5 Address format
 
-Addresses are `kn1` followed by 33 base58check characters, derived as:
+Addresses are `kn1` followed by 33 base58check characters, 36 characters in all, derived as:
 ```
-address = base58check_encode(0x0142 || blake2b(pubkey, digest_size=20))
+address = base58check_encode(0x05959b || blake2b(pubkey, digest_size=20, key="kern.addr"))
 ```
+
+`base58check_encode` appends a checksum, the first 4 bytes of the unkeyed blake2b-256 of the prefixed payload, and writes the result in base58.
 
 **Frozen**: the prefix, the hash, the encoding.
 
-Public keys are `9X` followed by 50+ base58check characters, derived as `base58check_encode(0x0d0f || pubkey_32_bytes)`.
+Public keys are 53 characters starting with `9XY`, derived as `base58check_encode(0x0d0f25 || pubkey_32_bytes)`.
 
-Signatures are `9X` followed by 100+ base58check characters, derived as `base58check_encode(0x097f || sig_64_bytes)`.
+Signatures are 98 characters starting with `9XZL`, derived as `base58check_encode(0x09f5cd86 || sig_64_bytes)`.
+
+These values are read from [`kern/crypto.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/crypto.py) and checked by `tests/test_crypto_inventory.py`.
 
 ### 2.6 Hash function
 
-All in-protocol hashing uses **blake2b-256** (32-byte output) with **domain-separated keys**:
+All in-protocol hashing uses **blake2b** with **domain-separated keys**. Outputs are 256 bits, except addresses (160 bits) and three identifiers (128 bits). The domains behind the block, transaction and state identities:
 
-| Domain | Key | Use |
+| Key | Output | Use |
 |---|---|---|
-| `kern.tx.hash` | Transaction identity hash | Transaction merkle root, mempool key |
-| `kern.block.hash` | Block header hash | Chain links |
-| `kern.state` | State commitment (legacy "json" mode) | Pre-trie state root |
-| `kern.trie.node` | Trie internal node | State trie hashing |
-| `kern.trie.leaf` | Trie leaf node | State trie hashing |
-| `kern.addr` | Address derivation | base58check input |
+| `kern.tx` | 256 bits | Transaction identity hash: transaction merkle root, mempool key |
+| `kern.block` | 256 bits | Block header hash: chain links |
+| `kern.merkle` | 256 bits | Merkle tree of the transactions of a block |
+| `kern.state` | 256 bits | State commitment in "json" mode (pre-trie state root) |
+| `kern.trie.branch` | 256 bits | Trie internal node |
+| `kern.trie.leaf` | 256 bits | Trie leaf node |
+| `kern.trie.key` | 256 bits | Trie key of an address |
+| `kern.storage` | 256 bits | Contract storage, inside a trie leaf |
+| `kern.code` | 256 bits | Contract code, inside a trie leaf |
+| `kern.addr` | 160 bits | Address derivation (base58check input) |
 
-**Frozen**: blake2b-256 as the hash function. Adding more domains is allowed (no break); changing existing ones is a protocol amendment.
+The complete table, with the domains of rollups, governance, attestations and the Mini-EVM, is in the [cryptographic inventory](cryptographic-inventory.md), section 1.2, and belongs to this frozen surface: an alternative client must reproduce all of them. A test compares both tables with the code.
+
+**Frozen**: blake2b as the hash function, and the keys above. Adding more domains is allowed (no break); changing existing ones is a protocol amendment.
 
 ### 2.7 Signature scheme
 
 **Ed25519** for all signatures (transaction, block, endorsement, governance vote).
 
 **Frozen**. A change to a different curve would require a hard fork (validators would need to re-key).
+
+Planned before the freeze takes effect: hybrid signatures, Ed25519 together with the post-quantum ML-DSA, from the genesis of the first network beyond the devnet. The plan and its cost are in the [cryptographic inventory](cryptographic-inventory.md); none of it is implemented, and the formats of sections 2.1 to 2.7 are those of the devnet until it is.
 
 ### 2.8 KVM (EVM rollup) opcode set
 
