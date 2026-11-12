@@ -129,6 +129,8 @@ What the plan does not solve:
 - **Zero-knowledge claims.** Groth16 on BN254 stays classical until a proof system built on hash functions is added.
 - **Certainty.** ML-DSA is a standard believed to resist quantum computers. It is not proven to, and no scheme is.
 
+The [design note on hybrid signatures](hybrid-signatures.md) proposes an answer to each of the points below: Composite ML-DSA as standardized by the IETF, with ML-DSA-65. They stay open until that note has been reviewed.
+
 Decisions still open:
 
 - ML-DSA-44 or ML-DSA-65.

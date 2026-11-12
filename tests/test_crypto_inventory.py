@@ -12,7 +12,9 @@ with the inventory and with the formats frozen in docs/api-stability.md.
 They also keep the public texts honest: while every signature is plain
 Ed25519, the inventory and the README must say that no part of Kern is
 post-quantum, and any other line that mentions quantum computers has to
-link to the inventory, where that status is stated.
+link to the inventory, where that status is stated. The design note on
+hybrid signatures is the one other page allowed to discuss the subject,
+for as long as it says at its top that nothing in it is implemented.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from kern.transaction import make_transfer
 
 ROOT = Path(__file__).resolve().parent.parent
 INVENTORY = ROOT / "docs" / "cryptographic-inventory.md"
+DESIGN = ROOT / "docs" / "hybrid-signatures.md"
 STABILITY = ROOT / "docs" / "api-stability.md"
 README = ROOT / "README.md"
 
@@ -340,10 +343,16 @@ def _public_texts() -> list[Path]:
 
 def test_every_mention_of_quantum_computers_links_to_the_inventory():
     """A sentence about quantum resistance, anywhere in the public texts,
-    must send the reader to the page that states the current status."""
+    must send the reader to the page that states the current status. The
+    design note is exempt because its first lines do exactly that."""
+    design = DESIGN.read_text(encoding="utf-8")
+    opening = design.split("\n## ", 1)[0]
+    assert "Draft for review. Nothing in this note is implemented." in opening
+    assert "cryptographic-inventory.md" in opening
+    assert "no part of Kern is post-quantum" in opening
     loose = []
     for path in _public_texts():
-        if path == INVENTORY:
+        if path in (INVENTORY, DESIGN):
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             text = line.lower().replace("quantum-cortex", "")      # the sibling repository
@@ -362,3 +371,6 @@ def test_the_inventory_can_be_found():
     inventory = _inventory()
     assert "tests/test_crypto_inventory.py" in inventory
     assert "## 5. What Kern does not claim" in inventory
+    # The plan of the inventory and the design that details it point at each other.
+    assert "hybrid-signatures.md" in _section(inventory, "## 3. ")
+    assert re.search(r"^\s+- [^:\n]+: hybrid-signatures\.md$", nav, re.M)
