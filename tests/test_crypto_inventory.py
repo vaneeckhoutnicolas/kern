@@ -189,6 +189,9 @@ def test_hash_algorithms_and_unkeyed_uses_are_the_documented_ones():
     for name in ("BLAKE2b", "SHA-256", "SHA3-256", "RIPEMD-160", "Keccak-256",
                  "`select_proposer`", "checksum", "0x09"):
         assert name in inventory, name
+    # Review of 12 November 2026: collision search by a quantum computer has
+    # a generic bound of its own, which the inventory used to wave away.
+    assert "2^(n/3)" in inventory and "no practical gain" not in inventory
 
 
 # ---------------------------------------------------------------------------
