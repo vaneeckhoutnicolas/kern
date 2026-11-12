@@ -1,0 +1,285 @@
+{
+ "description": "Ed25519 signatures on which implementations disagree. `valid` is the verdict of Kern (docs/hybrid-signatures.md, section 2.5). `lenient` is the verdict of a verifier that makes only the checks RFC 8032 requires and compares the bytes of R.",
+ "generator": "tests/ed25519_reference.py",
+ "cases": [
+  {
+   "name": "honest",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421178d4a6946b0f1432e99608bc71f3a3910a918237620a040d1dbc66dae39bf0d",
+   "comment": "An ordinary signature.",
+   "valid": true,
+   "lenient": true
+  },
+  {
+   "name": "honest, another message",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e21",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421178d4a6946b0f1432e99608bc71f3a3910a918237620a040d1dbc66dae39bf0d",
+   "comment": "An ordinary signature, checked against another message.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "S plus the group order",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421046140c66013049c0436582ea619194e10a918237620a040d1dbc66dae39bf1d",
+   "comment": "The scalar S of a valid signature replaced by S + L: the same value modulo the group order, another encoding.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "S with the top bits set",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421178d4a6946b0f1432e99608bc71f3a3910a918237620a040d1dbc66dae39bfed",
+   "comment": "The scalar S of a valid signature with its three top bits set.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "public key of order 1 (canonical), R of order 1, S zero",
+   "public_key": "0100000000000000000000000000000000000000000000000000000000000000",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 1 (sign bit set although x is 0), R of order 1, S zero",
+   "public_key": "0100000000000000000000000000000000000000000000000000000000000080",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 1 (y written as y + p), R of order 1, S zero",
+   "public_key": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 2 (canonical), R of order 2, S zero",
+   "public_key": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 2 (sign bit set although x is 0), R of order 1, S zero",
+   "public_key": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+   "message": "6b65726e20736d616c6c206f726465722031",
+   "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 4, point 1 (canonical), R of order 2, S zero",
+   "public_key": "0000000000000000000000000000000000000000000000000000000000000000",
+   "message": "6b65726e20736d616c6c206f726465722032",
+   "signature": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 4, point 1 (y written as y + p), R of order 2, S zero",
+   "public_key": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 4, point 2 (canonical), R of order 1, S zero",
+   "public_key": "0000000000000000000000000000000000000000000000000000000000000080",
+   "message": "6b65726e20736d616c6c206f726465722032",
+   "signature": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 4, point 2 (y written as y + p), R of order 4, S zero",
+   "public_key": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "00000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 8, point 1 (canonical), R of order 8, S zero",
+   "public_key": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa0000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 8, point 2 (canonical), R of order 8, S zero",
+   "public_key": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc050000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 8, point 3 (canonical), R of order 8, S zero",
+   "public_key": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc850000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of order 8, point 4 (canonical), R of order 8, S zero",
+   "public_key": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+   "message": "6b65726e20736d616c6c206f726465722030",
+   "signature": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc050000000000000000000000000000000000000000000000000000000000000000",
+   "comment": "Nobody holds a secret for this key. [S]B = R + [k]A holds because everything lies in the small subgroup.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "honest key, R is the identity",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e206964656e746974792052",
+   "signature": "010000000000000000000000000000000000000000000000000000000000000056a4802c7254143761c9637f637224316f14c60ab3becc0dce42728a559a4102",
+   "comment": "Made by the key holder with the nonce 0. [S]B = R + [k]A holds exactly, and S / k is the secret scalar: such a signature gives the key away.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "honest key, R is the identity written as p + 1",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e206964656e746974792052",
+   "signature": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7faa0d0bdd5add8fd5d65038cfb014cd71af44a56f1dd45b2490f9681537f7da0a",
+   "comment": "The same with the identity encoded as y = p + 1.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "honest key, R is the identity with the sign bit set",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e206964656e746974792052",
+   "signature": "0100000000000000000000000000000000000000000000000000000000000080d1e5020d84370d16c2835e69040c1c11e6883955f818bb694df2e2de1fb66b05",
+   "comment": "The same with the sign bit set although x is 0.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "honest key, R of order 8",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e206964656e746974792052",
+   "signature": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc052800b88252c9c586b27bce85290ff6cbf442d58e042047ef96817e9c31f6c200",
+   "comment": "8[S]B = 8R + 8[k]A holds, [S]B = R + [k]A does not.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "public key of mixed order, challenge multiple of 8",
+   "public_key": "1bad1d43116a7bc3268364dc50420617e512f41f3f6067b2348f4004ae796f60",
+   "message": "6b65726e206d69786564206b6579203232",
+   "signature": "ce0835d5eef35d3d7194904428ab19ee30b76afce559883b3b3542994e42af45aec5eb0e405b476e6a251711f4de42b836ac6024dc824dda421906ac4c75ca04",
+   "comment": "The key is an ordinary key plus a point of order 8. [S]B = R + [k]A holds because [k] cancels the small part, but the key is not in the subgroup of prime order.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key of mixed order, challenge not multiple of 8",
+   "public_key": "1bad1d43116a7bc3268364dc50420617e512f41f3f6067b2348f4004ae796f60",
+   "message": "6b65726e206d69786564206b65792030",
+   "signature": "ce0835d5eef35d3d7194904428ab19ee30b76afce559883b3b3542994e42af456e780ccbc1087a44b015116353f0e413aae97bdedf366a8e390eaf4670396309",
+   "comment": "8[S]B = 8R + 8[k]A holds, [S]B = R + [k]A does not.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "honest key, R of mixed order",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e206d697865642052",
+   "signature": "3deb8ca9e3d031548d729bed3aa7f3840e256888362f1ea239c189f03b281f24b57dd366f1bdad71189aa8aba2fe4f512fdd782cce3597032f64be36a7a50a07",
+   "comment": "8[S]B = 8R + 8[k]A holds, [S]B = R + [k]A does not.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "public key and R of mixed order, small parts cancel",
+   "public_key": "1bad1d43116a7bc3268364dc50420617e512f41f3f6067b2348f4004ae796f60",
+   "message": "6b65726e206d6978656420626f74682031",
+   "signature": "dc35059e76052514bbade7fb3780f1a343b6dc9e7a1981be8bd3c24303aac26d25b7d0559910461042d3847e40c1fb92765ade5d91aab18af5a8a3c8d08ac603",
+   "comment": "[S]B = R + [k]A holds exactly, with a key and a nonce point that both carry a point of small order: neither is in the subgroup of prime order.",
+   "valid": false,
+   "lenient": true
+  },
+  {
+   "name": "public key written as y + p (y = 3), ordinary signature bytes",
+   "public_key": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+   "message": "6b65726e",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421178d4a6946b0f1432e99608bc71f3a3910a918237620a040d1dbc66dae39bf0d",
+   "comment": "An encoding that is not canonical, of a point nobody holds a secret for.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "public key of 31 bytes",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc589461",
+   "message": "6b65726e",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421178d4a6946b0f1432e99608bc71f3a3910a918237620a040d1dbc66dae39bf0d",
+   "comment": "Truncated public key.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "public key of 33 bytes",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d00",
+   "message": "6b65726e",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421178d4a6946b0f1432e99608bc71f3a3910a918237620a040d1dbc66dae39bf0d",
+   "comment": "Public key with one more byte.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "signature of 63 bytes",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421178d4a6946b0f1432e99608bc71f3a3910a918237620a040d1dbc66dae39bf",
+   "comment": "Truncated signature.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "signature of 65 bytes",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "message": "6b65726e",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421178d4a6946b0f1432e99608bc71f3a3910a918237620a040d1dbc66dae39bf0d00",
+   "comment": "Signature with one more byte.",
+   "valid": false,
+   "lenient": false
+  },
+  {
+   "name": "public key that is not a point",
+   "public_key": "0200000000000000000000000000000000000000000000000000000000000000",
+   "message": "6b65726e",
+   "signature": "ff657608fc94de147a66ea827a5145e0c3bc3d6a22a50393f7a44574a865f421178d4a6946b0f1432e99608bc71f3a3910a918237620a040d1dbc66dae39bf0d",
+   "comment": "No point of the curve has y = 2.",
+   "valid": false,
+   "lenient": false
+  }
+ ]
+}

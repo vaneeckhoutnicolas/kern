@@ -121,7 +121,7 @@ What is planned:
 6. **Peer connections.** The authenticated handshake planned with the hardening of the network layer uses a hybrid key agreement (X25519 with ML-KEM, FIPS 203).
 7. **Proofs and identifiers.** The field `proof_system` of a claim already names its proof system. `groth16-bn254` stays available and is documented as classical. The three 128-bit identifiers move to 384 bits.
 8. **Hashes.** Every hash of the protocol (block headers, transactions, Merkle roots, the state and its trie, rollup batches, identifiers, addresses) moves to 384 bits, and from BLAKE2b to SHA3-384 with a domain name in front of the data. BLAKE2b has no known weakness; SHA3-384 is a standard of NIST and belongs to the families that ANSSI recommends, and the change costs nothing more while every hash changes size.
-9. **Network identity.** A network is identified by 32 random bytes written in its genesis, not by its name. Keys are derived for that identifier and every signature is made for it.
+9. **Network identity.** A network is identified by 32 random bytes written in its genesis, not by its name. Keys are derived for that identifier, every signature is made for it, and every hash of the protocol includes it.
 
 Kern keys are already derived from a seed. Research on EdDSA chains shows that the seed lets an owner prove ownership even after the curve is broken ([ePrint 2025/1368](https://eprint.iacr.org/2025/1368)). Hybrid keys from genesis make that recovery path unnecessary; it remains a fallback.
 
@@ -131,7 +131,7 @@ What the plan does not solve:
 - **Zero-knowledge claims.** Groth16 on BN254 stays classical until a proof system built on hash functions is added.
 - **Certainty.** ML-DSA is a standard believed to resist quantum computers. It is not proven to, and no scheme is.
 
-The [design note on hybrid signatures](hybrid-signatures.md) is the profile of this plan. After two reviews it settles the scheme (Composite ML-DSA as standardized by the IETF, with ML-DSA-65), a network identifier drawn at random in the genesis, keys derived for it with HKDF-SHA-512, SHA3-384 and 384 bits for every commitment, identifier and address, base64 text for keys and signatures, one written rule for the verification of Ed25519, and the account key registry in the same release. It is frozen after a last review limited to what changed.
+The [design note on hybrid signatures](hybrid-signatures.md) is the profile of this plan. After three reviews it settles the scheme (Composite ML-DSA as standardized by the IETF, with ML-DSA-65), a network identifier drawn at random in the genesis and present in every hash, keys derived for it with HKDF-SHA-512, SHA3-384 and 384 bits for every commitment, identifier and address, one canonical JSON encoding, Merkle trees on the model of RFC 6962, base64 text for keys and signatures, one rule for the verification of Ed25519, and the account key registry in the same release. Its byte rules are held by reference vectors that two independent implementations reproduce. It is frozen once the conditions listed in its last section are accepted.
 
 Left for later, and stated as such in the note:
 
