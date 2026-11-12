@@ -145,6 +145,13 @@ class ConsensusMessage:
             d["valid_round"] = self.valid_round
         return json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
+    def same_statement(self, other: "ConsensusMessage") -> bool:
+        """True if both messages say the same thing: what is signed is
+        equal, whatever the bytes of the two signatures. A statement can
+        be signed more than once, and every signature of it stands for the
+        same message (review of 12 November 2026)."""
+        return self._signed_payload() == other._signed_payload()
+
     def sign(self, kp: KernKeypair) -> None:
         if kp.address != self.validator:
             raise ValueError("keypair does not match validator address")

@@ -228,6 +228,9 @@ class Node:
         # unvalidated and the two signed messages stay available as evidence.
         # Review of 7e005a6: only that signed message can go further; any
         # other one for the round, even for the same block, is evidence.
+        # Review of 12 November 2026: "that message" is what the proposer
+        # signed, not the bytes of its signature. The same statement signed
+        # again is the same proposal.
         self._round_proposal: Dict[Tuple[int, int], Tuple[str, ConsensusMessage, dict]] = {}
         # (level, hash) of proposed blocks that failed validation: checked once.
         self._invalid_proposals: Set[Tuple[int, str]] = set()
@@ -815,7 +818,7 @@ class Node:
         # even when the first one fails those checks (as section 10.8 does
         # for a block that fails validation).
         first = self._round_proposal.setdefault((level, r), (h, pmsg, envelope))
-        if first[1] is not pmsg and first[1].to_dict() != pmsg.to_dict():
+        if first[1] is not pmsg and not first[1].same_statement(pmsg):
             # Review of 7e005a6: another signed PROPOSE for this (level,
             # round), whether for another block or for the same block with
             # another valid round. Only the message that occupies the round
@@ -823,7 +826,10 @@ class Node:
             # proposer does not sign); this one is evidence, relayed once
             # with the first so that other nodes keep it too, and never
             # validated, stored, kept or voted on (reviews of e67ed17 and
-            # 7e005a6).
+            # 7e005a6). The two are compared on what is signed: the same
+            # statement under other signature bytes is not another proposal
+            # (review of 12 November 2026; the comparison used to include
+            # the signature).
             if self.bft is not None:
                 self.bft.record_proposal_equivocation(first[1], pmsg)
             if self.network and (level, r) not in self._relayed_conflicts:
@@ -956,10 +962,14 @@ class Node:
         h = tx.hash_hex()
         if h in self._seen_txs:
             return
-        self._seen_txs.add(h)
-        self._trim(self._seen_txs)
+        # The identifier of a transaction leaves its signature out, so a
+        # copy with a damaged signature has the same one. Only a copy whose
+        # signature verifies is remembered: otherwise a damaged copy
+        # received first would make the node ignore the real transaction.
         if not tx.verify_signature():
             return
+        self._seen_txs.add(h)
+        self._trim(self._seen_txs)
         if self.storage.add_to_mempool(tx) and self.network:
             asyncio.create_task(self.network.broadcast_tx(tx.to_dict()))
 
