@@ -347,10 +347,12 @@ def _public_texts() -> list[Path]:
 def test_every_mention_of_quantum_computers_links_to_the_inventory():
     """A sentence about quantum resistance, anywhere in the public texts,
     must send the reader to the page that states the current status. The
-    design note is exempt because its first lines do exactly that."""
+    design note is exempt because its first lines do exactly that: its
+    profile is frozen, and a frozen profile is not an implementation."""
     design = DESIGN.read_text(encoding="utf-8")
     opening = design.split("\n## ", 1)[0]
-    assert "Draft for review. Nothing in this note is implemented." in opening
+    assert "Profile frozen on 12 November 2026" in opening
+    assert "Nothing in this note is implemented." in opening
     assert "cryptographic-inventory.md" in opening
     assert "no part of Kern is post-quantum" in opening
     loose = []
