@@ -374,6 +374,14 @@ def test_the_inventory_can_be_found():
     inventory = _inventory()
     assert "tests/test_crypto_inventory.py" in inventory
     assert "## 5. What Kern does not claim" in inventory
-    # The plan of the inventory and the design that details it point at each other.
-    assert "hybrid-signatures.md" in _section(inventory, "## 3. ")
+    # The plan of the inventory and the design that details it point at each other,
+    # and agree on what the reviews of 12 November 2026 decided.
+    plan = _section(inventory, "## 3. ")
+    assert "hybrid-signatures.md" in plan
+    design = DESIGN.read_text(encoding="utf-8")
+    for decided in ("SHA3-384", "384 bits", "HKDF-SHA-512", "32 random bytes"):
+        assert decided in plan, decided
+    for decided in ("SHA3-384", "384 bits", "HKDF-SHA-512", "`network_id`"):
+        assert decided in design, decided
+    assert "256-bit addresses" not in plan and "256 bits for the addresses" not in design
     assert re.search(r"^\s+- [^:\n]+: hybrid-signatures\.md$", nav, re.M)
