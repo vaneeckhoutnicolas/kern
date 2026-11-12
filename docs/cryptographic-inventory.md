@@ -94,9 +94,9 @@ Two algorithms matter. Shor's algorithm computes discrete logarithms: it recover
 |---|---|---|---|
 | Ed25519 | About 128 bits | Broken by Shor's algorithm | Whoever knows a public key can sign for it: spend from any account that has sent a transaction, vote and build quorum certificates as a validator, forge the two conflicting votes that get an honest validator slashed, and sign another history from genesis for a node that has no trusted checkpoint. |
 | BN254 pairings (Groth16) | Commonly estimated near 100 bits | Broken by Shor's algorithm | Proofs of false statements can be made from a verifier key alone. Proofs already published still reveal nothing: the zero-knowledge property of Groth16 needs no hardness assumption. |
-| BLAKE2b, 256 bits | 256 bits for a preimage, 128 bits for a collision | About 2^128 for a preimage; about 2^85 for a collision, in theory | Preimages hold. For collisions it becomes the thinnest margin of the protocol once signatures are hybrid: the hashes that commit to content move to 384 bits. |
-| BLAKE2b, 160 bits | 160 bits for a preimage, 80 bits for a collision | About 2^80 for a preimage; about 2^53 for a collision, in theory | A thin margin for what identifies an account. To be widened. |
-| BLAKE2b, 128 bits | 128 bits for a preimage, 64 bits for a collision | About 2^64 for a preimage; about 2^43 for a collision, in theory | Identifiers of proposals and attestations, and the hash that ties a claim to its verifier key. To be widened. |
+| BLAKE2b, 256 bits | 256 bits for a preimage, 128 bits for a collision | About 2^128 for a preimage; about 2^85 for a collision, in theory | Preimages hold. For collisions it becomes the thinnest margin of the protocol once signatures are hybrid: every hash of the protocol moves to 384 bits (section 3). |
+| BLAKE2b, 160 bits | 160 bits for a preimage, 80 bits for a collision | About 2^80 for a preimage; about 2^53 for a collision, in theory | A thin margin for what identifies an account. Addresses move to 384 bits. |
+| BLAKE2b, 128 bits | 128 bits for a preimage, 64 bits for a collision | About 2^64 for a preimage; about 2^43 for a collision, in theory | Identifiers of proposals and attestations, and the hash that ties a claim to its verifier key. They move to 384 bits. |
 | Transport | No encryption, no authentication of peers | Nothing to decrypt | No confidentiality to lose. The missing authentication is a gap today, with or without quantum computers. |
 
 The hash functions of the Mini-EVM follow the same rule: SHA3-256 and SHA-256 hold as BLAKE2b does at 256 bits, and RIPEMD-160 has the margin of a 160-bit hash. They concern contracts, not the protocol.
@@ -115,12 +115,13 @@ What is planned:
 
 1. **Scheme identifiers.** Every public key, signature and address states its scheme, and `kern.crypto.verify` dispatches on it. Today the scheme is implicit and Ed25519 is the only code path. This is what makes any later change possible, including a change to schemes that do not exist yet.
 2. **Hybrid signatures.** A signature is an Ed25519 signature and an ML-DSA signature (FIPS 204), and it is valid only if both are. ML-DSA is the lattice signature that NIST standardized in 2024. It is younger than Ed25519, which is why both are required: forging takes breaking both, so Kern keeps the security it has today if a flaw is found in ML-DSA or in an implementation of it. ML-DSA is available to both client languages without a research library: the `cryptography` package from version 48 in Python, and `crypto/mldsa` from Go 1.27.
-3. **Accounts and addresses.** An address becomes the 256-bit hash of the scheme and the public keys. The public key is recorded in the account at first use, so that later transactions carry a signature and no key, and so that an account can replace its key.
+3. **Accounts and addresses.** An address becomes the 384-bit hash of the scheme and the public keys. The public key is recorded in the account at first use, so that later transactions carry a signature and no key, and so that an account can replace its key.
 4. **Validators.** Validator sets hold hybrid keys. Proposals, votes and quorum certificates carry hybrid signatures.
 5. **Size accounting.** The fee floor and the block size cap count signatures (section 4).
 6. **Peer connections.** The authenticated handshake planned with the hardening of the network layer uses a hybrid key agreement (X25519 with ML-KEM, FIPS 203).
-7. **Proofs and identifiers.** The field `proof_system` of a claim already names its proof system. `groth16-bn254` stays available and is documented as classical. The three 128-bit identifiers move to 256 bits.
-8. **Commitments.** Every hash that commits to content (block headers, transactions, Merkle roots, the state and its trie, rollup batches) moves from 256 to 384 bits.
+7. **Proofs and identifiers.** The field `proof_system` of a claim already names its proof system. `groth16-bn254` stays available and is documented as classical. The three 128-bit identifiers move to 384 bits.
+8. **Hashes.** Every hash of the protocol (block headers, transactions, Merkle roots, the state and its trie, rollup batches, identifiers, addresses) moves to 384 bits, and from BLAKE2b to SHA3-384 with a domain name in front of the data. BLAKE2b has no known weakness; SHA3-384 is a standard of NIST and belongs to the families that ANSSI recommends, and the change costs nothing more while every hash changes size.
+9. **Network identity.** A network is identified by 32 random bytes written in its genesis, not by its name. Keys are derived for that identifier and every signature is made for it.
 
 Kern keys are already derived from a seed. Research on EdDSA chains shows that the seed lets an owner prove ownership even after the curve is broken ([ePrint 2025/1368](https://eprint.iacr.org/2025/1368)). Hybrid keys from genesis make that recovery path unnecessary; it remains a fallback.
 
@@ -130,7 +131,7 @@ What the plan does not solve:
 - **Zero-knowledge claims.** Groth16 on BN254 stays classical until a proof system built on hash functions is added.
 - **Certainty.** ML-DSA is a standard believed to resist quantum computers. It is not proven to, and no scheme is.
 
-The [design note on hybrid signatures](hybrid-signatures.md) is the profile of this plan. After a first review it settles the scheme (Composite ML-DSA as standardized by the IETF, with ML-DSA-65), keys bound to one network, base64 text for keys and signatures, 384-bit commitments with 256-bit addresses, and the account key registry in the same release. It is frozen after a second review.
+The [design note on hybrid signatures](hybrid-signatures.md) is the profile of this plan. After two reviews it settles the scheme (Composite ML-DSA as standardized by the IETF, with ML-DSA-65), a network identifier drawn at random in the genesis, keys derived for it with HKDF-SHA-512, SHA3-384 and 384 bits for every commitment, identifier and address, base64 text for keys and signatures, one written rule for the verification of Ed25519, and the account key registry in the same release. It is frozen after a last review limited to what changed.
 
 Left for later, and stated as such in the note:
 
