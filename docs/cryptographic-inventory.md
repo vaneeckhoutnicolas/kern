@@ -88,15 +88,15 @@ Commits and release tags are signed with an SSH key of type Ed25519 ([release-ta
 
 ## 2. What a quantum computer would change
 
-Two algorithms matter. Shor's algorithm computes discrete logarithms: it recovers an elliptic curve private key from its public key. Grover's algorithm speeds up exhaustive search: finding a preimage of an n-bit hash takes about 2^(n/2) evaluations instead of 2^n.
+Two algorithms matter. Shor's algorithm computes discrete logarithms: it recovers an elliptic curve private key from its public key. Grover's algorithm speeds up exhaustive search: finding a preimage of an n-bit hash takes about 2^(n/2) evaluations instead of 2^n. For collisions, the generic quantum bound is about 2^(n/3) evaluations instead of 2^(n/2) (Brassard, Høyer and Tapp). That bound assumes a quantum memory as large as the search and is not the estimate of a practical attack. It is still the figure a conservative design is sized against: the French agency ANSSI asks for hash functions at the level of SHA2-384 in this transition.
 
 | Primitive | Security today | Against a large quantum computer | What it means for Kern |
 |---|---|---|---|
 | Ed25519 | About 128 bits | Broken by Shor's algorithm | Whoever knows a public key can sign for it: spend from any account that has sent a transaction, vote and build quorum certificates as a validator, forge the two conflicting votes that get an honest validator slashed, and sign another history from genesis for a node that has no trusted checkpoint. |
 | BN254 pairings (Groth16) | Commonly estimated near 100 bits | Broken by Shor's algorithm | Proofs of false statements can be made from a verifier key alone. Proofs already published still reveal nothing: the zero-knowledge property of Groth16 needs no hardness assumption. |
-| BLAKE2b, 256 bits | 256 bits for a preimage, 128 bits for a collision | About 2^128 for a preimage; no practical gain for collisions | Holds. Block, transaction, state and trie hashes are not a concern. |
-| BLAKE2b, 160 bits | 160 bits for a preimage, 80 bits for a collision | About 2^80 for a preimage | A thin margin for what identifies an account. To be widened. |
-| BLAKE2b, 128 bits | 128 bits for a preimage, 64 bits for a collision | About 2^64 for a preimage | Identifiers of proposals and attestations, and the hash that ties a claim to its verifier key. To be widened. |
+| BLAKE2b, 256 bits | 256 bits for a preimage, 128 bits for a collision | About 2^128 for a preimage; about 2^85 for a collision, in theory | Preimages hold. For collisions it becomes the thinnest margin of the protocol once signatures are hybrid: the hashes that commit to content move to 384 bits. |
+| BLAKE2b, 160 bits | 160 bits for a preimage, 80 bits for a collision | About 2^80 for a preimage; about 2^53 for a collision, in theory | A thin margin for what identifies an account. To be widened. |
+| BLAKE2b, 128 bits | 128 bits for a preimage, 64 bits for a collision | About 2^64 for a preimage; about 2^43 for a collision, in theory | Identifiers of proposals and attestations, and the hash that ties a claim to its verifier key. To be widened. |
 | Transport | No encryption, no authentication of peers | Nothing to decrypt | No confidentiality to lose. The missing authentication is a gap today, with or without quantum computers. |
 
 The hash functions of the Mini-EVM follow the same rule: SHA3-256 and SHA-256 hold as BLAKE2b does at 256 bits, and RIPEMD-160 has the margin of a 160-bit hash. They concern contracts, not the protocol.
@@ -120,6 +120,7 @@ What is planned:
 5. **Size accounting.** The fee floor and the block size cap count signatures (section 4).
 6. **Peer connections.** The authenticated handshake planned with the hardening of the network layer uses a hybrid key agreement (X25519 with ML-KEM, FIPS 203).
 7. **Proofs and identifiers.** The field `proof_system` of a claim already names its proof system. `groth16-bn254` stays available and is documented as classical. The three 128-bit identifiers move to 256 bits.
+8. **Commitments.** Every hash that commits to content (block headers, transactions, Merkle roots, the state and its trie, rollup batches) moves from 256 to 384 bits.
 
 Kern keys are already derived from a seed. Research on EdDSA chains shows that the seed lets an owner prove ownership even after the curve is broken ([ePrint 2025/1368](https://eprint.iacr.org/2025/1368)). Hybrid keys from genesis make that recovery path unnecessary; it remains a fallback.
 
@@ -129,15 +130,13 @@ What the plan does not solve:
 - **Zero-knowledge claims.** Groth16 on BN254 stays classical until a proof system built on hash functions is added.
 - **Certainty.** ML-DSA is a standard believed to resist quantum computers. It is not proven to, and no scheme is.
 
-The [design note on hybrid signatures](hybrid-signatures.md) proposes an answer to each of the points below: Composite ML-DSA as standardized by the IETF, with ML-DSA-65. They stay open until that note has been reviewed.
+The [design note on hybrid signatures](hybrid-signatures.md) is the profile of this plan. After a first review it settles the scheme (Composite ML-DSA as standardized by the IETF, with ML-DSA-65), keys bound to one network, base64 text for keys and signatures, 384-bit commitments with 256-bit addresses, and the account key registry in the same release. It is frozen after a second review.
 
-Decisions still open:
+Left for later, and stated as such in the note:
 
-- ML-DSA-44 or ML-DSA-65.
-- The exact hybrid construction (what each signature covers, domain separation) and the encodings, in a design note to be reviewed before any code is written.
-- A binary encoding for keys and signatures in place of base58 text.
-- Whether precompile 0x01 offers the hybrid check to contracts.
-- Signatures built on hash functions alone (SLH-DSA, FIPS 205) for the rare signatures that must hold for decades, such as those of a genesis.
+- A precompile that verifies composite signatures for contracts. Precompile 0x01 stays classical.
+- Signatures built on hash functions alone (SLH-DSA, FIPS 205) for the rare signatures that must hold for decades, such as those of a genesis or of a release.
+- A proof system built on hash functions in place of Groth16.
 
 ## 4. What hybrid signatures would cost
 
@@ -177,5 +176,7 @@ How to read it:
 - [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032), Edwards-Curve Digital Signature Algorithm, and [RFC 7693](https://www.rfc-editor.org/rfc/rfc7693), BLAKE2.
 - R. Babbush and others, [Securing Elliptic Curve Cryptocurrencies against Quantum Vulnerabilities: Resource Estimates and Mitigations](https://arxiv.org/abs/2603.28846), 2026.
 - F. Baldimtsi, K. Chalkias, A. Roy and M. Sedaghat, [Post-Quantum Readiness in EdDSA Chains](https://eprint.iacr.org/2025/1368), 2025.
+- ANSSI, [views on the post-quantum cryptography transition](https://cyber.gouv.fr/publications/anssi-views-post-quantum-cryptography-transition), 2022.
+- G. Brassard, P. Høyer and A. Tapp, [Quantum Algorithm for the Collision Problem](https://arxiv.org/abs/quant-ph/9705002), 1997.
 - European Commission and Member States, [A Coordinated Implementation Roadmap for the Transition to Post-Quantum Cryptography](https://digital-strategy.ec.europa.eu/en/library/coordinated-implementation-roadmap-transition-post-quantum-cryptography), June 2025.
 - ML-DSA in the client languages: [changelog of the `cryptography` package](https://cryptography.io/en/latest/changelog/) (version 48.0.0) and [Go 1.27 release notes](https://go.dev/doc/go1.27).
