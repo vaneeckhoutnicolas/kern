@@ -115,6 +115,7 @@ nav:
       - Consensus on the wire: consensus-wire.md
       - Consensus locking (design): consensus-locking.md
       - State-machine invariants: state-machine-invariants.md
+      - Cryptographic inventory: cryptographic-inventory.md
       - Go port breakpoints: go-port-breakpoints.md
   - Smart contracts (Skald):
       - Skald language: skald-language.md

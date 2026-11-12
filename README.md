@@ -61,6 +61,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 | [Consensus](docs/consensus.md) | Three-phase BFT consensus — the single-validator view |
 | [Multi-validator BFT](docs/bft.md) | The full 3-phase protocol: propose / pre-endorse / endorse |
 | [Consensus on the wire](docs/consensus-wire.md) | How the BFT protocol travels over P2P: message kinds, quorum verification, sync — the normative spec for kern-go |
+| [Cryptographic inventory](docs/cryptographic-inventory.md) | Every primitive Kern uses, what a quantum computer would break, and the plan for hybrid signatures from genesis. No part of Kern is post-quantum today. |
 | [Skald language](docs/skald-language.md) | Grammar, semantics, examples |
 | [Skald static typing](docs/typecheck.md) | The compile-time type checker |
 | [EVM rollups](docs/rollups.md) | Optimistic Smart Rollup framework |
@@ -83,7 +84,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1050 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1060 tests passing.**
 
 ```
 kern/
@@ -135,7 +136,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 1050 tests, none skipped
+├── tests/                      # 1060 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -196,7 +197,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 1050 passed in about 2 minutes (the multi-process consensus tests start real nodes)
+# 1060 passed in about 2 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### A multi-node devnet in one command (Docker)
