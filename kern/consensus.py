@@ -30,12 +30,12 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Iterable, List, Optional, Union
 
 from .block import Block, BlockHeader, txs_merkle_root_hex
 from .chain import apply_block, state_root_hex
 from .crypto import KernKeypair
-from .transaction import Transaction
+from .transaction import Transaction, Waiting
 
 
 DEFAULT_BLOCK_TIME_S = 1.0
@@ -94,7 +94,7 @@ def select_proposer(
 def propose_block(
     *,
     parent: Block,
-    mempool: List[Transaction],
+    mempool: Iterable[Union[Transaction, Waiting]],
     proposer_keypair: KernKeypair,
     proposer_pubkey_b58: str,
     state_before: dict,
@@ -103,8 +103,32 @@ def propose_block(
     evict_out: Optional[List[str]] = None,
 ) -> Block:
     """Construct, fill, and sign a new block proposing it as the next
-    head. Transactions are taken in mempool order; ones that fail to
-    apply are skipped (kept in the mempool for next round).
+    head.
+
+    The mempool is read in its order, until the block is full: `max_txs`
+    transactions, or the bytes that `chain.proposed_block_bytes` allows. A
+    transaction is looked at through four facts first, its sender, nonce,
+    fee and size (`chain.mempool_verdict`), on the state as the block has
+    made it so far:
+
+    - the block takes what it can charge. A transaction that is charged is
+      in the block whether its operation then succeeds or fails: it paid
+      its fee and consumed its nonce, which is what `apply_block` does with
+      it on every validator;
+    - a transaction whose nonce is ahead of its account waits in the
+      mempool, at no cost;
+    - a transaction no block will charge stays out, and its hash goes to
+      `evict_out`, when it is given, so that the caller removes it from
+      the mempool: a nonce that is consumed or too far ahead, a sender that
+      cannot pay the fee, a fee under the floor, a size beyond what a node
+      takes, a signature or a chain that `apply_transaction` refuses.
+
+    The state is copied once. Until this rule the proposer copied it before
+    each of the 5,000 oldest transactions, left out those whose operation
+    failed although the block would have charged them, and never looked at
+    the fee floor: transactions that could only fail stayed in the mempool
+    for ever and hid the others, and with the floor on the block was one
+    that every validator refused.
 
     `round_` becomes the header's payload_round. Phase E: the proposer's
     self-commit (an ENDORSE signature over the block) is only produced
@@ -123,36 +147,62 @@ def propose_block(
     production. `apply_transaction` turns every handler exception into a
     rejection, and this loop additionally guards the call so that a defect
     anywhere in the application path discards the transaction instead of
-    propagating out of the baker loop.
-
-    If `evict_out` is given, the hashes of transactions that can NEVER
-    become valid (bad signature, nonce already consumed) are appended to
-    it so the caller can drop them from the mempool. Transactions that
-    may become valid later (future nonce, insufficient balance) stay."""
-    selected: List[Transaction] = []
-    # Trial-apply candidate transactions; build a working state.
+    propagating out of the baker loop."""
     import copy
-    working_state = copy.deepcopy(state_before)
-    # Same rule as apply_block: transactions observe the block's own level.
-    working_state["_current_level"] = parent.header.level + 1
-    from .chain import apply_transaction, _apply_block_rewards
+    from . import chain
+    from .chain import DROP, TAKE, _apply_block_rewards
 
-    for tx in mempool[:max_txs]:
-        before = copy.deepcopy(working_state)
-        try:
-            result = apply_transaction(working_state, tx, baker=proposer_keypair.address)
-        except Exception:  # defensive: apply_transaction should not raise
-            working_state = before
-            if evict_out is not None:
-                evict_out.append(tx.hash_hex())
+    level = parent.header.level + 1
+    baker = proposer_keypair.address
+    fees = chain.fee_params(state_before)
+    room = chain.proposed_block_bytes(fees)
+    selected: List[Transaction] = []
+
+    def fresh_state() -> dict:
+        working = copy.deepcopy(state_before)
+        # Same rule as apply_block: transactions observe the block's own level.
+        working["_current_level"] = level
+        return working
+
+    def evict(waiting: Waiting) -> None:
+        if evict_out is not None:
+            evict_out.append(waiting.hash_hex)
+
+    working_state = fresh_state()
+    for candidate in mempool:
+        if len(selected) >= max_txs:
+            break
+        waiting = candidate if isinstance(candidate, Waiting) else Waiting.of(candidate)
+        verdict, _why = chain.mempool_verdict(waiting.sender, waiting.nonce, waiting.fee, waiting.size,
+                                              working_state, fees)
+        if verdict == DROP:
+            evict(waiting)
             continue
-        if not result.ok:
-            # Discard this tx for this proposal; restore state.
-            working_state = before
-            if evict_out is not None and _never_valid(tx, before):
-                evict_out.append(tx.hash_hex())
+        if verdict != TAKE:
+            continue                              # its nonce is ahead: it waits
+        if waiting.size > room:
+            break                                 # the block is full
+        tx = waiting.transaction()
+        if tx is None:
+            evict(waiting)
+            continue
+        try:
+            chain.apply_transaction(working_state, tx, baker=baker)
+        except Exception:  # defensive: apply_transaction should not raise
+            # The transaction is removed, and the state, which may be half
+            # changed, is rebuilt from what the block holds so far.
+            evict(waiting)
+            working_state = fresh_state()
+            for taken in selected:
+                chain.apply_transaction(working_state, taken, baker=baker)
+            continue
+        if working_state["nonces"].get(tx.sender, 0) != tx.nonce + 1:
+            # Not charged: its signature or its chain was refused before
+            # anything changed. No block will take it.
+            evict(waiting)
             continue
         selected.append(tx)
+        room -= waiting.size
 
     # Build a draft header so we can call _apply_block_rewards against the
     # block (it uses block.header.level and block.header.proposer + commits).
@@ -216,14 +266,6 @@ def propose_block(
     self_endorse.sign(proposer_keypair)
     draft_block.commits = [commit_entry(self_endorse)]
     return draft_block
-
-
-def _never_valid(tx: Transaction, state: dict) -> bool:
-    """True when `tx` cannot become valid in any later block: its signature
-    is invalid, or its nonce is already consumed. Pure."""
-    if not tx.verify_signature():
-        return True
-    return tx.nonce < state.get("nonces", {}).get(tx.sender, 0)
 
 
 @dataclass

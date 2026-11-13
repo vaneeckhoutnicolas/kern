@@ -121,6 +121,7 @@ def test_block_size_cap_rejected():
 # --- validate_block integration (the consensus gate) ------------------------
 
 def test_validate_block_enforces_fee_floor():
+    from kern.chain import apply_block
     from kern.consensus import propose_block
 
     baker = KernKeypair.generate()
@@ -130,16 +131,37 @@ def test_validate_block_enforces_fee_floor():
     # Flag-ON network.
     genesis, state = _genesis(baker, {alice.address: 1_000_000}, fee_cfg=ON)
 
-    # An underpaying transfer (fee 10 << floor). propose_block still includes it
-    # because it applies fine; the floor is a *validity* rule, not an apply rule.
+    # An underpaying transfer (fee 10 << floor). It applies fine: the floor is
+    # a *validity* rule, not an apply rule. A proposer that follows the rule
+    # leaves it out (tests/test_proposer_selection.py), so the block is built
+    # by hand here, as a proposer that does not follow it would build it.
     tx = make_transfer(alice, recipient=bob.address, amount=1, nonce=0, fee=10)
-    block = propose_block(
-        parent=genesis, mempool=[tx], proposer_keypair=baker,
-        proposer_pubkey_b58=baker.public_key_b58, state_before=state, round_=1,
+    header = BlockHeader(
+        level=1, payload_round=1, timestamp=int(time.time()),
+        parent_hash=genesis.hash_hex(), state_root="",
+        txs_root=txs_merkle_root_hex([tx]),
+        proposer=baker.address, proposer_pubkey=baker.public_key_b58,
     )
+    block = Block(header=header, transactions=[tx], commits=[])
+    header.state_root = state_root_hex(apply_block(state, block)[0])
+    header.sign(baker)
     err = validate_block(block, genesis.header, state, state["validators"],
                          require_quorum=False)
     assert err is not None and "fee floor" in err
+
+    # Control: the same block is valid on a network that has not enabled the floor.
+    plain = {k: v for k, v in state.items() if k != "fee_params"}
+    header.state_root = state_root_hex(apply_block(plain, block)[0])
+    header.sign(baker)
+    assert validate_block(block, genesis.header, plain, plain["validators"], require_quorum=False) is None
+
+    # And the proposer of this node leaves the transfer out of its block.
+    built = propose_block(
+        parent=genesis, mempool=[tx], proposer_keypair=baker,
+        proposer_pubkey_b58=baker.public_key_b58, state_before=state, round_=1,
+    )
+    assert built.transactions == []
+    assert validate_block(built, genesis.header, state, state["validators"], require_quorum=False) is None
 
 
 def test_validate_block_ok_when_feature_off():

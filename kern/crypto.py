@@ -182,6 +182,31 @@ def address_from_pubkey(public_key: bytes) -> str:
     return b58check_encode(PREFIX_ADDRESS, h)
 
 
+# The prefix and 20 bytes with their checksum are 27 bytes, and under this
+# prefix they are always written with 36 characters. The other way round, 36
+# characters that carry the prefix are 27 bytes and no other count: fewer
+# bytes would make a number too small for 36 digits, and a '1' in front is a
+# zero byte, which is not the prefix.
+ADDRESS_CHARACTERS = 36
+
+
+def address_is_valid(text: object) -> bool:
+    """Whether `text` is the address of an account or of a contract: 36
+    characters of the alphabet that carry the address prefix, 20 bytes and
+    their checksum. Never raises.
+
+    The count of the characters is looked at first, on purpose: reading a
+    text as a number in base 58 costs the square of its length, seconds for
+    the longest text a transaction can carry."""
+    if not isinstance(text, str) or len(text) != ADDRESS_CHARACTERS:
+        return False
+    try:
+        b58check_decode(text, PREFIX_ADDRESS)
+    except ValueError:
+        return False
+    return True
+
+
 def pubkey_from_b58(s: str) -> bytes:
     return b58check_decode(s, PREFIX_PUBKEY)
 

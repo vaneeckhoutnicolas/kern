@@ -29,7 +29,7 @@ message stream. Seven kinds exist:
 | `blocks`      | `{"blocks": [{...}, ...]}`       | Catch-up sync response               |
 
 Hardening caps at this layer: 16 MiB per message, 128 concurrent
-connections, 512 blocks per sync reply. Malformed frames close the
+connections, 512 blocks and 8 MiB per sync reply. Malformed frames close the
 connection; a handler error on one message is logged and does not kill
 the connection.
 
@@ -227,9 +227,17 @@ kept as `ProposalEquivocation` evidence, not slashable yet.
 Both sides of a new connection send `hello` with their head level. A node
 that learns of a higher peer level — from `hello`, or from a gossiped
 finalized block more than one level ahead — requests the missing range
-with `get_blocks` (rate-limited to one request per 2 s). Replies stream
-at most 512 blocks, applied strictly in order through the same
-`require_quorum=True` path as gossiped blocks. Deduplication sets are
+with `get_blocks` (rate-limited to one request per 2 s). A reply is one
+frame: it holds the blocks from the first level asked for, as many as fit
+in 8 MiB, half of the largest frame, and 512 at most (`sync_reply`). Its
+first block always travels, whatever it weighs. Blocks are applied strictly
+in order through the same `require_quorum=True` path as gossiped blocks.
+While a reply brings the node forward, it asks the same peer for what
+follows, up to the level that peer announced in its `hello`; a reply that
+brings nothing ends the exchange. Until this bound a reply was limited in
+blocks only: 512 blocks of more than 32 kB each made a frame that the node
+behind dropped, closing the connection, and it could not catch up.
+Deduplication sets are
 advisory only; correctness never depends on them (stale blocks are
 rejected by level, duplicate transactions by the mempool key, repeated
 consensus messages are idempotent in the engine).

@@ -42,6 +42,10 @@ LOG = logging.getLogger("kern.network")
 MAX_MSG_BYTES = 16 * 1024 * 1024
 MAX_CONNECTIONS = 128
 MAX_BLOCKS_PER_SYNC_REPLY = 512
+# A catch-up reply is one frame, and a peer drops a frame of more than
+# MAX_MSG_BYTES and closes the connection: a reply is filled up to half a
+# frame, so that it always arrives. The node that asked asks for the rest.
+MAX_SYNC_REPLY_BYTES = MAX_MSG_BYTES // 2
 
 
 async def _read_msg(reader: asyncio.StreamReader) -> Optional[dict]:
@@ -65,10 +69,35 @@ async def _read_msg(reader: asyncio.StreamReader) -> Optional[dict]:
     return msg
 
 
+def _encode(msg: dict) -> bytes:
+    return json.dumps(msg).encode("utf-8")
+
+
 async def _write_msg(writer: asyncio.StreamWriter, msg: dict) -> None:
-    payload = json.dumps(msg).encode("utf-8")
+    payload = _encode(msg)
     writer.write(len(payload).to_bytes(4, "big") + payload)
     await writer.drain()
+
+
+def sync_reply(get_blocks_fn: Callable[[int, int], List[dict]], lo: int, hi: int) -> List[dict]:
+    """The blocks of one catch-up reply: the levels from `lo` upward, as
+    long as the frame stays within MAX_SYNC_REPLY_BYTES and holds
+    MAX_BLOCKS_PER_SYNC_REPLY blocks at most. Blocks are read and weighed
+    one at a time, so a long request for heavy blocks is never loaded
+    whole. The first block always travels, whatever it weighs: a reply
+    that held no block would leave the node that asked where it is."""
+    blocks: List[dict] = []
+    size = len(_encode({"kind": "blocks", "blocks": []}))
+    for level in range(lo, min(hi, lo + MAX_BLOCKS_PER_SYNC_REPLY - 1) + 1):
+        found = get_blocks_fn(level, level)
+        if not found:
+            break
+        weight = len(_encode(found[0])) + (2 if blocks else 0)     # the block, and the separator before it
+        if blocks and size + weight > MAX_SYNC_REPLY_BYTES:
+            break
+        blocks.append(found[0])
+        size += weight
+    return blocks
 
 
 class Network:
@@ -108,6 +137,9 @@ class Network:
         self.peers: Set[Tuple[str, int]] = set()
         self._writers: List[asyncio.StreamWriter] = []
         self._outgoing: Dict[asyncio.StreamWriter, Tuple[str, int]] = {}
+        # The level each peer announced in its hello, kept while its
+        # connection is open: catch-up asks again up to that level.
+        self._peer_levels: Dict[asyncio.StreamWriter, int] = {}
         self._server: Optional[asyncio.AbstractServer] = None
 
     async def start(self) -> None:
@@ -182,6 +214,7 @@ class Network:
                 pass
             if writer in self._writers:
                 self._writers.remove(writer)
+            self._peer_levels.pop(writer, None)
             peer = self._outgoing.pop(writer, None)
             if peer is not None:
                 self.peers.discard(peer)
@@ -192,6 +225,7 @@ class Network:
             level = msg.get("level", -1)
             LOG.debug("hello from peer at level %s", level)
             if self.on_peer_level is not None and isinstance(level, int):
+                self._peer_levels[writer] = level
                 rng = self.on_peer_level(level)
                 if rng is not None:
                     await _write_msg(writer, {"kind": "get_blocks",
@@ -210,14 +244,23 @@ class Network:
             if self.get_blocks_fn is not None:
                 lo, hi = msg.get("from"), msg.get("to")
                 if isinstance(lo, int) and isinstance(hi, int) and 0 <= lo <= hi:
-                    hi = min(hi, lo + MAX_BLOCKS_PER_SYNC_REPLY - 1)
-                    blocks = self.get_blocks_fn(lo, hi)
+                    blocks = sync_reply(self.get_blocks_fn, lo, hi)
                     await _write_msg(writer, {"kind": "blocks", "blocks": blocks})
         elif kind == "blocks":
             blist = msg.get("blocks")
             if isinstance(blist, list):
+                before = self.get_head_level()
                 for b in blist[:MAX_BLOCKS_PER_SYNC_REPLY]:
                     await self.on_block(b if isinstance(b, dict) else {})
+                # A reply holds what fits in one frame. While replies bring
+                # this node forward, it asks the same peer for what follows,
+                # up to the level that peer announced. A reply that brings
+                # nothing ends the exchange: the peer is not asked in a loop.
+                if self.on_peer_level is not None and self.get_head_level() > before:
+                    rng = self.on_peer_level(self._peer_levels.get(writer, -1))
+                    if rng is not None:
+                        await _write_msg(writer, {"kind": "get_blocks",
+                                                  "from": rng[0], "to": rng[1]})
         else:
             LOG.warning("unknown msg kind: %s", kind)
 

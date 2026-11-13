@@ -1514,6 +1514,77 @@ def check_fee_rules(transactions: List[Transaction], params: dict) -> Optional[s
     return None
 
 
+# ===========================================================================
+# What a node takes in its mempool, and what a proposer takes from it
+# ===========================================================================
+# `apply_transaction` checks the chain, the signature, the nonce and the fee
+# of a transaction before it changes anything; once they are right the fee is
+# paid, whatever the operation does next. A proposer therefore has three
+# things to tell apart, and it can tell them from four facts (sender, nonce,
+# fee, size) without applying anything:
+#
+#   take   the next block can charge it;
+#   wait   its nonce is ahead of the account: a later block may charge it;
+#   drop   no block will: its nonce is consumed or too far ahead, its sender
+#          cannot pay the fee, the fee is under the floor, it is too large.
+#
+# A node refuses at the door of its mempool what a proposer would drop, so
+# that what waits there has a chance to be charged. These limits are the
+# choices of a node, not rules of consensus: a block that holds a larger
+# transaction is still valid.
+
+MAX_TX_BYTES = 131_072                  # the largest transaction a node takes, as encoded_size() counts it
+MAX_NONCE_AHEAD = 256                   # how far above the nonce of its account a nonce can wait
+# What a proposer puts in a block at most, whatever the state says: a block of
+# that size travels in one frame with its certificate.
+MAX_PROPOSED_BLOCK_BYTES = 8_388_608
+
+TAKE, WAIT, DROP = "take", "wait", "drop"
+
+
+def mempool_verdict(sender: str, nonce: int, fee: int, size: int, state: dict, fees: dict) -> Tuple[str, str]:
+    """What a block built on `state` can do with a transaction, and why.
+
+    `fees` is fee_params() of the state the block is built on. Returns
+    (TAKE, ""), or (WAIT, reason), or (DROP, reason). Pure, and cheap: no
+    signature is verified here, `apply_transaction` does it."""
+    if size > MAX_TX_BYTES:
+        return DROP, f"{size} bytes: a transaction is {MAX_TX_BYTES} bytes at most"
+    if fees["enabled"] and fee < fees["base"] + fees["per_byte"] * size:
+        return DROP, (f"fee {fee} below the fee floor: "
+                      f"{fees['base'] + fees['per_byte'] * size} for {size} bytes")
+    account_nonce = state["nonces"].get(sender, 0)
+    if nonce < account_nonce:
+        return DROP, f"nonce {nonce} is consumed: the account is at {account_nonce}"
+    if nonce > account_nonce + MAX_NONCE_AHEAD:
+        return DROP, f"nonce {nonce} is more than {MAX_NONCE_AHEAD} above the account, at {account_nonce}"
+    if state["balances"].get(sender, 0) < fee:
+        return DROP, f"the sender cannot pay the fee of {fee}"
+    if nonce > account_nonce:
+        return WAIT, f"nonce {nonce} is ahead of the account, at {account_nonce}"
+    return TAKE, ""
+
+
+def admission_error(tx: Transaction, state: dict) -> Optional[str]:
+    """Why a node does not take `tx` in its mempool on top of `state`, its
+    head, or None when it does. The signature is the caller's to verify."""
+    expected_chain = state.get("chain_id")
+    if expected_chain is not None and tx.chain_id != expected_chain:
+        return f"wrong chain_id: expected {expected_chain!r}, got {tx.chain_id!r}"
+    verdict, reason = mempool_verdict(tx.sender, tx.nonce, tx.fee, tx.encoded_size(), state, fee_params(state))
+    return reason if verdict == DROP else None
+
+
+def proposed_block_bytes(fees: dict) -> int:
+    """The bytes of transactions a proposer puts in a block at most: what
+    the state allows when the fee floor is on, and never more than a frame
+    carries."""
+    cap = fees["max_block_bytes"]
+    if fees["enabled"] and 0 < cap < MAX_PROPOSED_BLOCK_BYTES:
+        return cap
+    return MAX_PROPOSED_BLOCK_BYTES
+
+
 def validate_and_apply(
     block: Block,
     parent_header: Optional[BlockHeader],
