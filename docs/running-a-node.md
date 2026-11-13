@@ -44,6 +44,8 @@ Amounts are in **mukrn** (1 KRN = 1 000 000 mukrn). The validator's stake (`1000
 
 The genesis file carries a `timestamp`, in seconds, which `build_genesis.py` writes: it is the time of the genesis block, hence part of its hash. A node reads it from the file and from nowhere else, and `init` refuses a genesis without it (`error: invalid genesis`). Every node of a network starts from the same file.
 
+What the genesis says of the issuance, in `issuance_params`, passes the checks of a governance proposal ([`governance.md`](governance.md), "Values of a protocol payload"): each value has its type and its range, and the lowest rate is not above the highest. `init` refuses the file otherwise, before it writes anything. A genesis used to be read no further than its names: a block time of zero was accepted, and the first block could not be applied. Leaving `issuance_params` out gives the defaults. A name that no proposal knows is left alone, as the node leaves it alone.
+
 The `genesis.json` at the root of the repository describes the planned distribution of the mainnet. It is not a file a node starts from: build one as above.
 
 ### 3. Initialize the node data directory

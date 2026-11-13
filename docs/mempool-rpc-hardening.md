@@ -25,8 +25,8 @@ admission result:
   on total pending transactions regardless of sender, bounding worst-case
   memory across many senders.
 
-A re-submission of a transaction already in the mempool (same hash) is an
-`INSERT OR REPLACE` and **never** counts against either cap, so honest
+A re-submission of a transaction already in the mempool (same hash) keeps
+its row and its place, and **never** counts against either cap, so honest
 resubmission and gossip duplication are always allowed.
 
 Because both caps live in `add_to_mempool`, they protect **every** intake
@@ -95,6 +95,31 @@ when it comes again, since its account may have moved. A client is answered
 `400` with the reason. A full mempool is the one refusal that says nothing
 against the transaction, and is answered `429`.
 
+**One transaction of a sender for each nonce.** A block takes one
+transaction of a sender for a nonce, so a mempool keeps one. A second
+transaction of the same sender with the same nonce is refused while the
+first can still be charged, and a client is answered `400`. When the sender
+can no longer pay the first, the second takes its place. A transaction that
+is already in the mempool and comes again keeps its row and its place.
+
+**A mempool that is full.** A transaction the next block can charge is not
+refused for want of room while something else can give way
+(`Node._make_room`). The node first removes what no block could charge any
+more. If the mempool is still full, the transaction takes the place of one
+that waits: the one farthest ahead of its account and, among those as far
+ahead, the one that came last. A transaction that waits takes the place of
+none, and is answered `429` as before. Going through a mempool of 50,000
+rows takes about a fifth of a second, so a node does it once for a head at
+most, and only when its mempool is full: what gives way until the head
+moves is taken from what it found then. A sender that holds its 256 places
+makes room among its own transactions, by the same rule. What gave way is
+forgotten, and is taken again if it comes again when there is room.
+
+**After each block.** Every node removes from its mempool what the block
+consumed: any transaction of a sender of the block under a nonce that its
+account has passed. A peer can have sent this node another transaction than
+the one the proposer took, for the same nonce.
+
 **In front of a proposer.** `propose_block` reads the mempool in the order
 of arrival and stops when its block is full: 5,000 transactions
 (`BakerConfig.max_txs_per_block`), or the bytes that
@@ -119,7 +144,9 @@ not a transaction is removed.
 itself go through the same door. A report takes the first nonce that
 neither the chain nor a waiting transaction of the validator has taken. A
 validator that cannot pay for a report yet, after what it already has
-waiting, keeps the evidence and files it when it can.
+waiting, keeps the evidence and files it when it can. It keeps it too when
+the mempool has no room for the report: a mempool without room says
+nothing against a transaction.
 
 These are the choices of a node, not rules of consensus: a block that holds
 a transaction of more than 131,072 bytes is a valid block today. Structure
@@ -133,6 +160,15 @@ would have charged it. Transactions that could only fail stayed in the
 mempool for ever, were tried again at every block, and hid those that came
 after them. The proposer did not look at the fee floor either: with the
 floor on, it built blocks that every validator refused.
+
+Three ways were then left to keep a mempool full for next to nothing, so
+that a node refused every transaction that came after. Transactions parked
+ahead of their account, without the nonce that would let a block take them,
+waited for ever. A sender could have 256 transactions wait for one nonce,
+of which a block takes one. And only a proposer removed what no block could
+charge any more, when its turn came: a node that does not propose kept it.
+A slashing report that found the mempool full was lost with its evidence.
+The three rules above close them.
 
 ## Scope and limitations
 
@@ -151,6 +187,10 @@ This is a **first line of defence**, not a complete anti-DoS posture:
   hardening in the security review.
 - The order of the mempool is the order of arrival. Ordering by fee is
   future work.
+- A mempool that holds only transactions the next block can charge is full
+  for the one that comes next, until a block takes some of them. What
+  prices that room is the fee, and the [fee floor](fee-floor.md) is off by
+  default.
 
 ## Tests
 
@@ -161,7 +201,9 @@ behaviour, and the legacy-database migration.
 peer and from a client), the rows and their migration, and the reports of
 a validator. `tests/test_proposer_selection.py` covers what a proposer
 takes, leaves and removes, the full block, and the validity of the block
-whatever the mempool holds.
+whatever the mempool holds. `tests/test_mempool_full.py` covers the one
+transaction of a sender for each nonce, what every node removes after a
+block, and what gives way in a mempool that is full.
 
 ## Reference
 

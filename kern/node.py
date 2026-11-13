@@ -41,7 +41,10 @@ from aiohttp import web
 from .bft import (BftEngine, ConsensusMessage, MAX_ROUND_DISTANCE, MsgKind,
                   QuorumCertificate)
 from .block import Block, BlockHeader, txs_merkle_root_hex
-from .chain import Chain, admission_error, apply_block, state_root_hex, validate_and_apply
+from .chain import (
+    DROP, Chain, admission_error, apply_block, fee_params, mempool_pass, mempool_verdict, state_root_hex,
+    validate_and_apply,
+)
 from . import failpoints
 from .consensus import (BakerConfig, propose_block, round_timeout, select_proposer,
                         DEFAULT_BLOCK_TIME_S)
@@ -66,6 +69,10 @@ JOURNAL_COMPACT_EVERY = 64
 # The fee of a slashing report of this validator, in mukrn: small, so that
 # reporting stays cheap.
 SLASH_REPORT_FEE = 1_000
+
+# What a node answers to a second transaction of a sender for a nonce that
+# another one already holds in its mempool: a block takes one of them at most.
+NONCE_TAKEN = "a transaction of this sender with this nonce already waits"
 
 # Configured peers that are not connected are tried again this often: a
 # peer that was not listening yet when this node started, that restarted,
@@ -258,6 +265,11 @@ class Node:
         # Advisory dedup sets (see MAX_SEEN_ENTRIES note above).
         self._seen_blocks: Set[str] = set()
         self._seen_txs: Set[str] = set()
+        # The height at which this node last went through a mempool that
+        # was full, and what it found then that waits, the row that gives
+        # way first at the end (see _make_room).
+        self._passed_at: int = -1
+        self._giving_way: List[str] = []
         self._seen_cons: Set[Tuple[str, int, int, str, str]] = set()
         self._round_deadline: float = 0.0
         self._proposed_this_round: bool = False
@@ -499,6 +511,12 @@ class Node:
         self.storage.save_block(block)
         self.storage.maybe_save_state(self.chain.state, level)
         self.storage.remove_from_mempool([tx.hash_hex() for tx in block.transactions])
+        # A block consumes a nonce of each of its senders, and with it any
+        # other transaction this node held for that nonce: a peer can have
+        # sent another one than the proposer took. Every node removes them,
+        # not only the one that proposes, when its turn comes.
+        nonces = self.chain.state["nonces"]
+        self.storage.remove_consumed({tx.sender: nonces.get(tx.sender, 0) for tx in block.transactions})
         self._seen_blocks.add(block.hash_hex())
         self._trim(self._seen_blocks)
         # Reset consensus context for the next level.
@@ -769,6 +787,12 @@ class Node:
                     chain_id=self.chain.state.get("chain_id"),
                 )
                 refused = self.admit_transaction(tx)
+                if refused == MEMPOOL_FULL:
+                    # A mempool without room says nothing against the
+                    # report, and the evidence has left the engine: it
+                    # goes back there, and is filed when there is room.
+                    self.bft.pending_evidence.append(ev)
+                    continue
                 if refused is not None:
                     LOG.warning("slashing evidence against %s not filed: %s", ev.offender, refused)
                     continue
@@ -1007,15 +1031,67 @@ class Node:
 
         What no block built on the head could charge is refused here, at
         the door (chain.admission_error), before its signature is even
-        verified: the checks that cost least come first."""
-        reason = admission_error(tx, self.chain.state)
+        verified: the checks that cost least come first.
+
+        A sender has one transaction waiting for each nonce, since a block
+        takes one at most. And a mempool that is full still takes what the
+        next block can charge, in the place of a transaction that waits."""
+        state = self.chain.state
+        reason = admission_error(tx, state)
         if reason is not None:
             return reason
         if not tx.verify_signature():
             return "invalid signature"
-        if not self.storage.add_to_mempool(tx):
+        if self.storage.holds(tx.hash_hex()):
+            return None
+        fees = fee_params(state)
+        twins = self.storage.waiting_of(tx.sender, tx.nonce)
+        if any(mempool_verdict(row.sender, row.nonce, row.fee, row.size, state, fees)[0] != DROP for row in twins):
+            return NONCE_TAKEN
+        # A twin that its sender can no longer pay gives way to this one.
+        self._drop([row.hash_hex for row in twins])
+        if self.storage.add_to_mempool(tx):
+            return None
+        # What was not refused above can be charged by the next block when
+        # its nonce is the one its account is at. Anything else waits, and
+        # what waits takes the place of none. Nor does a transaction that
+        # no row can hold: nothing gives way to what cannot come in.
+        if tx.nonce != state["nonces"].get(tx.sender, 0) or not self.storage.has_a_row_for(tx):
             return MEMPOOL_FULL
-        return None
+        self._make_room(tx.sender, state, fees)
+        return None if self.storage.add_to_mempool(tx) else MEMPOOL_FULL
+
+    def _drop(self, hashes: List[str]) -> int:
+        """Remove from the mempool transactions that another day may be
+        taken again, and forget that they were seen. Returns how many were
+        there."""
+        self._seen_txs.difference_update(hashes)
+        return self.storage.remove_from_mempool(hashes)
+
+    def _make_room(self, sender: str, state: dict, fees: dict) -> None:
+        """Free a place, if one can be freed, for a transaction of `sender`
+        that the next block can charge.
+
+        What goes first is what no block could charge any more. Then the
+        transaction that waits farthest ahead of its account, the one that
+        came last among those as far ahead. When the sender holds all its
+        places, the place is taken among its own transactions."""
+        mine = self.storage.waiting_of(sender)
+        if len(mine) >= self.storage.max_mempool_per_sender:
+            dead, waits = mempool_pass(mine, state, fees)
+            self._drop(dead or waits[:1])
+        else:
+            # The sender has places left: it is the mempool that is full.
+            # Going through it is done once for a head: what gives way
+            # until the head moves is taken from what was found then.
+            if self._passed_at != self.chain.height:
+                self._passed_at = self.chain.height
+                dead, waits = mempool_pass(self.storage.waiting(), state, fees)
+                self._giving_way = waits[::-1]
+                if self._drop(dead):
+                    return
+            while self._giving_way and not self._drop([self._giving_way.pop()]):
+                pass
 
     async def _on_tx_msg(self, tx_dict: dict) -> None:
         try:

@@ -69,6 +69,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from .crypto import address_is_valid
+from .issuance import IssuanceParams
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +251,53 @@ def _param_error(name: str, value: Any) -> Optional[str]:
     return None
 
 
+# The two bounds of the issuance curve, each under its two names: in parts
+# per million, and as the fraction older states and genesis files hold.
+_LOWEST_RATE = ("i_min_ppm", "i_min")
+_HIGHEST_RATE = ("i_max_ppm", "i_max")
+
+
+def _bounds(params: dict) -> Optional[Tuple[int, int]]:
+    """The lowest and the highest rate of issuance as the node reads them
+    from what a state holds, defaults included, or None when it cannot read
+    them. A name in parts per million comes before the older name."""
+    try:
+        read = IssuanceParams.from_dict(params)
+    except (TypeError, ValueError, ArithmeticError):
+        return None
+    return read.i_min_ppm, read.i_max_ppm
+
+
+def _order_error(bounds: Optional[Tuple[int, int]]) -> Optional[str]:
+    """The curve falls from the highest rate, when nothing is staked, to the
+    lowest, at the target. With the lowest above the highest nothing
+    raises: the curve is upside down, and its formula divides a negative
+    number, which two languages do not round the same way."""
+    if bounds is not None and bounds[0] > bounds[1]:
+        return f"the lowest rate of issuance ({bounds[0]} ppm) is above the highest ({bounds[1]} ppm)"
+    return None
+
+
+def issuance_error(params: Any) -> Optional[str]:
+    """Why `params` cannot be the issuance parameters a network starts
+    with, or None. Never raises.
+
+    A genesis passes the checks of a proposal: each value of a name a
+    proposal knows has its type and its range, and the lowest rate is not
+    above the highest. Nothing at all means the defaults. A name no
+    proposal knows is left alone, as the node leaves it alone."""
+    if params is None:
+        return None
+    if not isinstance(params, dict):
+        return "the issuance parameters must be an object"
+    for name, value in params.items():
+        if name in ALLOWED_PARAMS:
+            err = _param_error(name, value)
+            if err:
+                return err
+    return _order_error(_bounds(params))
+
+
 def validate_protocol_payload(payload: dict) -> Optional[str]:
     """Return None if payload is well-formed, else an error string. Never
     raises, whatever the payload holds."""
@@ -267,6 +315,13 @@ def validate_protocol_payload(payload: dict) -> Optional[str]:
             if k not in ALLOWED_PARAMS:
                 return f"unknown param: {k}"
             err = _param_error(k, value)
+            if err:
+                return err
+        # A proposal that carries both bounds says by itself whether they
+        # cross. One that carries a single bound is judged when it would
+        # be activated, against the other bound as the state then holds it.
+        if any(name in params for name in _LOWEST_RATE) and any(name in params for name in _HIGHEST_RATE):
+            err = _order_error(_bounds(params))
             if err:
                 return err
     if "swap" in payload:
@@ -603,13 +658,18 @@ class ProtocolGovernance:
 
     # ----- cycle advancement ---------------------------------------------
 
-    def advance_phases(self, current_level: int) -> List[Tuple[str, str]]:
+    def advance_phases(self, current_level: int, issuance: Optional[dict] = None) -> List[Tuple[str, str]]:
         """Walk all proposals and advance them to the next phase if the
         current phase window has elapsed. Returns a list of
         (proposal_id, new_phase) transitions that just happened.
 
-        Called by the chain at every block."""
+        Called by the chain at every block, with what the state holds as
+        issuance parameters in `issuance`. A proposal that would leave the
+        lowest rate above the highest is then rejected at the block that
+        would activate it. Several proposals of one block are looked at
+        one after the other, each on top of those activated before it."""
         transitions: List[Tuple[str, str]] = []
+        held = issuance
         for prop in self.proposals.values():
             new_phase = self._next_phase(prop, current_level)
             if new_phase is not None and new_phase != prop.phase:
@@ -618,6 +678,15 @@ class ProtocolGovernance:
                 # the last moment, instead of activated.
                 if new_phase == ProtocolPhase.ACTIVATED and validate_protocol_payload(prop.payload) is not None:
                     new_phase = ProtocolPhase.REJECTED
+                if new_phase == ProtocolPhase.ACTIVATED and held is not None:
+                    after = {**held, **prop.payload.get("params", {})}
+                    # A proposal answers for the bounds it moves. A state
+                    # written before this rule can hold crossed bounds: a
+                    # proposal about something else is activated as before.
+                    if _order_error(_bounds(after)) is not None and _bounds(after) != _bounds(held):
+                        new_phase = ProtocolPhase.REJECTED
+                    else:
+                        held = after
                 prop.phase = new_phase
                 prop.phase_transitions.append((new_phase.value, current_level))
                 if new_phase == ProtocolPhase.ACTIVATED:

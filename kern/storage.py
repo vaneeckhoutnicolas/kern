@@ -44,7 +44,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from functools import partial
-from typing import Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from . import nesting
 from .block import Block
@@ -228,41 +228,56 @@ class Storage:
     def add_to_mempool(self, tx: Transaction) -> bool:
         """Admit ``tx`` to the mempool, subject to size caps.
 
-        Returns ``True`` if the transaction was admitted (or was already
-        present and thus re-inserted), ``False`` if it was rejected because a
-        cap was reached. Re-inserting a transaction already in the mempool
-        (same hash) never counts against the caps, so honest resubmission is
-        always allowed.
+        Returns ``True`` if the transaction was admitted, or was already
+        present, ``False`` if it was rejected because a cap was reached. A
+        transaction that is already in the mempool keeps its row and its
+        place: it never counts against the caps, so honest resubmission is
+        always allowed, and it does not send the transaction behind those
+        that came after it.
 
         A nonce or a fee beyond 2^63 - 1 is refused: no account reaches that
         nonce nor holds that fee, and no row can hold the number.
         """
-        if max(tx.nonce, tx.fee) > _SQLITE_INTEGER_MAX:
+        if not self.has_a_row_for(tx):
             return False
         h = tx.hash_hex()
-        already_present = (
-            self.conn.execute(
-                "SELECT 1 FROM mempool WHERE hash = ?", (h,)
-            ).fetchone()
-            is not None
-        )
-        if not already_present:
-            if self.mempool_size() >= self.max_mempool_size:
-                return False
-            if self._mempool_count_for_sender(tx.sender) >= self.max_mempool_per_sender:
-                return False
+        if self.holds(h):
+            return True
+        if self.mempool_size() >= self.max_mempool_size:
+            return False
+        if self._mempool_count_for_sender(tx.sender) >= self.max_mempool_per_sender:
+            return False
         self.conn.execute(
-            "INSERT OR REPLACE INTO mempool(hash, json, received_at, sender, nonce, fee, size) "
+            "INSERT INTO mempool(hash, json, received_at, sender, nonce, fee, size) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (h, json.dumps(tx.to_dict()), int(time.time()), tx.sender, tx.nonce, tx.fee, tx.encoded_size()),
         )
         return True
+
+    @staticmethod
+    def has_a_row_for(tx: Transaction) -> bool:
+        """Whether the nonce and the fee of `tx` are numbers a row can hold."""
+        return max(tx.nonce, tx.fee) <= _SQLITE_INTEGER_MAX
+
+    def holds(self, tx_hash: str) -> bool:
+        """Whether a transaction waits under this identifier."""
+        return self.conn.execute("SELECT 1 FROM mempool WHERE hash = ?", (tx_hash,)).fetchone() is not None
 
     def _mempool_count_for_sender(self, sender: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) FROM mempool WHERE sender = ?", (sender,)
         ).fetchone()
         return row[0] if row else 0
+
+    def waiting_of(self, sender: str, nonce: Optional[int] = None) -> List[Waiting]:
+        """The transactions of `sender` that wait here, oldest first, as
+        rows; with `nonce`, those that hold this nonce."""
+        query = "SELECT hash, sender, nonce, fee, size FROM mempool WHERE sender = ?"
+        values: Tuple[Any, ...] = (sender,)
+        if nonce is not None:
+            query, values = query + " AND nonce = ?", (sender, nonce)
+        rows = self.conn.execute(query + " ORDER BY received_at, rowid", values).fetchall()
+        return [Waiting(h, who, at, fee, size, partial(self.get_from_mempool, h)) for h, who, at, fee, size in rows]
 
     def waiting_fees(self, sender: str) -> int:
         """What the transactions of `sender` that wait here will pay in
@@ -321,13 +336,22 @@ class Storage:
         except ValueError:
             return None
 
-    def remove_from_mempool(self, hashes: List[str]) -> None:
+    def remove_from_mempool(self, hashes: List[str]) -> int:
+        """Remove the transactions that wait under these identifiers.
+        Returns how many of them were there."""
         # A statement takes a limited number of values: a block of thousands
         # of transactions is removed a few hundred at a time.
+        removed = 0
         for start in range(0, len(hashes), 500):
             some = hashes[start:start + 500]
             qmarks = ",".join("?" for _ in some)
-            self.conn.execute(f"DELETE FROM mempool WHERE hash IN ({qmarks})", some)
+            removed += self.conn.execute(f"DELETE FROM mempool WHERE hash IN ({qmarks})", some).rowcount
+        return removed
+
+    def remove_consumed(self, accounts: Dict[str, int]) -> None:
+        """Remove, for each sender, what waits under a nonce below the one
+        its account is at: no block can take it any more."""
+        self.conn.executemany("DELETE FROM mempool WHERE sender = ? AND nonce < ?", list(accounts.items()))
 
     def mempool_size(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM mempool").fetchone()

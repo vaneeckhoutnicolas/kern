@@ -131,7 +131,7 @@ Inject a signed transaction into the node's mempool. The transaction will be gos
 { "hash": "19c0716f22829050df78689abc49945ec7cc053f4c847b5fe938bc8a4e4529b9" }
 ```
 
-The hash returned identifies the transaction; you can use it to track inclusion. Errors return `400` with a message: a signature that does not verify, a nonce that is consumed or more than 256 above the account, a sender that does not hold the fee, a fee under the fee floor when it is on, a transaction of more than 131,072 bytes or signed for another chain. A full mempool, like too many requests, returns `429`: come back later. A body that is not JSON in UTF-8, or that nests arrays and objects more than 64 deep, returns `400` too, which is settled before the body is decoded.
+The hash returned identifies the transaction; you can use it to track inclusion. Errors return `400` with a message: a signature that does not verify, a nonce that is consumed or more than 256 above the account, a sender that does not hold the fee, a fee under the fee floor when it is on, a transaction of more than 131,072 bytes or signed for another chain, a nonce for which another transaction of the same sender already waits. A full mempool, like too many requests, returns `429`: come back later. A transaction the next block can charge finds a place in a full mempool as long as another one only waits there ([`mempool-rpc-hardening.md`](mempool-rpc-hardening.md), section 4). A body that is not JSON in UTF-8, or that nests arrays and objects more than 64 deep, returns `400` too, which is settled before the body is decoded.
 
 ---
 
