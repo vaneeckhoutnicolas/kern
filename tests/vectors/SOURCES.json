@@ -92,6 +92,11 @@
    "licence": "Apache-2.0"
   },
   {
+   "path": "kern/schemas.json",
+   "generator": "tests/schema_vectors.py, with tests/schema_reference.py",
+   "licence": "Apache-2.0"
+  },
+  {
    "path": "kern/profile_check.go",
    "written_here": "The Go program that recomputes the vectors of kern/ and runs the official files",
    "licence": "Apache-2.0"

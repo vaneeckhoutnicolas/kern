@@ -42,7 +42,7 @@ grep '^version' pyproject.toml
 
 # 3. Run the full test suite
 pytest tests/
-# Expected: 1255 passed, none skipped (v1.1-rc)
+# Expected: 1279 passed, none skipped (v1.1-rc)
 
 # 3b. Recompute the reference vectors of the signature profile with the Go
 #     standard library (Go 1.27 or later; the CI does it on every pull request)
@@ -70,6 +70,11 @@ python scripts/check_vectors_upstream.py
 # 3f. Check the record of the frozen profile against the git history
 python tests/test_vectors.py
 # Expected: kern/freeze.json is what its three files give
+
+# 3g. Check the vectors of the schemas of structure version 1 with the Go
+#     program (docs/api-stability.md, section 9)
+(cd tests/vectors/kern && go run profile_check.go -schemas schemas.json)
+# Expected last line: schemas: ..., as the Python reference
 
 # 4. Run the originality audit
 grep -rni "copied from\|adapted from\|fork of" --include="*.py" . | \

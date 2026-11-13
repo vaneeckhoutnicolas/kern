@@ -19,6 +19,13 @@
 //
 //	go run profile_check.go -official ..
 //
+// With -schemas it checks the vectors of the schemas of structure version 1
+// (docs/api-stability.md, section 9), which tests/schema_vectors.py builds
+// with tests/schema_reference.py: the tables of this program were written
+// from the document, and must accept and refuse the same objects.
+//
+//	go run profile_check.go -schemas schemas.json
+//
 // With -sign it prints the signatures it makes, the list kept under "go"
 // in composite_signatures.json:
 //
@@ -26,7 +33,7 @@
 //
 // Needs Go 1.27 or later, for crypto/mldsa. Not part of the node and not
 // run by the test suite, which is Python; the continuous integration runs
-// the first two commands on every pull request.
+// the first three commands on every pull request.
 package main
 
 import (
@@ -43,6 +50,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -991,6 +999,1077 @@ func checkOfficial(dir string) {
 		verdicts["acceptable false"], leftOpen["SmallOrderPublicKey"], leftOpen["MixedOrderPublicKey"])
 }
 
+// ---------------------------------------------------------------- the schemas of structure version 1
+//
+// docs/api-stability.md, section 9, chapter 1: what is signed and what
+// travels. The tables below were written from that section, not from
+// tests/schema_reference.py, and the checks are not made in the same
+// order: a vector that broke two rules at once would get two answers.
+
+const (
+	maxJSONNesting           = 64
+	maxTransactionNesting    = 32
+	maxFrameBytes            = 16777216
+	maxTransactionBytes      = 131072
+	maxBlockBytes            = 8388608
+	maxCertificateSignatures = 1024
+	maxCodeBytes             = 65536
+	maxValueBytes            = 4096
+	maxContractFields        = 256
+	maxClaimBytes            = 16384
+	maxRecipients            = 64
+	maxInt                   = math.MaxInt64
+	maxRound                 = math.MaxUint32
+)
+
+// A schema answers "" to a value it accepts, or the name of the rule that
+// refuses it.
+type schema func(v any) string
+
+var schemaNetwork []byte
+
+func integer(low, high int64) schema {
+	return func(v any) string {
+		n, ok := v.(json.Number)
+		if !ok {
+			return "wrong_type"
+		}
+		i, err := strconv.ParseInt(n.String(), 10, 64)
+		if err != nil {
+			if _, isInteger := new(big.Int).SetString(n.String(), 10); isInteger {
+				return "out_of_range"
+			}
+			return "wrong_type"
+		}
+		if i < low || i > high {
+			return "out_of_range"
+		}
+		return ""
+	}
+}
+
+func boolean(v any) string {
+	if _, ok := v.(bool); !ok {
+		return "wrong_type"
+	}
+	return ""
+}
+
+func oneOf(values ...string) schema {
+	return func(v any) string {
+		s, ok := v.(string)
+		if !ok {
+			return "wrong_type"
+		}
+		if !has(values, s) {
+			return "bad_text"
+		}
+		return ""
+	}
+}
+
+// letters is a string of low to high characters, each allowed at its place.
+func letters(low, high int, allowed func(i int, c byte) bool) schema {
+	return func(v any) string {
+		s, ok := v.(string)
+		if !ok {
+			return "wrong_type"
+		}
+		if len(s) < low || len(s) > high {
+			return "bad_text"
+		}
+		for i := 0; i < len(s); i++ {
+			if !allowed(i, s[i]) {
+				return "bad_text"
+			}
+		}
+		return ""
+	}
+}
+
+func isDigit(c byte) bool  { return c >= '0' && c <= '9' }
+func isLower(c byte) bool  { return c >= 'a' && c <= 'z' }
+func isLetter(c byte) bool { return isLower(c) || c >= 'A' && c <= 'Z' }
+
+func hexOf(characters int) schema {
+	return letters(characters, characters, func(_ int, c byte) bool { return isDigit(c) || c >= 'a' && c <= 'f' })
+}
+
+// anyText is any string of low to high bytes of UTF-8.
+func anyText(low, high int) schema {
+	return func(v any) string {
+		s, ok := v.(string)
+		if !ok {
+			return "wrong_type"
+		}
+		if !utf8.ValidString(s) || len(s) < low || len(s) > high {
+			return "bad_text"
+		}
+		return ""
+	}
+}
+
+// addressHash is the hash inside an address of this network, or nil: 75
+// characters of base 58 that spell the prefix, a hash, and the checksum of
+// both on this network.
+func addressHash(network []byte, text string) []byte {
+	if len(text) != 75 {
+		return nil
+	}
+	n := new(big.Int)
+	for i := 0; i < len(text); i++ {
+		digit := strings.IndexByte(alphabet, text[i])
+		if digit < 0 {
+			return nil
+		}
+		n.Mul(n, big.NewInt(58)).Add(n, big.NewInt(int64(digit)))
+	}
+	if n.BitLen() > 8*55 {
+		return nil
+	}
+	raw := n.FillBytes(make([]byte, 55))
+	if raw[0] != 0x7b || raw[1] != 0x03 || raw[2] != 0x39 || addressFromHash(network, raw[3:51]) != text {
+		return nil
+	}
+	return raw[3:51]
+}
+
+func anAddress(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return "wrong_type"
+	}
+	if addressHash(schemaNetwork, s) == nil {
+		return "bad_address"
+	}
+	return ""
+}
+
+func aKey(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return "wrong_type"
+	}
+	if _, err := decodeText("kpk1.", 1984, s); err != nil {
+		return "bad_key"
+	}
+	return ""
+}
+
+func aSignature(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return "wrong_type"
+	}
+	if _, err := decodeText("ksig1.", 3373, s); err != nil {
+		return "bad_signature"
+	}
+	return ""
+}
+
+// listOf has low to high items; a negative high is no bound of its own.
+func listOf(item schema, low, high int) schema {
+	return func(v any) string {
+		list, ok := v.([]any)
+		if !ok {
+			return "wrong_type"
+		}
+		if len(list) < low || high >= 0 && len(list) > high {
+			return "out_of_range"
+		}
+		for _, entry := range list {
+			if r := item(entry); r != "" {
+				return r
+			}
+		}
+		return ""
+	}
+}
+
+func sortedNames(m map[string]any) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func mapOf(name, value schema, low, high int) schema {
+	return func(v any) string {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return "wrong_type"
+		}
+		if len(m) < low || len(m) > high {
+			return "out_of_range"
+		}
+		for _, member := range sortedNames(m) {
+			if r := value(m[member]); r != "" {
+				return r
+			}
+			if r := name(member); r != "" {
+				return r
+			}
+		}
+		return ""
+	}
+}
+
+type field struct {
+	is       schema
+	optional bool
+}
+
+func required(is schema) field { return field{is, false} }
+func optional(is schema) field { return field{is, true} }
+
+// object has the fields given and no other member. The fields are checked
+// in the order of their names, then the members that are not fields are
+// looked for, then the rules that tie fields together are applied.
+func object(fields map[string]field, rules ...func(o map[string]any) string) schema {
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return func(v any) string {
+		o, ok := v.(map[string]any)
+		if !ok {
+			return "wrong_type"
+		}
+		for _, name := range names {
+			value, present := o[name]
+			if !present {
+				if !fields[name].optional {
+					return "missing_field"
+				}
+				continue
+			}
+			if r := fields[name].is(value); r != "" {
+				return r
+			}
+		}
+		for member := range o {
+			if _, known := fields[member]; !known {
+				return "unknown_field"
+			}
+		}
+		for _, rule := range rules {
+			if r := rule(o); r != "" {
+				return r
+			}
+		}
+		return ""
+	}
+}
+
+func hasMember(o map[string]any, name string) bool { _, ok := o[name]; return ok }
+
+func number(v any) int64 {
+	n, err := strconv.ParseInt(v.(json.Number).String(), 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
+func depthOf(v any) int {
+	deepest := 0
+	switch t := v.(type) {
+	case map[string]any:
+		for _, inner := range t {
+			deepest = max(deepest, depthOf(inner))
+		}
+		return deepest + 1
+	case []any:
+		for _, inner := range t {
+			deepest = max(deepest, depthOf(inner))
+		}
+		return deepest + 1
+	}
+	return 0
+}
+
+// without is the canonical JSON of an object without some of its members.
+func without(o map[string]any, names ...string) []byte {
+	kept := map[string]any{}
+	for name, value := range o {
+		if !has(names, name) {
+			kept[name] = value
+		}
+	}
+	encoding, err := canonicalJSON(kept)
+	if err != nil {
+		panic(err)
+	}
+	return encoding
+}
+
+var (
+	aLevel      = integer(0, maxInt)
+	aRound      = integer(0, maxRound)
+	anAmount    = integer(0, maxInt)
+	aHash       = hexOf(96)
+	aName       = letters(1, 64, func(i int, c byte) bool { return isLetter(c) || c == '_' || i > 0 && isDigit(c) })
+	aChain      = letters(1, 64, func(i int, c byte) bool { return isLower(c) || i > 0 && (isDigit(c) || c == '-') })
+	aSchemaName = letters(1, 128, func(_ int, c byte) bool {
+		return isLetter(c) || isDigit(c) || c == '.' || c == '-' || c == '_'
+	})
+	aSubject = letters(1, 256, func(_ int, c byte) bool { return c >= 0x20 && c <= 0x7e })
+)
+
+// aValue is what a contract holds in a field or takes as a parameter.
+func aValue(v any) string {
+	switch t := v.(type) {
+	case bool:
+		return ""
+	case json.Number:
+		return integer(math.MinInt64, maxInt)(t)
+	case string:
+		return anyText(0, maxValueBytes)(t)
+	}
+	return "wrong_type"
+}
+
+var someFields = mapOf(aName, aValue, 0, maxContractFields)
+
+// aClaim is any object of canonical JSON, up to a size.
+func aClaim(v any) string {
+	if _, ok := v.(map[string]any); !ok {
+		return "wrong_type"
+	}
+	encoding, err := canonicalJSON(v)
+	if err != nil {
+		return "wrong_type"
+	}
+	if len(encoding) > maxClaimBytes {
+		return "too_long"
+	}
+	return ""
+}
+
+var aVote = object(map[string]field{
+	"kind": required(oneOf("preendorse", "endorse")), "level": required(aLevel), "round": required(aRound),
+	"block_hash": required(aHash), "validator": required(anAddress), "signature": required(aSignature),
+})
+
+var aProposeMessage = object(map[string]field{
+	"kind": required(oneOf("propose")), "level": required(aLevel), "round": required(aRound),
+	"block_hash": required(aHash), "validator": required(anAddress), "valid_round": optional(aRound),
+	"signature": required(aSignature),
+}, func(o map[string]any) string {
+	if hasMember(o, "valid_round") && number(o["valid_round"]) >= number(o["round"]) {
+		return "inconsistent"
+	}
+	return ""
+})
+
+var aCertificate = object(map[string]field{
+	"kind": required(oneOf("preendorse", "endorse")), "level": required(aLevel), "round": required(aRound),
+	"block_hash": required(aHash), "signatures": required(mapOf(anAddress, aSignature, 1, maxCertificateSignatures)),
+})
+
+var someParameters = object(map[string]field{
+	"i_min_ppm": optional(integer(0, 1000000)), "i_max_ppm": optional(integer(0, 1000000)),
+	"target_staking_ratio_ppm": optional(integer(0, 1000000)), "target_block_time_ms": optional(integer(1, 3600000)),
+	"treasury_share_ppm": optional(integer(0, 1000000)), "proposer_bonus_ppm": optional(integer(0, 1000000)),
+	"fee_floor_enabled": optional(boolean), "fee_floor_base": optional(integer(0, 1000000000000)),
+	"fee_floor_per_byte": optional(integer(0, 1000000000)),
+	"max_block_bytes":    optional(integer(maxTransactionBytes, maxBlockBytes)),
+}, func(o map[string]any) string {
+	if len(o) == 0 {
+		return "inconsistent"
+	}
+	return ""
+})
+
+var aProtocolPayload = object(map[string]field{
+	"params": optional(someParameters), "swap": optional(oneOf("state_root_function")),
+	"to": optional(oneOf("json", "trie")),
+}, func(o map[string]any) string {
+	if hasMember(o, "swap") != hasMember(o, "to") || !hasMember(o, "swap") && !hasMember(o, "params") {
+		return "inconsistent"
+	}
+	return ""
+})
+
+var aTreasuryPayload = object(map[string]field{
+	"recipients": required(listOf(object(map[string]field{
+		"address": required(anAddress), "amount": required(integer(1, maxInt)),
+	}), 1, maxRecipients)),
+	"memo": optional(anyText(1, 256)),
+}, func(o map[string]any) string {
+	total := new(big.Int)
+	for _, recipient := range o["recipients"].([]any) {
+		total.Add(total, big.NewInt(number(recipient.(map[string]any)["amount"])))
+	}
+	if !total.IsInt64() {
+		return "out_of_range"
+	}
+	return ""
+})
+
+// aProposal is the `params` of governance_propose: the payload is the one
+// of its track.
+func aProposal(v any) string {
+	o, ok := v.(map[string]any)
+	if !ok {
+		return "wrong_type"
+	}
+	payload := aProtocolPayload
+	if track, _ := o["track"].(string); track == "treasury" {
+		payload = aTreasuryPayload
+	}
+	return object(map[string]field{
+		"track": required(oneOf("protocol", "treasury")), "payload": required(payload),
+		"salt": required(integer(0, maxInt)),
+	})(v)
+}
+
+// kinds gives each kind of transaction the fields it has besides the
+// common ones.
+var kinds = map[string]map[string]schema{
+	"transfer":           {"recipient": anAddress, "amount": anAmount},
+	"originate":          {"code": anyText(1, maxCodeBytes), "initial_storage": someFields},
+	"call":               {"recipient": anAddress, "amount": anAmount, "entry": aName, "params": someFields},
+	"governance_propose": {"params": aProposal},
+	"governance_vote": {"params": object(map[string]field{
+		"track": required(oneOf("protocol", "treasury")), "proposal_id": required(aHash),
+		"vote": required(oneOf("yes", "no", "abstain")),
+	})},
+	"slash_equivocation": {"params": object(map[string]field{
+		"proposal_id": required(aHash), "equivocator": required(anAddress),
+	})},
+	"slash_consensus_equivocation": {"params": object(map[string]field{
+		"msg_a": required(aVote), "msg_b": required(aVote),
+	})},
+	"delegate_stake": {"amount": integer(1, maxInt), "params": object(map[string]field{
+		"validator": required(anAddress),
+	})},
+	"undelegate_stake": {},
+	"attest": {"amount": anAmount, "params": object(map[string]field{
+		"schema_id": required(aSchemaName), "subject": required(aSubject), "claim": required(aClaim),
+	})},
+	"revoke_attestation": {"params": object(map[string]field{"attestation_id": required(aHash)})},
+	"slash_attestation_equivocation": {"params": object(map[string]field{
+		"attestation_id_1": required(aHash), "attestation_id_2": required(aHash),
+	})},
+	"rotate_key": {"params": object(map[string]field{"new_public_key": required(aKey)})},
+}
+
+func aTransaction(v any) string {
+	tx, ok := v.(map[string]any)
+	if !ok {
+		return "wrong_type"
+	}
+	if depthOf(v) > maxTransactionNesting {
+		return "too_deep"
+	}
+	if encoding, err := canonicalJSON(v); err != nil {
+		return "wrong_type"
+	} else if len(encoding) > maxTransactionBytes {
+		return "too_long"
+	}
+	kind, present := tx["kind"]
+	if !present {
+		return "missing_field"
+	}
+	name, isText := kind.(string)
+	if !isText {
+		return "wrong_type"
+	}
+	own, known := kinds[name]
+	if !known {
+		return "bad_text"
+	}
+	fields := map[string]field{
+		"kind": required(oneOf(name)), "sender": required(anAddress), "nonce": required(integer(0, maxInt)),
+		"fee": required(anAmount), "gas_limit": required(integer(0, maxInt)), "chain_id": required(aChain),
+		"signature": required(aSignature), "public_key": optional(aKey),
+	}
+	for member, is := range own {
+		fields[member] = required(is)
+	}
+	if name == "rotate_key" {
+		fields["second_signature"] = required(aSignature)
+	}
+	return object(fields)(v)
+}
+
+var witnessFields = []string{"signature", "public_key", "second_signature"}
+
+func transactionID(tx map[string]any) []byte {
+	return h("kern.tx", schemaNetwork, without(tx, witnessFields...))
+}
+
+func transactionSize(tx map[string]any) int { return len(without(tx)) }
+
+func bytesOf(o map[string]any, name, prefix string, size int) []byte {
+	text, present := o[name]
+	if !present {
+		return nil
+	}
+	data, err := decodeText(prefix, size, text.(string))
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func witnessLeafOf(tx map[string]any) []byte {
+	return witnessLeaf(schemaNetwork, transactionID(tx), bytesOf(tx, "signature", "ksig1.", 3373),
+		bytesOf(tx, "public_key", "kpk1.", 1984), bytesOf(tx, "second_signature", "ksig1.", 3373))
+}
+
+var aHeader = object(map[string]field{
+	"version": required(integer(1, 1)), "level": required(aLevel), "payload_round": required(aRound),
+	"timestamp": required(integer(0, maxInt)), "parent_hash": required(aHash), "state_root": required(aHash),
+	"txs_root": required(aHash), "witness_root": required(aHash), "proposer": required(anAddress),
+	"signature": required(aSignature),
+})
+
+func blockHash(header map[string]any) string {
+	return hex.EncodeToString(h("kern.block", schemaNetwork, without(header, "signature")))
+}
+
+var aBlock = object(map[string]field{
+	"header": required(aHeader), "transactions": required(listOf(aTransaction, 0, -1)),
+}, func(o map[string]any) string {
+	header := o["header"].(map[string]any)
+	var ids, leaves [][]byte
+	size := 0
+	for _, entry := range o["transactions"].([]any) {
+		tx := entry.(map[string]any)
+		ids, leaves, size = append(ids, transactionID(tx)), append(leaves, witnessLeafOf(tx)), size+transactionSize(tx)
+	}
+	if hex.EncodeToString(merkleRoot(schemaNetwork, leaves)) != header["witness_root"] ||
+		hex.EncodeToString(merkleRoot(schemaNetwork, ids)) != header["txs_root"] {
+		return "inconsistent"
+	}
+	if size > maxBlockBytes {
+		return "too_long"
+	}
+	return ""
+})
+
+// certifies is the rule of a block and the certificate that makes it final.
+func certifies(o map[string]any) string {
+	header := o["block"].(map[string]any)["header"].(map[string]any)
+	certificate := o["certificate"].(map[string]any)
+	if certificate["block_hash"] != blockHash(header) || number(certificate["level"]) != number(header["level"]) ||
+		number(certificate["round"]) < number(header["payload_round"]) || certificate["kind"] != "endorse" {
+		return "inconsistent"
+	}
+	return ""
+}
+
+var aFinalBlock = object(map[string]field{"block": required(aBlock), "certificate": required(aCertificate)}, certifies)
+
+var frames = map[string]schema{
+	"hello": object(map[string]field{
+		"kind": required(oneOf("hello")), "network_id": required(hexOf(64)), "level": required(aLevel),
+	}),
+	"proposal": object(map[string]field{
+		"kind": required(oneOf("proposal")), "block": required(aBlock), "proposal": required(aProposeMessage),
+		"proof": optional(aCertificate),
+	}, func(o map[string]any) string {
+		header := o["block"].(map[string]any)["header"].(map[string]any)
+		message := o["proposal"].(map[string]any)
+		if hasMember(o, "proof") {
+			proof := o["proof"].(map[string]any)
+			if !hasMember(message, "valid_round") || proof["kind"] != "preendorse" ||
+				number(proof["round"]) != number(message["valid_round"]) ||
+				number(proof["level"]) != number(message["level"]) || proof["block_hash"] != message["block_hash"] ||
+				number(header["payload_round"]) > number(message["valid_round"]) {
+				return "inconsistent"
+			}
+		} else if hasMember(message, "valid_round") || number(header["payload_round"]) != number(message["round"]) {
+			return "inconsistent"
+		}
+		if message["block_hash"] != blockHash(header) || number(message["level"]) != number(header["level"]) {
+			return "inconsistent"
+		}
+		return ""
+	}),
+	"consensus": object(map[string]field{"kind": required(oneOf("consensus")), "msg": required(aVote)}),
+	"block": object(map[string]field{
+		"kind": required(oneOf("block")), "block": required(aBlock), "certificate": required(aCertificate),
+	}, certifies),
+	"transaction": object(map[string]field{"kind": required(oneOf("transaction")), "tx": required(aTransaction)}),
+	"get_blocks": object(map[string]field{
+		"kind": required(oneOf("get_blocks")), "from": required(integer(1, maxInt)), "to": required(integer(1, maxInt)),
+	}, func(o map[string]any) string {
+		if number(o["to"]) < number(o["from"]) {
+			return "inconsistent"
+		}
+		return ""
+	}),
+	"blocks": object(map[string]field{
+		"kind": required(oneOf("blocks")), "blocks": required(listOf(aFinalBlock, 0, -1)),
+	}, func(o map[string]any) string {
+		blocks := o["blocks"].([]any)
+		for i := 1; i < len(blocks); i++ {
+			level := func(entry any) int64 {
+				return number(entry.(map[string]any)["block"].(map[string]any)["header"].(map[string]any)["level"])
+			}
+			if level(blocks[i]) != level(blocks[i-1])+1 {
+				return "inconsistent"
+			}
+		}
+		return ""
+	}),
+}
+
+func aFrame(v any) string {
+	o, ok := v.(map[string]any)
+	if !ok {
+		return "wrong_type"
+	}
+	kind, present := o["kind"]
+	if !present {
+		return "missing_field"
+	}
+	name, isText := kind.(string)
+	if !isText {
+		return "wrong_type"
+	}
+	frame, known := frames[name]
+	if !known {
+		return "bad_text"
+	}
+	if r := frame(v); r != "" {
+		return r
+	}
+	if encoding, err := canonicalJSON(v); err != nil {
+		return "wrong_type"
+	} else if len(encoding) > maxFrameBytes {
+		return "too_long"
+	}
+	return ""
+}
+
+var schemas = map[string]schema{
+	"json": func(v any) string {
+		if _, err := canonicalJSON(v); err != nil {
+			return "wrong_type"
+		}
+		return ""
+	},
+	"transaction": aTransaction, "vote": aVote, "propose message": aProposeMessage, "certificate": aCertificate,
+	"header": aHeader, "block": aBlock, "final block": aFinalBlock, "frame": aFrame,
+}
+
+// nestingOf reads the nesting of a JSON text on its bytes: brackets and
+// braces outside strings.
+func nestingOf(text []byte) int {
+	depth, deepest := 0, 0
+	inString, escaped := false, false
+	for _, c := range text {
+		switch {
+		case inString && escaped:
+			escaped = false
+		case inString && c == '\\':
+			escaped = true
+		case inString && c == '"':
+			inString = false
+		case inString:
+		case c == '"':
+			inString = true
+		case c == '[' || c == '{':
+			depth++
+			deepest = max(deepest, depth)
+		case c == ']' || c == '}':
+			depth--
+		}
+	}
+	return deepest
+}
+
+// receive is what a node does with bytes that come from outside.
+func receive(name string, text []byte) string {
+	if name == "frame" && len(text) > maxFrameBytes || name == "transaction" && len(text) > maxTransactionBytes {
+		return "too_long"
+	}
+	if nestingOf(text) > maxJSONNesting {
+		return "too_deep"
+	}
+	value, err := decodeCanonical(text)
+	if err != nil {
+		return "not_canonical"
+	}
+	return schemas[name](value)
+}
+
+// ---------------------------------------------------------------- the vectors of the schemas
+
+func fillerOf(what string, n int64, length int) []byte {
+	return sha3.SumSHAKE256([]byte(fmt.Sprintf("kern schema vectors, %s %d", what, n)), length)
+}
+
+func deepCopy(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for name, inner := range t {
+			out[name] = deepCopy(inner)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, inner := range t {
+			out[i] = deepCopy(inner)
+		}
+		return out
+	}
+	return v
+}
+
+type schemaVectors struct {
+	objects map[string]any // accepted vectors, by name, directives carried out
+}
+
+// expand carries out the directives of a value of the file.
+func (s *schemaVectors) expand(v any, index int64) any {
+	switch t := v.(type) {
+	case []any:
+		out := make([]any, len(t))
+		for i, item := range t {
+			out[i] = s.expand(item, index)
+		}
+		return out
+	case map[string]any:
+		if len(t) == 1 {
+			for name, argument := range t {
+				if strings.HasPrefix(name, "$") {
+					return s.directive(name, argument, index)
+				}
+			}
+		}
+		out := make(map[string]any, len(t))
+		for name, item := range t {
+			out[name] = s.expand(item, index)
+		}
+		return out
+	}
+	return v
+}
+
+func (s *schemaVectors) directive(name string, argument any, index int64) any {
+	count := func(v any) int64 { return number(s.expand(v, index)) }
+	switch name {
+	case "$ref":
+		object, known := s.objects[argument.(string)]
+		if !known {
+			panic("no accepted vector named " + argument.(string))
+		}
+		return deepCopy(object)
+	case "$index":
+		return json.Number(strconv.FormatInt(index+number(argument), 10))
+	case "$key":
+		return textOf("kpk1.", fillerOf("key", count(argument), 1984))
+	case "$sig":
+		return textOf("ksig1.", fillerOf("signature", count(argument), 3373))
+	case "$address":
+		return addressFromHash(schemaNetwork, fillerOf("address", count(argument), 48))
+	case "$text":
+		parts := argument.([]any)
+		return strings.Repeat(parts[1].(string), int(number(parts[0])))
+	case "$concat":
+		var out strings.Builder
+		for _, part := range argument.([]any) {
+			switch piece := s.expand(part, index).(type) {
+			case string:
+				out.WriteString(piece)
+			case json.Number:
+				out.WriteString(piece.String())
+			default:
+				panic("a part that is neither a text nor an integer")
+			}
+		}
+		return out.String()
+	case "$list":
+		parts := argument.([]any)
+		out := make([]any, number(parts[0]))
+		for i := range out {
+			out[i] = s.expand(parts[1], int64(i))
+		}
+		return out
+	case "$map":
+		parts := argument.([]any)
+		out := map[string]any{}
+		for i := int64(0); i < number(parts[0]); i++ {
+			out[s.expand(parts[1], i).(string)] = s.expand(parts[2], i)
+		}
+		return out
+	}
+	panic("unknown directive " + name)
+}
+
+// locate follows a path to the array or object that holds its last step.
+func locate(v any, path string) (any, string) {
+	steps := strings.Split(path, ".")
+	for _, step := range steps[:len(steps)-1] {
+		switch t := v.(type) {
+		case []any:
+			i, _ := strconv.Atoi(step)
+			v = t[i]
+		case map[string]any:
+			v = t[step]
+		}
+	}
+	return v, steps[len(steps)-1]
+}
+
+// put replaces what stands at a path, in a copy; a position one past the
+// end of a list adds an item. The empty path is the value itself.
+func put(v any, path string, value any) any {
+	if path == "" {
+		return value
+	}
+	steps := strings.Split(path, ".")
+	return putAt(v, steps, value)
+}
+
+func putAt(v any, steps []string, value any) any {
+	switch t := v.(type) {
+	case []any:
+		i, _ := strconv.Atoi(steps[0])
+		out := append([]any{}, t...)
+		if i == len(out) {
+			out = append(out, nil)
+		}
+		if len(steps) == 1 {
+			out[i] = value
+		} else {
+			out[i] = putAt(out[i], steps[1:], value)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(t)+1)
+		for name, inner := range t {
+			out[name] = inner
+		}
+		if len(steps) == 1 {
+			out[steps[0]] = value
+		} else {
+			out[steps[0]] = putAt(out[steps[0]], steps[1:], value)
+		}
+		return out
+	}
+	panic("a path that leads nowhere")
+}
+
+// drop removes the member at a path, in a copy.
+func drop(v any, path string) any {
+	holder, last := locate(v, path)
+	members := holder.(map[string]any)
+	kept := make(map[string]any, len(members))
+	for name, inner := range members {
+		if name != last {
+			kept[name] = inner
+		}
+	}
+	if !strings.Contains(path, ".") {
+		return kept
+	}
+	return put(v, path[:strings.LastIndex(path, ".")], kept)
+}
+
+func joinPath(path, step string) string {
+	if path == "" {
+		return step
+	}
+	return path + "." + step
+}
+
+type mutation struct {
+	change, path string
+	object       any
+}
+
+// mutationsOf lists the objects one change away from an accepted one, as
+// the description of the file says.
+func mutationsOf(root any, maps, free []string) []mutation {
+	var out []mutation
+	var walk func(node any, path string)
+	walk = func(node any, path string) {
+		switch t := node.(type) {
+		case map[string]any:
+			out = append(out, mutation{"x", path, put(root, path, "x")})
+			if has(free, path) {
+				return
+			}
+			if !has(maps, path) {
+				for _, member := range sortedNames(t) {
+					out = append(out, mutation{"remove", joinPath(path, member), drop(root, joinPath(path, member))})
+				}
+				out = append(out, mutation{"add", path, put(root, joinPath(path, "zz"), json.Number("0"))})
+			}
+			for _, member := range sortedNames(t) {
+				walk(t[member], joinPath(path, member))
+			}
+		case []any:
+			out = append(out, mutation{"x", path, put(root, path, "x")})
+			if has(free, path) {
+				return
+			}
+			for i, item := range t {
+				walk(item, joinPath(path, strconv.Itoa(i)))
+			}
+		case bool:
+			out = append(out, mutation{"1", path, put(root, path, json.Number("1"))})
+		case json.Number:
+			out = append(out, mutation{"digits", path, put(root, path, t.String())})
+			out = append(out, mutation{"true", path, put(root, path, true)})
+		case string:
+			out = append(out, mutation{"0", path, put(root, path, json.Number("0"))})
+		}
+	}
+	walk(root, "")
+	return out
+}
+
+func pinOf(encoding []byte) string {
+	digest := sha3.Sum384(encoding)
+	return hex.EncodeToString(digest[:8])
+}
+
+type schemaVector struct {
+	Name      string          `json:"name"`
+	Schema    string          `json:"schema"`
+	From      string          `json:"from"`
+	Remove    []string        `json:"remove"`
+	Set       json.RawMessage `json:"set"`
+	Object    json.RawMessage `json:"object"`
+	Text      json.RawMessage `json:"text"`
+	Rule      string          `json:"rule"`
+	Why       string          `json:"why"`
+	Bytes     int             `json:"bytes"`
+	Pin       string          `json:"pin"`
+	Prefix    string          `json:"prefix"`
+	Signed    string          `json:"signed"`
+	Context   string          `json:"context"`
+	ID        string          `json:"id"`
+	Leaf      string          `json:"witness_leaf"`
+	Hash      string          `json:"hash"`
+	Proposal  string          `json:"proposal_id"`
+	Attested  string          `json:"attestation_id"`
+	Mutations *struct {
+		Optional []string `json:"optional"`
+		Maps     []string `json:"maps"`
+		Free     []string `json:"free"`
+	} `json:"mutations"`
+}
+
+// checkSchemas runs the vectors of the schemas with the tables above.
+func checkSchemas(path string) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+	var file struct {
+		NetworkID     string         `json:"network_id"`
+		Limits        map[string]int `json:"limits"`
+		Accepted      []schemaVector `json:"accepted"`
+		Refused       []schemaVector `json:"refused"`
+		AcceptedTexts []schemaVector `json:"accepted_texts"`
+		RefusedTexts  []schemaVector `json:"refused_texts"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		panic(err)
+	}
+	schemaNetwork = unhex(file.NetworkID)
+	limits := map[string]int{
+		"json_nesting": maxJSONNesting, "transaction_nesting": maxTransactionNesting, "frame_bytes": maxFrameBytes,
+		"transaction_bytes": maxTransactionBytes, "block_bytes": maxBlockBytes,
+		"certificate_signatures": maxCertificateSignatures, "code_bytes": maxCodeBytes, "value_bytes": maxValueBytes,
+		"contract_fields": maxContractFields, "claim_bytes": maxClaimBytes, "recipients": maxRecipients,
+	}
+	check("the limits of the file are the limits of this program", fmt.Sprint(limits) == fmt.Sprint(file.Limits))
+
+	vectors := schemaVectors{objects: map[string]any{}}
+	kept := map[string]string{} // the schema of each accepted vector
+	derived := 0
+	for _, v := range file.Accepted {
+		object := vectors.expand(mustParse(v.Object), 0)
+		encoding, err := canonicalJSON(object)
+		check("accepted "+v.Name+": the object", err == nil && len(encoding) == v.Bytes && pinOf(encoding) == v.Pin)
+		check("accepted "+v.Name, schemas[v.Schema](object) == "")
+		vectors.objects[v.Name], kept[v.Name] = object, v.Schema
+		o := object.(map[string]any)
+		switch v.Schema {
+		case "transaction":
+			check(v.Name+": identifier", same(transactionID(o), v.ID))
+			check(v.Name+": witness leaf", same(witnessLeafOf(o), v.Leaf))
+			check(v.Name+": what is signed", v.Signed == "" || string(without(o, witnessFields...)) == v.Signed)
+			params, _ := o["params"].(map[string]any)
+			if o["kind"] == "governance_propose" {
+				id, _ := canonicalJSON(map[string]any{"submitter": o["sender"], "payload": params["payload"], "salt": params["salt"]})
+				check(v.Name+": proposal identifier", same(h("kern.gov.id", schemaNetwork, id), v.Proposal))
+			}
+			if o["kind"] == "attest" {
+				id, _ := canonicalJSON(map[string]any{"issuer": o["sender"], "schema_id": params["schema_id"],
+					"subject": params["subject"], "claim": params["claim"], "attest_nonce": o["nonce"]})
+				check(v.Name+": attestation identifier", same(h("kern.attestation.id", schemaNetwork, id), v.Attested))
+			}
+		case "header":
+			check(v.Name+": hash", blockHash(o) == v.Hash)
+			check(v.Name+": what is signed", string(without(o, "signature")) == v.Signed)
+		case "vote", "propose message":
+			check(v.Name+": what is signed", string(without(o, "signature")) == v.Signed)
+			check(v.Name+": context", "kern."+o["kind"].(string) == v.Context && has(purposes, v.Context))
+		}
+		if v.Mutations == nil {
+			continue
+		}
+		for _, m := range mutationsOf(object, v.Mutations.Maps, v.Mutations.Free) {
+			refused := schemas[v.Schema](m.object) != ""
+			expected := !(m.change == "remove" && has(v.Mutations.Optional, m.path))
+			check(fmt.Sprintf("%s: %s at %q", v.Name, m.change, m.path), refused == expected)
+			derived++
+		}
+	}
+	for _, v := range file.Refused {
+		var object any
+		name := v.Schema
+		if v.From != "" {
+			name = kept[v.From]
+			object = vectors.objects[v.From]
+			for _, path := range v.Remove {
+				object = drop(object, path)
+			}
+			if v.Set != nil {
+				values := mustParse(v.Set).(map[string]any)
+				for _, path := range sortedNames(values) {
+					object = put(object, path, vectors.expand(values[path], 0))
+				}
+			}
+		} else {
+			object = vectors.expand(mustParse(v.Object), 0)
+		}
+		encoding, err := canonicalJSON(object)
+		check("refused, "+v.Why+": the object", err == nil && len(encoding) == v.Bytes && pinOf(encoding) == v.Pin)
+		check("refused, "+v.Why+": "+schemas[name](object)+", expected "+v.Rule, schemas[name](object) == v.Rule)
+	}
+	for _, v := range file.AcceptedTexts {
+		text := []byte(vectors.expand(mustParse(v.Text), 0).(string))
+		check("text, "+v.Why+": the text", len(text) == v.Bytes && pinOf(text) == v.Pin)
+		check("text, "+v.Why, receive(v.Schema, text) == "")
+		prefix := binary.BigEndian.AppendUint32(nil, uint32(len(text)))
+		check("text, "+v.Why+": prefix", v.Prefix == "" || hex.EncodeToString(prefix) == v.Prefix)
+	}
+	for _, v := range file.RefusedTexts {
+		text := []byte(vectors.expand(mustParse(v.Text), 0).(string))
+		check("text, "+v.Why+": the text", len(text) == v.Bytes && pinOf(text) == v.Pin)
+		check("text, "+v.Why+": "+receive(v.Schema, text)+", expected "+v.Rule, receive(v.Schema, text) == v.Rule)
+	}
+	if failures == 0 {
+		fmt.Printf("schemas: %d objects accepted, %d refused, %d texts, %d objects one change away, as the Python reference\n",
+			len(file.Accepted), len(file.Refused), len(file.AcceptedTexts)+len(file.RefusedTexts), derived)
+	}
+}
+
 // ---------------------------------------------------------------- the check
 
 type vectors struct {
@@ -1158,9 +2237,18 @@ func main() {
 		fmt.Println("same verdicts as the Python tests")
 		return
 	}
+	if len(os.Args) == 3 && os.Args[1] == "-schemas" {
+		checkSchemas(os.Args[2])
+		if failures > 0 {
+			fmt.Println(failures, "differences")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) != 4 {
 		fmt.Println("usage: go run profile_check.go profile.json ed25519_edge_cases.json composite_signatures.json")
 		fmt.Println("       go run profile_check.go -official directory-of-the-vectors")
+		fmt.Println("       go run profile_check.go -schemas schemas.json")
 		fmt.Println("       go run profile_check.go -sign composite_signatures.json")
 		os.Exit(2)
 	}

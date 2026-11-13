@@ -62,3 +62,8 @@ jobs:
       - name: Run the official vectors with the Go standard library
         working-directory: tests/vectors/kern
         run: go run profile_check.go -official ..
+      # The schemas of structure version 1 (docs/api-stability.md, section 9): the
+      # vectors the Python reference builds, checked with tables written on their own.
+      - name: Check the vectors of the schemas with the Go standard library
+        working-directory: tests/vectors/kern
+        run: go run profile_check.go -schemas schemas.json
