@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Deque, Dict
 
 from aiohttp import web
 
+from . import nesting
 from .transaction import Transaction
 
 LOG = logging.getLogger("kern.rpc")
@@ -191,7 +192,12 @@ def build_app(
                 status=429,
                 headers={"Retry-After": str(int(rate_limit_window_s))},
             )
-        body = await req.json()
+        # The body is measured before it is decoded (kern.nesting): text that is
+        # not JSON in UTF-8, or that nests too deep, is the client's error.
+        try:
+            body = nesting.decode(await req.read())
+        except ValueError as e:
+            return web.json_response({"error": f"malformed request body: {e}"}, status=400)
         try:
             tx = Transaction.from_dict(body)
         except Exception as e:

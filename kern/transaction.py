@@ -32,6 +32,14 @@ from .crypto import (
     tx_hash,
     verify,
 )
+from .nesting import nests_beyond
+
+# A transaction, as JSON, nests 32 levels deep at most: itself, then what
+# `params` and `initial_storage` hold. Every frame of the peer-to-peer
+# protocol that carries a transaction then stays under the depth at which a
+# frame is refused before it is decoded (kern.nesting.MAX_JSON_DEPTH): what
+# a node admitted, it can pass on, and every node reads it.
+MAX_TX_NESTING = 32
 
 
 
@@ -167,6 +175,9 @@ class Transaction:
             raise ValueError(f"gas_limit must be non-negative, got {self.gas_limit}")
         if self.nonce < 0:
             raise ValueError(f"nonce must be non-negative, got {self.nonce}")
+        for name in ("initial_storage", "params"):
+            if nests_beyond(getattr(self, name), MAX_TX_NESTING - 1):
+                raise ValueError(f"tx.{name}: a transaction nested more than {MAX_TX_NESTING} deep")
 
     # ----- canonical encoding ------------------------------------------------
 

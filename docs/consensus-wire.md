@@ -33,6 +33,14 @@ connections, 512 blocks per sync reply. Malformed frames close the
 connection; a handler error on one message is logged and does not kill
 the connection.
 
+A frame is measured before it is decoded: one whose JSON nests arrays
+and objects more than 64 deep is malformed, whatever it holds
+(`kern/nesting.py`). A transaction nests 32 deep at most, itself
+included, and `Transaction` refuses a deeper one. Every frame built
+around an admitted transaction is therefore read by every node: a
+`transaction` frame adds one level, a `block` or a `proposal` three,
+a `blocks` reply four.
+
 All inner payloads are decoded by the strict typed `from_dict`
 constructors (`Transaction`, `BlockHeader`, `Block`, `ConsensusMessage`,
 `QuorumCertificate`),
