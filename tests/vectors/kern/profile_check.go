@@ -11,6 +11,14 @@
 //
 //	go run profile_check.go profile.json ed25519_edge_cases.json composite_signatures.json
 //
+// With -official it runs the official vectors kept whole in the directory
+// given, the files tests/test_composite.py runs in Python, and must reach
+// the same verdicts: RFC 10073 for the combination Kern uses, NIST and
+// Project Wycheproof for ML-DSA-65, Project Wycheproof for Ed25519 under
+// the rule of section 2.5.
+//
+//	go run profile_check.go -official ..
+//
 // With -sign it prints the signatures it makes, the list kept under "go"
 // in composite_signatures.json:
 //
@@ -18,7 +26,7 @@
 //
 // Needs Go 1.27 or later, for crypto/mldsa. Not part of the node and not
 // run by the test suite, which is Python; the continuous integration runs
-// it on every pull request.
+// the first two commands on every pull request.
 package main
 
 import (
@@ -26,8 +34,10 @@ import (
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/mldsa"
+	"crypto/sha256"
 	"crypto/sha3"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -35,8 +45,10 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -261,6 +273,30 @@ func pattern(length, factor, offset int) []byte {
 	return out
 }
 
+// ---------------------------------------------------------------- section 5: text forms
+
+func textOf(prefix string, data []byte) string {
+	return prefix + base64.RawURLEncoding.EncodeToString(data)
+}
+
+// decodeText accepts one text per value: the exact prefix, the exact
+// length, the 64 characters of base64url and unused bits at zero. The
+// bytes are encoded again and compared, which also refuses the line feeds
+// that the decoder of the standard library skips.
+func decodeText(prefix string, size int, text string) ([]byte, error) {
+	if len(text) != len(prefix)+(4*size+2)/3 || !strings.HasPrefix(text, prefix) {
+		return nil, errors.New("not the prefix and the length of this text form")
+	}
+	data, err := base64.RawURLEncoding.Strict().DecodeString(text[len(prefix):])
+	if err != nil {
+		return nil, err
+	}
+	if len(data) != size || textOf(prefix, data) != text {
+		return nil, errors.New("not the one text of these bytes")
+	}
+	return data, nil
+}
+
 // ---------------------------------------------------------------- section 4.1: the other byte layouts
 
 // proposerDraw is the first 8 bytes of the hash of the parent hash and of
@@ -476,12 +512,20 @@ func decodeStrictly(b []byte) *point {
 	return &point{x, y}
 }
 
+// isAKey is rule 2 alone, the check made when a key is recorded: the
+// canonical encoding of a point of the subgroup of prime order, other than
+// the identity.
+func isAKey(publicKey []byte) bool {
+	a := decodeStrictly(publicKey)
+	return a != nil && !isIdentity(*a) && isIdentity(scalarMul(orderL, *a))
+}
+
 func strictVerify(publicKey, message, signature []byte) bool {
 	if len(publicKey) != 32 || len(signature) != 64 {
 		return false
 	}
-	a, r := decodeStrictly(publicKey), decodeStrictly(signature[:32])
-	if a == nil || r == nil {
+	r := decodeStrictly(signature[:32])
+	if r == nil || isIdentity(*r) {
 		return false
 	}
 	le := make([]byte, 32)
@@ -491,7 +535,7 @@ func strictVerify(publicKey, message, signature []byte) bool {
 	if new(big.Int).SetBytes(le).Cmp(orderL) >= 0 {
 		return false
 	}
-	if isIdentity(*a) || !isIdentity(scalarMul(orderL, *a)) || isIdentity(*r) {
+	if !isAKey(publicKey) {
 		return false
 	}
 	return ed25519.Verify(ed25519.PublicKey(publicKey), message, signature) // the exact equation
@@ -638,6 +682,315 @@ func checkSignatures(s signatures) {
 	}
 }
 
+// ---------------------------------------------------------------- the official vectors
+
+func mldsaVerifies(publicKey, message, signature, context []byte) bool {
+	pk, err := mldsa.NewPublicKey(mldsa.MLDSA65(), publicKey)
+	if err != nil {
+		return false
+	}
+	return mldsa.Verify(pk, message, signature, &mldsa.Options{Context: string(context)}) == nil
+}
+
+func has(list []string, name string) bool {
+	for _, item := range list {
+		if item == name {
+			return true
+		}
+	}
+	return false
+}
+
+// checkOfficial runs the files of RFC 10073, NIST and Project Wycheproof
+// kept under dir, and counts what it finds: the figures are the ones the
+// Python tests assert on the same files.
+func checkOfficial(dir string) {
+	var sources struct {
+		Files []struct {
+			Path   string `json:"path"`
+			Bytes  int    `json:"bytes"`
+			SHA256 string `json:"sha256"`
+		} `json:"files"`
+	}
+	read := func(name string, into any) []byte {
+		raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
+		if err != nil {
+			panic(err)
+		}
+		if err := json.Unmarshal(raw, into); err != nil {
+			panic(err)
+		}
+		return raw
+	}
+	read("SOURCES.json", &sources)
+	// load reads a file and checks that it is the one SOURCES.json lists, byte for byte.
+	load := func(name string, into any) {
+		raw := read(name, into)
+		digest := sha256.Sum256(raw)
+		listed := false
+		for _, f := range sources.Files {
+			if f.Path == name {
+				listed = f.Bytes == len(raw) && f.SHA256 == hex.EncodeToString(digest[:])
+			}
+		}
+		check("the file SOURCES.json lists, byte for byte: "+name, listed)
+	}
+	unbase64 := func(s string) []byte {
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			panic(err)
+		}
+		return b
+	}
+
+	// RFC 10073: the vector of the combination Kern uses.
+	var rfc struct {
+		M     string `json:"m"`
+		Ctx   string `json:"ctx"`
+		Tests []struct {
+			TcID         string `json:"tcId"`
+			PK           string `json:"pk"`
+			SK           string `json:"sk"`
+			S            string `json:"s"`
+			SWithContext string `json:"sWithContext"`
+		} `json:"tests"`
+	}
+	load("rfc10073/testvectors.json", &rfc)
+	message, context := unbase64(rfc.M), unbase64(rfc.Ctx)
+	found := 0
+	for _, t := range rfc.Tests {
+		if t.TcID != "id-MLDSA65-Ed25519-SHA512" {
+			continue
+		}
+		found++
+		pk, sk, plain, withContext := unbase64(t.PK), unbase64(t.SK), unbase64(t.S), unbase64(t.SWithContext)
+		sizes := len(sk) == 64 && len(pk) == publicKeySize && len(plain) == signatureSize && len(withContext) == signatureSize
+		check("RFC 10073: sizes of the private key, the public key and the signatures", sizes && len(context) > 0)
+		if !sizes {
+			continue
+		}
+		// Serialization: ML-DSA seed then Ed25519 seed; ML-DSA part then Ed25519 part.
+		first, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), sk[:32])
+		if err != nil {
+			panic(err)
+		}
+		public := join(first.PublicKey().Bytes(), ed25519.NewKeyFromSeed(sk[32:]).Public().(ed25519.PublicKey))
+		check("RFC 10073: the published seeds give the published public key", bytes.Equal(public, pk))
+		check("RFC 10073: the published signature verifies", compositeVerify(pk, message, plain, nil))
+		check("RFC 10073: the published signature with a context verifies", compositeVerify(pk, message, withContext, context))
+		check("RFC 10073: a signature without context is refused with one", !compositeVerify(pk, message, plain, context))
+		check("RFC 10073: a signature with a context is refused without it", !compositeVerify(pk, message, withContext, nil))
+		check("RFC 10073: another message is refused", !compositeVerify(pk, join(message, []byte(".")), plain, nil))
+	}
+	check("RFC 10073: 21 combinations, one of them the combination of Kern", len(rfc.Tests) == 21 && found == 1)
+	fmt.Println("RFC 10073: id-MLDSA65-Ed25519-SHA512 among", len(rfc.Tests), "combinations: the public key from its seeds, 2 signatures verified, 3 refusals")
+
+	// NIST: key generation and signature verification for ML-DSA-65.
+	var keyGen struct {
+		TestGroups []struct {
+			ParameterSet string `json:"parameterSet"`
+			Tests        []struct {
+				TcID int    `json:"tcId"`
+				Seed string `json:"seed"`
+				PK   string `json:"pk"`
+			} `json:"tests"`
+		} `json:"testGroups"`
+	}
+	load("nist-acvp/ML-DSA-keyGen-FIPS204.json", &keyGen)
+	nistKeys, groups := 0, 0
+	for _, g := range keyGen.TestGroups {
+		if g.ParameterSet != "ML-DSA-65" {
+			continue
+		}
+		groups++
+		for _, t := range g.Tests {
+			sk, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), unhex(t.Seed))
+			check(fmt.Sprintf("NIST key generation %d", t.TcID), err == nil && bytes.Equal(sk.PublicKey().Bytes(), unhex(t.PK)))
+			nistKeys++
+		}
+	}
+	check("NIST: one group of 25 keys for ML-DSA-65", groups == 1 && nistKeys == 25)
+
+	var sigVer struct {
+		TestGroups []struct {
+			ParameterSet       string `json:"parameterSet"`
+			SignatureInterface string `json:"signatureInterface"`
+			PreHash            string `json:"preHash"`
+			Tests              []struct {
+				TcID       int    `json:"tcId"`
+				TestPassed bool   `json:"testPassed"`
+				PK         string `json:"pk"`
+				Message    string `json:"message"`
+				Context    string `json:"context"`
+				Signature  string `json:"signature"`
+				Reason     string `json:"reason"`
+			} `json:"tests"`
+		} `json:"testGroups"`
+	}
+	load("nist-acvp/ML-DSA-sigVer-FIPS204.json", &sigVer)
+	nistValid, nistInvalid := 0, 0
+	groups = 0
+	reasons := map[string]bool{}
+	for _, g := range sigVer.TestGroups {
+		if g.ParameterSet != "ML-DSA-65" || g.SignatureInterface != "external" || g.PreHash != "pure" {
+			continue
+		}
+		groups++
+		for _, t := range g.Tests {
+			got := mldsaVerifies(unhex(t.PK), unhex(t.Message), unhex(t.Signature), unhex(t.Context))
+			check(fmt.Sprintf("NIST signature verification %d", t.TcID), got == t.TestPassed)
+			if t.TestPassed {
+				nistValid++
+			} else {
+				nistInvalid++
+				reasons[t.Reason] = true
+			}
+		}
+	}
+	check("NIST: one group for ML-DSA-65, external and pure: 3 valid, 12 invalid", groups == 1 && nistValid == 3 && nistInvalid == 12)
+	check("NIST: the four ways the invalid cases were made", len(reasons) == 4 && reasons["modified signature - z"] &&
+		reasons["modified signature - hint"] && reasons["modified signature - commitment"] && reasons["modified message"])
+	fmt.Printf("NIST: %d ML-DSA-65 keys from their seeds, %d signature verifications (%d valid, %d invalid)\n",
+		nistKeys, nistValid+nistInvalid, nistValid, nistInvalid)
+
+	// Project Wycheproof: ML-DSA-65, verification.
+	var verify struct {
+		NumberOfTests int `json:"numberOfTests"`
+		TestGroups    []struct {
+			PublicKey string `json:"publicKey"`
+			Tests     []struct {
+				TcID   int      `json:"tcId"`
+				Msg    string   `json:"msg"`
+				Sig    string   `json:"sig"`
+				Ctx    string   `json:"ctx"`
+				Result string   `json:"result"`
+				Flags  []string `json:"flags"`
+			} `json:"tests"`
+		} `json:"testGroups"`
+	}
+	load("wycheproof/mldsa_65_verify_test.json", &verify)
+	wpValid, wpInvalid := 0, 0
+	flags := map[string]int{}
+	for _, g := range verify.TestGroups {
+		for _, t := range g.Tests {
+			got := mldsaVerifies(unhex(g.PublicKey), unhex(t.Msg), unhex(t.Sig), unhex(t.Ctx))
+			check(fmt.Sprintf("Wycheproof ML-DSA-65 verification %d", t.TcID), got == (t.Result == "valid"))
+			if t.Result == "valid" {
+				wpValid++
+			} else if t.Result == "invalid" {
+				wpInvalid++
+			}
+			for _, f := range t.Flags {
+				flags[f]++
+			}
+		}
+	}
+	check("Wycheproof ML-DSA-65: 79 valid and 131 invalid, 210 in all", wpValid == 79 && wpInvalid == 131 && verify.NumberOfTests == 210)
+	for _, f := range []string{"InvalidHintsEncoding", "InfinityNormViolation", "IncorrectSignatureLength",
+		"IncorrectPublicKeyLength", "InvalidContext", "ZeroPublicKey"} {
+		check("Wycheproof ML-DSA-65: cases flagged "+f, flags[f] > 0)
+	}
+
+	// Project Wycheproof: ML-DSA-65, keys and signatures from seeds.
+	var signSeed struct {
+		TestGroups []struct {
+			PrivateSeed string `json:"privateSeed"`
+			PublicKey   string `json:"publicKey"`
+			Tests       []struct {
+				TcID   int      `json:"tcId"`
+				Msg    *string  `json:"msg"`
+				Sig    string   `json:"sig"`
+				Ctx    string   `json:"ctx"`
+				Result string   `json:"result"`
+				Flags  []string `json:"flags"`
+			} `json:"tests"`
+		} `json:"testGroups"`
+	}
+	load("wycheproof/mldsa_65_sign_seed_test.json", &signSeed)
+	seedKeys, refusedSeeds, verified, rebuilt, refusedContexts, withoutMessage := 0, 0, 0, 0, 0, 0
+	for _, g := range signSeed.TestGroups {
+		sk, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), unhex(g.PrivateSeed))
+		if err != nil {
+			refusedSeeds++
+			for _, t := range g.Tests {
+				check(fmt.Sprintf("Wycheproof ML-DSA-65: a refused seed has only invalid cases (%d)", t.TcID), t.Result == "invalid")
+			}
+			continue
+		}
+		check("Wycheproof ML-DSA-65: the seed gives the published key", bytes.Equal(sk.PublicKey().Bytes(), unhex(g.PublicKey)))
+		seedKeys++
+		for _, t := range g.Tests {
+			if t.Msg == nil { // vectors given as a precomputed digest only
+				withoutMessage++
+				continue
+			}
+			msg, ctx := unhex(*t.Msg), unhex(t.Ctx)
+			own, err := sk.SignDeterministic(msg, &mldsa.Options{Context: string(ctx)})
+			if t.Result == "invalid" {
+				check(fmt.Sprintf("Wycheproof ML-DSA-65: signing refused (%d)", t.TcID), err != nil)
+				refusedContexts++
+				continue
+			}
+			check(fmt.Sprintf("Wycheproof ML-DSA-65: signature from a seed verifies (%d)", t.TcID),
+				err == nil && mldsaVerifies(unhex(g.PublicKey), msg, unhex(t.Sig), ctx))
+			verified++
+			if !has(t.Flags, "Randomized") { // made without randomness: the same bytes here
+				check(fmt.Sprintf("Wycheproof ML-DSA-65: signature rebuilt byte for byte (%d)", t.TcID), bytes.Equal(own, unhex(t.Sig)))
+				rebuilt++
+			}
+		}
+	}
+	check("Wycheproof ML-DSA-65: 39 keys, 3 refused seeds, 84 signatures, 1 refused context, 17 vectors without a message",
+		seedKeys == 39 && refusedSeeds == 3 && verified == 84 && refusedContexts == 1 && withoutMessage == 17)
+	check("Wycheproof ML-DSA-65: 83 signatures made without randomness, rebuilt byte for byte", rebuilt == 83)
+	fmt.Printf("Wycheproof ML-DSA-65: %d verifications (%d valid, %d invalid); %d keys from their seeds, %d seeds refused, "+
+		"%d signatures verified, %d of them rebuilt byte for byte, %d context refused, %d vectors without a message\n",
+		wpValid+wpInvalid, wpValid, wpInvalid, seedKeys, refusedSeeds, verified, rebuilt, refusedContexts, withoutMessage)
+
+	// Project Wycheproof: Ed25519, under the rule of section 2.5.
+	var eddsa struct {
+		NumberOfTests int `json:"numberOfTests"`
+		TestGroups    []struct {
+			PublicKey struct {
+				PK string `json:"pk"`
+			} `json:"publicKey"`
+			Tests []struct {
+				TcID   int      `json:"tcId"`
+				Msg    string   `json:"msg"`
+				Sig    string   `json:"sig"`
+				Result string   `json:"result"`
+				Flags  []string `json:"flags"`
+			} `json:"tests"`
+		} `json:"testGroups"`
+	}
+	load("wycheproof/ed25519_test.json", &eddsa)
+	verdicts, leftOpen := map[string]int{}, map[string]int{}
+	for _, g := range eddsa.TestGroups {
+		pk := unhex(g.PublicKey.PK)
+		for _, t := range g.Tests {
+			got := strictVerify(pk, unhex(t.Msg), unhex(t.Sig))
+			check(fmt.Sprintf("Wycheproof Ed25519 %d, %s", t.TcID, t.Result), got == (t.Result == "valid"))
+			verdicts[fmt.Sprintf("%s %t", t.Result, got)]++
+			if t.Result == "acceptable" {
+				for _, f := range t.Flags {
+					leftOpen[f]++
+				}
+			}
+		}
+	}
+	// What the vectors call valid is accepted, what they call invalid is refused, and the
+	// cases they leave to the implementation are all refused: a public key of small or
+	// mixed order is not a key.
+	check("Wycheproof Ed25519: 117 valid accepted, 64 invalid refused, 29 left open refused",
+		len(verdicts) == 3 && verdicts["valid true"] == 117 && verdicts["invalid false"] == 64 &&
+			verdicts["acceptable false"] == 29 && eddsa.NumberOfTests == 210)
+	check("Wycheproof Ed25519: what is left open is 8 keys of small order and 21 of mixed order",
+		len(leftOpen) == 2 && leftOpen["SmallOrderPublicKey"] == 8 && leftOpen["MixedOrderPublicKey"] == 21)
+	fmt.Printf("Wycheproof Ed25519: %d valid accepted, %d invalid refused, %d left to the implementation refused "+
+		"(%d with a key of small order, %d of mixed order)\n", verdicts["valid true"], verdicts["invalid false"],
+		verdicts["acceptable false"], leftOpen["SmallOrderPublicKey"], leftOpen["MixedOrderPublicKey"])
+}
+
 // ---------------------------------------------------------------- the check
 
 type vectors struct {
@@ -745,6 +1098,19 @@ type vectors struct {
 		Hashed string          `json:"hashed"`
 		Root   string          `json:"root"`
 	} `json:"state"`
+	TextForms struct {
+		Accepted []struct {
+			Kind   string `json:"kind"`
+			Factor int    `json:"factor"`
+			Offset int    `json:"offset"`
+			Text   string `json:"text"`
+		} `json:"accepted"`
+		Refused []struct {
+			Kind string `json:"kind"`
+			Why  string `json:"why"`
+			Text string `json:"text"`
+		} `json:"refused"`
+	} `json:"text_forms"`
 }
 
 var failures int
@@ -783,8 +1149,18 @@ func main() {
 		fmt.Println(string(out))
 		return
 	}
+	if len(os.Args) == 3 && os.Args[1] == "-official" {
+		checkOfficial(os.Args[2])
+		if failures > 0 {
+			fmt.Println(failures, "differences")
+			os.Exit(1)
+		}
+		fmt.Println("same verdicts as the Python tests")
+		return
+	}
 	if len(os.Args) != 4 {
 		fmt.Println("usage: go run profile_check.go profile.json ed25519_edge_cases.json composite_signatures.json")
+		fmt.Println("       go run profile_check.go -official directory-of-the-vectors")
 		fmt.Println("       go run profile_check.go -sign composite_signatures.json")
 		os.Exit(2)
 	}
@@ -901,6 +1277,27 @@ func main() {
 		check("state root, "+c.What, (c.Hashed == "" || same(hashed, c.Hashed)) && same(h("kern.state", network, hashed), c.Root))
 	}
 
+	// Section 5: one text per value.
+	type textKind struct {
+		prefix string
+		size   int
+	}
+	kinds := map[string]textKind{"public_key": {"kpk1.", publicKeySize}, "signature": {"ksig1.", signatureSize}}
+	for _, c := range v.TextForms.Accepted {
+		k, known := kinds[c.Kind]
+		data := pattern(k.size, c.Factor, c.Offset)
+		decoded, err := decodeText(k.prefix, k.size, c.Text)
+		check(fmt.Sprintf("text of a %s, bytes (%d, %d)", c.Kind, c.Factor, c.Offset),
+			known && textOf(k.prefix, data) == c.Text && err == nil && bytes.Equal(decoded, data))
+	}
+	for _, c := range v.TextForms.Refused {
+		for kind, k := range kinds { // by the decoder of its kind, and by the other one
+			_, err := decodeText(k.prefix, k.size, c.Text)
+			check("refused as a "+kind+": "+c.Kind+", "+c.Why, err != nil)
+		}
+	}
+	check("text forms are in the vectors", len(v.TextForms.Accepted) > 0 && len(v.TextForms.Refused) > 0)
+
 	raw, err = os.ReadFile(os.Args[2])
 	if err != nil {
 		panic(err)
@@ -914,6 +1311,11 @@ func main() {
 			Valid     bool   `json:"valid"`
 			Lenient   bool   `json:"lenient"`
 		} `json:"cases"`
+		PublicKeys []struct {
+			Name      string `json:"name"`
+			PublicKey string `json:"public_key"`
+			Valid     bool   `json:"valid"`
+		} `json:"public_keys"`
 	}
 	if err := json.Unmarshal(raw, &edge); err != nil {
 		panic(err)
@@ -927,6 +1329,14 @@ func main() {
 			lenientOnly++
 		}
 	}
+	keysRefused := 0
+	for _, c := range edge.PublicKeys { // rule 2 alone, the check made when a key is recorded
+		check("Ed25519 public key: "+c.Name, isAKey(unhex(c.PublicKey)) == c.Valid)
+		if !c.Valid {
+			keysRefused++
+		}
+	}
+	check("public keys are in the vectors", len(edge.PublicKeys) > 0)
 
 	s := readSignatures(os.Args[3])
 	checkSignatures(s)
@@ -936,6 +1346,8 @@ func main() {
 	fmt.Printf("1 contract address, %d proposer draws, 3 Mini-EVM addresses, %d objects, %d trie leaves, %d trie roots, %d state roots\n",
 		len(v.Proposer), len(v.Objects), len(v.Trie.Leaves), len(v.Trie.Roots), len(v.State))
 	fmt.Printf("%d Ed25519 cases, %d of them accepted by the standard library alone and refused by the rule\n", len(edge.Cases), lenientOnly)
+	fmt.Printf("%d Ed25519 public keys under rule 2 alone, %d of them refused; %d text forms accepted, %d spellings refused\n",
+		len(edge.PublicKeys), keysRefused, len(v.TextForms.Accepted), len(v.TextForms.Refused))
 	fmt.Printf("%d composite signatures made in Python and %d made in Go verified, %d invalid cases refused\n",
 		len(s.Python), len(s.Go), len(s.Invalid))
 	if failures > 0 {

@@ -43,7 +43,7 @@ pip install -e ".[dev]"
 
 ```bash
 pytest tests/ -v
-# Expected: 1138 passed, none skipped (v1.1-rc) — record exact counts in your audit notes
+# Expected: 1202 passed, none skipped (v1.1-rc) — record exact counts in your audit notes
 # Record the test run time and resource usage too
 
 python -c "import kern; print(kern.__file__)"
@@ -88,7 +88,7 @@ grep -L "Nicolas Van Eeckhout" $(find . -name "*.py" \
 - [ ] The codebase is original Python (not vendored from any other blockchain project)
 - [ ] SPDX-License-Identifier: Apache-2.0 is present on all 55+ Python files
 - [ ] Copyright attribution to Nicolas Van Eeckhout is preserved
-- [ ] The single external library dependency (`py_ecc`) is used via Python imports, not vendored
+- [ ] The external library dependencies (`py_ecc`, `pynacl`, `aiohttp`, `cryptography`) are used via Python imports, not vendored
 
 ---
 
@@ -138,7 +138,7 @@ The audit covers the following modules at v1.0-rc:
 
 | Item | Why |
 |---|---|
-| Third-party libraries (`py_ecc`, `pynacl`, `aiohttp`) | Separately audited by their maintainers |
+| Third-party libraries (`py_ecc`, `pynacl`, `aiohttp`, `cryptography`) | Separately audited by their maintainers |
 | Operating system, Python interpreter | Not part of Kern |
 | Future v1.x roadmap items | Audited at their respective release tags |
 | Networks and operational items | Audited in operational reviews, separately |
@@ -273,7 +273,7 @@ The following are explicit must-cover items. Do not omit any:
 
 - [ ] All 55 Python source files have proper SPDX-License-Identifier
 - [ ] All 55 Python source files carry founder attribution to Nicolas Van Eeckhout
-- [ ] No vendored external code present
+- [ ] No vendored external code present (the official test vectors under `tests/vectors` are data, not code: each file is listed with its origin in `tests/vectors/SOURCES.json`)
 - [ ] All design-influence citations (Tezos, Ethereum, EIPs) are properly noted as references, not represented as Kern's own innovation
 
 ---

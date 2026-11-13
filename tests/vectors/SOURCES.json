@@ -1,0 +1,115 @@
+{
+ "description": "Where every file of tests/vectors comes from, this one excepted. A file with a `repository` is an unchanged copy of `upstream_path` at `commit`: `bytes` and `sha256` are those of the original, and the file kept here must have them. A file with a `generator` is built in this repository by the program named; it has no hash here, because git may convert the line endings of a text file: its content is recomputed by the tests. A file with `written_here` was written for this repository. tests/test_vectors.py holds this list and the directory together.",
+ "files": [
+  {
+   "path": "rfc10073/testvectors.json",
+   "upstream_path": "src/testvectors.json",
+   "repository": "https://github.com/lamps-wg/draft-composite-sigs",
+   "commit": "b9e2674c0072df66ea09abeabc1c1be5ef9baf29",
+   "date": "2026-11-01",
+   "licence": "IETF Trust (rfc10073/NOTICE.md)",
+   "bytes": 491883,
+   "sha256": "a60f697f9fd94c3cd5e4501a40c4396d9a9ffc7cf0f8a1ddd87dedbb46a7abf0"
+  },
+  {
+   "path": "nist-acvp/ML-DSA-keyGen-FIPS204.json",
+   "upstream_path": "gen-val/json-files/ML-DSA-keyGen-FIPS204/internalProjection.json",
+   "repository": "https://github.com/usnistgov/ACVP-Server",
+   "commit": "975de31eb83d87039ec88934fdc47d8c312b892d",
+   "date": "2026-08-12",
+   "licence": "NIST notice (nist-acvp/NOTICE.md)",
+   "bytes": 882437,
+   "sha256": "e67ee6540d40e11506c3c4e3b1f79fc1cefcd49820db99fc61f87cc8ba463baf"
+  },
+  {
+   "path": "nist-acvp/ML-DSA-sigVer-FIPS204.json",
+   "upstream_path": "gen-val/json-files/ML-DSA-sigVer-FIPS204/internalProjection.json",
+   "repository": "https://github.com/usnistgov/ACVP-Server",
+   "commit": "975de31eb83d87039ec88934fdc47d8c312b892d",
+   "date": "2026-08-12",
+   "licence": "NIST notice (nist-acvp/NOTICE.md)",
+   "bytes": 4533178,
+   "sha256": "47cdd6314c7f746d02421ffcba89d4dbc7bb875ac49e07a029fdfc26fba55437"
+  },
+  {
+   "path": "wycheproof/ed25519_test.json",
+   "upstream_path": "testvectors_v1/ed25519_test.json",
+   "repository": "https://github.com/C2SP/wycheproof",
+   "commit": "65ca494727a52944c204441c860b039e6786b99b",
+   "date": "2026-11-11",
+   "licence": "Apache-2.0",
+   "bytes": 172628,
+   "sha256": "ea80ffebac085e21cb9d3e903e7fa2b448d96702da5b31f061d0b83b430b74b3"
+  },
+  {
+   "path": "wycheproof/mldsa_65_verify_test.json",
+   "upstream_path": "testvectors_v1/mldsa_65_verify_test.json",
+   "repository": "https://github.com/C2SP/wycheproof",
+   "commit": "65ca494727a52944c204441c860b039e6786b99b",
+   "date": "2026-11-11",
+   "licence": "Apache-2.0",
+   "bytes": 1664284,
+   "sha256": "1ca235f61928421a173a171780beb00264ae9155dc33c52a11e1766cc7979034"
+  },
+  {
+   "path": "wycheproof/mldsa_65_sign_seed_test.json",
+   "upstream_path": "testvectors_v1/mldsa_65_sign_seed_test.json",
+   "repository": "https://github.com/C2SP/wycheproof",
+   "commit": "65ca494727a52944c204441c860b039e6786b99b",
+   "date": "2026-11-11",
+   "licence": "Apache-2.0",
+   "bytes": 886331,
+   "sha256": "e26b2bb9ab8d45ed570ba6828c7e40b6fa3e1545bb8bc2c449c77531760133e0"
+  },
+  {
+   "path": "wycheproof/LICENSE",
+   "upstream_path": "LICENSE",
+   "repository": "https://github.com/C2SP/wycheproof",
+   "commit": "65ca494727a52944c204441c860b039e6786b99b",
+   "date": "2026-11-11",
+   "licence": "Apache-2.0",
+   "bytes": 11357,
+   "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+  },
+  {
+   "path": "kern/profile.json",
+   "generator": "tests/profile_reference.py",
+   "licence": "Apache-2.0"
+  },
+  {
+   "path": "kern/ed25519_edge_cases.json",
+   "generator": "tests/ed25519_reference.py",
+   "licence": "Apache-2.0"
+  },
+  {
+   "path": "kern/composite_signatures.json",
+   "generator": "tests/profile_reference.py, and tests/vectors/kern/profile_check.go for the signatures made in Go",
+   "licence": "Apache-2.0"
+  },
+  {
+   "path": "kern/freeze.json",
+   "generator": "tests/test_vectors.py, from the three files above at the commit of the freeze",
+   "licence": "Apache-2.0"
+  },
+  {
+   "path": "kern/profile_check.go",
+   "written_here": "The Go program that recomputes the vectors of kern/ and runs the official files",
+   "licence": "Apache-2.0"
+  },
+  {
+   "path": "README.md",
+   "written_here": "What this directory holds",
+   "licence": "Apache-2.0"
+  },
+  {
+   "path": "rfc10073/NOTICE.md",
+   "written_here": "The notice of the IETF Trust for the file of that directory",
+   "licence": "Apache-2.0"
+  },
+  {
+   "path": "nist-acvp/NOTICE.md",
+   "written_here": "The notice of NIST for the files of that directory, quoted whole",
+   "licence": "Apache-2.0"
+  }
+ ]
+}

@@ -42,13 +42,34 @@ grep '^version' pyproject.toml
 
 # 3. Run the full test suite
 pytest tests/
-# Expected: 1138 passed, none skipped (v1.1-rc)
+# Expected: 1202 passed, none skipped (v1.1-rc)
 
 # 3b. Recompute the reference vectors of the signature profile with the Go
 #     standard library (Go 1.27 or later; the CI does it on every pull request)
 (cd tests/vectors/kern && \
     go run profile_check.go profile.json ed25519_edge_cases.json composite_signatures.json)
 # Expected last line: same values as the Python reference
+
+# 3c. Run the official vectors with the same program: RFC 10073, NIST and
+#     Project Wycheproof, the files the Python tests run
+(cd tests/vectors/kern && go run profile_check.go -official ..)
+# Expected last line: same verdicts as the Python tests
+
+# 3d. Compare the official vectors kept in tests/vectors with the head of their
+#     repositories (it downloads them, and changes nothing)
+python scripts/check_vectors_upstream.py
+# Expected last line: The 7 official files are those at the head of their repositories.
+# A file that differs is read before it is taken (tests/vectors/README.md, Updating):
+# decide before tagging whether the release takes it.
+
+# 3e. Read the errata of FIPS 204: the spreadsheet of potential updates listed
+#     under "Documentation" on https://csrc.nist.gov/pubs/fips/204/final.
+#     An erratum that touches key generation, verification or an encoding is
+#     settled before tagging.
+
+# 3f. Check the record of the frozen profile against the git history
+python tests/test_vectors.py
+# Expected: kern/freeze.json is what its three files give
 
 # 4. Run the originality audit
 grep -rni "copied from\|adapted from\|fork of" --include="*.py" . | \

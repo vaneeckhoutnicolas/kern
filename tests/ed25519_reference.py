@@ -339,6 +339,42 @@ def build_cases() -> list[dict]:
     return cases
 
 
+def is_a_key(pk: bytes) -> bool:
+    """Rule 2 of the rule of Kern, alone: `pk` is the canonical encoding of
+    a point of the subgroup of prime order, other than the identity. It is
+    what is checked when a key is recorded, before any signature exists."""
+    a = decode_strictly(pk)
+    return a is not None and a != IDENTITY and mul(L, a) == IDENTITY
+
+
+def build_key_cases() -> list[dict]:
+    """Public keys under rule 2 alone: the ordinary key of the cases above,
+    then that key plus each of the seven points of small order other than
+    the identity. The seven sums are points of the curve in canonical
+    encoding, and none is in the subgroup of prime order, whatever the
+    order of the point that was added. Deterministic.
+
+    A library has answered wrongly on the first of the seven: libsodium,
+    before the correction published as CVE-2025-69277, took a point of
+    prime order plus the point of order 2 for a point of the subgroup."""
+    seed = hashlib.sha512(b"kern ed25519 edge cases").digest()[:32]
+    a_point = mul(secret_scalar(seed)[0], B)
+    keys = [{"name": "ordinary key", "public_key": encode(a_point).hex(),
+             "comment": "A point of the subgroup of prime order: the key of the honest cases."}]
+    seen: dict[int, int] = {}
+    for t in torsion_points():
+        n = order(t)
+        if n == 1:
+            continue
+        seen[n] = seen.get(n, 0) + 1
+        which = f", point {seen[n]}" if n > 2 else ""
+        keys.append({"name": f"ordinary key plus a point of order {n}{which}",
+                     "public_key": encode(add(a_point, t)).hex(),
+                     "comment": f"Canonical, on the curve, of order {n} times the group order: "
+                                "not in the subgroup of prime order."})
+    return keys
+
+
 CASES = Path(__file__).resolve().parent / "vectors" / "kern" / "ed25519_edge_cases.json"
 
 
@@ -349,15 +385,24 @@ if __name__ == "__main__":
         pk, m, sig = (bytes.fromhex(c[k]) for k in ("public_key", "message", "signature"))
         c["valid"] = strict_verify(pk, m, sig)
         c["lenient"] = lenient_verify(pk, m, sig)
+    keys = build_key_cases()
+    for c in keys:
+        c["valid"] = is_a_key(bytes.fromhex(c["public_key"]))
     document = {
         "description": "Ed25519 signatures on which implementations disagree. `valid` is the verdict of "
                        "Kern (docs/hybrid-signatures.md, section 2.5). `lenient` is the verdict of a "
                        "verifier that makes only the checks RFC 8032 requires and compares the bytes of R.",
         "generator": "tests/ed25519_reference.py",
         "cases": built,
+        "public_keys_rule": "Public keys under rule 2 of section 2.5 alone, the check made when a key is "
+                            "recorded: `valid` says whether the 32 bytes are the canonical encoding of a "
+                            "point of the subgroup of prime order, other than the identity. Added after "
+                            "the freeze of the profile, for a rule that exists: the cases above are unchanged.",
+        "public_keys": keys,
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(document, indent=1) + "\n", encoding="utf-8", newline="\n")
     print(f"wrote {out}: {len(built)} cases, {sum(c['valid'] for c in built)} valid, "
-          f"{sum(c['lenient'] and not c['valid'] for c in built)} accepted only by a lenient verifier",
+          f"{sum(c['lenient'] and not c['valid'] for c in built)} accepted only by a lenient verifier; "
+          f"{len(keys)} public keys, {sum(c['valid'] for c in keys)} valid",
           file=sys.stderr)

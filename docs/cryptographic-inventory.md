@@ -4,7 +4,7 @@ This page lists every cryptographic primitive Kern uses, where the code uses it,
 
 The inventory is checked against the code by [`tests/test_crypto_inventory.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_crypto_inventory.py): a hash domain, a library or a signature size that changes in the code without changing here fails the test suite.
 
-> **Status.** No part of Kern is post-quantum today. Every signature is Ed25519 and the proof verifier uses the BN254 pairing curve; a large enough quantum computer would break both. Sections 3 and 4 describe a plan. None of it is implemented.
+> **Status.** No part of Kern is post-quantum today. Every signature the chain makes or checks is Ed25519 and the proof verifier uses the BN254 pairing curve; a large enough quantum computer would break both. Sections 3 and 4 describe a plan. Its signature mechanism and the functions of its profile are written and tested in two modules that the node does not use (section 1.7). Nothing of the plan is in the node.
 
 ## 1. What Kern uses today
 
@@ -20,7 +20,7 @@ One scheme signs everything: **Ed25519** ([RFC 8032](https://www.rfc-editor.org/
 | Rollup batches | The sequencer of the rollup | `Batch.verify_signature`, `kern/rollup.py` |
 | Any message a contract submits to precompile 0x01 | Whoever signed it | `_precompile_ecrecover`, `kern/evm/frames.py` |
 
-All of them go through `kern.crypto.verify` in [`kern/crypto.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/crypto.py), except the precompile, which calls PyNaCl directly in [`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py). These two files are the only places where a signature is verified.
+All of them go through `kern.crypto.verify` in [`kern/crypto.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/crypto.py), except the precompile, which calls PyNaCl directly in [`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py). These two files are the only places where the node verifies a signature.
 
 **Keys.** A key pair is derived from a 32-byte seed (`KernKeypair.from_seed`), as RFC 8032 specifies. Seeds come from the generator of the operating system (`os.urandom` in `KernKeypair.generate`, `secrets.token_bytes` in the wallet). A key file is a JSON document that holds the seed in hexadecimal, unencrypted; the wallet restricts the file to its owner where the operating system allows it. There is no support for hardware security modules.
 
@@ -75,9 +75,11 @@ Kern encrypts nothing. Peer to peer messages are length-prefixed JSON over TCP, 
 
 | Library | Used for | Imported by |
 |---|---|---|
-| PyNaCl (libsodium) | Ed25519 | `kern/crypto.py`, `kern/evm/frames.py` |
+| PyNaCl (libsodium) | Ed25519 | `kern/crypto.py`, `kern/evm/frames.py`; `kern/composite.py` (section 1.7) |
 | py_ecc | BN254 | `kern/evm/bn254.py`, `kern/zk_claims.py` |
-| `hashlib` (Python standard library) | BLAKE2b, SHA-256, SHA3-256, RIPEMD-160 | The modules listed in 1.2 |
+| `cryptography` (OpenSSL) | ML-DSA-65 (FIPS 204) | `kern/composite.py` (section 1.7) |
+| `hashlib` (Python standard library) | BLAKE2b, SHA-256, SHA3-256, RIPEMD-160; SHA-512 and SHA3-384 in the two modules of section 1.7 | The modules listed in 1.2; `kern/composite.py`, `kern/keys.py` |
+| `hmac` (Python standard library) | HMAC with SHA-512, for the key derivation of section 1.7 | `kern/keys.py` |
 | `random` (Python standard library) | Seeded generators of the fuzzing harness, never keys or consensus | `kern/fuzzing.py` |
 
 No other cryptographic library is imported by `kern` or `kern_explorer`, and `pyproject.toml` declares no other.
@@ -85,6 +87,17 @@ No other cryptographic library is imported by `kern` or `kern_explorer`, and `py
 ### 1.6 Outside the protocol
 
 Commits and release tags are signed with an SSH key of type Ed25519 ([release-tagging.md](release-tagging.md)). Git names its objects with SHA-1, and the Software Heritage identifiers of a release are those names. These protect the distribution of the code, not the chain, and they will follow what Git and its hosting offer.
+
+### 1.7 Written, and not used by the node
+
+Two modules of the release in preparation are in the repository. Nothing in the node, the wallet, the explorer or the scripts imports them, and a test keeps it so: every signature the chain checks is still Ed25519, and every hash of the protocol is still BLAKE2b.
+
+- [`kern/composite.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/composite.py) is the signature mechanism of RFC 10073 for one combination, ML-DSA-65 with Ed25519. A signature is valid only if both components are, and the module gives no access to a component key. ML-DSA comes from the `cryptography` package, over OpenSSL: it is in that package from version 48, and `pyproject.toml` allows no earlier version. Ed25519 comes from PyNaCl, under the one rule of verification that the profile fixes ([hybrid-signatures.md](hybrid-signatures.md), section 2.5). Both components sign a message representative that holds the SHA-512 of the message.
+- [`kern/keys.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/keys.py) holds the functions of the profile: one hash function, SHA3-384 over a domain name, the network identifier and the data, with the 27 domains of the profile; canonical JSON; Merkle trees; the derivation of keys for one network, HKDF built on HMAC with SHA-512; signing contexts; the text forms of keys and signatures; addresses.
+
+**What the library answers is checked.** The rule for Ed25519 relies on libsodium for two things: whether a public key is a point of the subgroup of prime order, and the verification equation. Before the correction published as CVE-2025-69277, libsodium took some points outside that subgroup for valid ones. PyNaCl ships the corrected library from version 1.6.2, and `pyproject.toml` allows no earlier version; but PyNaCl can also be built over the libsodium of the system, whatever its age. And a library may verify after multiplication by the cofactor, which accepts signatures the rule refuses. When it is imported, `kern/composite.py` asks the library four questions whose answers are known, and refuses to load if one answer is not the expected one.
+
+**What holds them.** The official test vectors of RFC 10073, of NIST for ML-DSA and of Project Wycheproof for ML-DSA-65 and Ed25519 are kept whole under [`tests/vectors`](https://github.com/vaneeckhoutnicolas/kern/tree/main/tests/vectors), each file with its origin and its SHA-256, next to the reference vectors of the profile. The Python tests run all of them, and a program written with the Go standard library runs the same files and must reach the same verdicts; the continuous integration runs both on every pull request. A workflow compares the official files with their repositories every month.
 
 ## 2. What a quantum computer would change
 
@@ -131,7 +144,7 @@ What the plan does not solve:
 - **Zero-knowledge claims.** Groth16 on BN254 stays classical until a proof system built on hash functions is added.
 - **Certainty.** ML-DSA is a standard believed to resist quantum computers. It is not proven to, and no scheme is.
 
-The [design note on hybrid signatures](hybrid-signatures.md) is the profile of this plan. After five reviews it settles the scheme (Composite ML-DSA as standardized by the IETF, with ML-DSA-65), a network identifier drawn at random in the genesis and present in every hash, keys derived for it with HKDF-SHA-512, SHA3-384 and 384 bits for every commitment, identifier and address, one canonical JSON encoding, Merkle trees on the model of RFC 6962, base64 text for keys and signatures, one rule for the verification of Ed25519, a state root that covers every field of the state, and the account key registry in the same release, in which a public key is recorded once. Its byte rules, down to the data hashed under every domain, are held by reference vectors that two independent implementations reproduce, in Python and in Go; the two also verify each other's composite signatures. The profile was frozen on 12 November 2026: its rules and the values of its vectors no longer change. A frozen profile is not an implementation, and none of it is in the node yet.
+The [design note on hybrid signatures](hybrid-signatures.md) is the profile of this plan. After five reviews it settles the scheme (Composite ML-DSA as standardized by the IETF, with ML-DSA-65), a network identifier drawn at random in the genesis and present in every hash, keys derived for it with HKDF-SHA-512, SHA3-384 and 384 bits for every commitment, identifier and address, one canonical JSON encoding, Merkle trees on the model of RFC 6962, base64 text for keys and signatures, one rule for the verification of Ed25519, a state root that covers every field of the state, and the account key registry in the same release, in which a public key is recorded once. Its byte rules, down to the data hashed under every domain, are held by reference vectors that two independent implementations reproduce, in Python and in Go; the two also verify each other's composite signatures. The profile was frozen on 12 November 2026: its rules and the values of its vectors no longer change. A frozen profile is not an implementation. Its signature mechanism and its functions are written outside the node (section 1.7), and none of it is in the node yet.
 
 Left for later, and stated as such in the note:
 

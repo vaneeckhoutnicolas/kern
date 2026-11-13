@@ -150,7 +150,7 @@ The complete table, with the domains of rollups, governance, attestations and th
 
 **Frozen**. A change to a different curve would require a hard fork (validators would need to re-key).
 
-Planned before the freeze takes effect: hybrid signatures, Ed25519 together with the post-quantum ML-DSA, from the genesis of the first network beyond the devnet. The plan and its cost are in the [cryptographic inventory](cryptographic-inventory.md); none of it is implemented, and the formats of sections 2.1 to 2.7 are those of the devnet until it is.
+Planned before the freeze takes effect: hybrid signatures, Ed25519 together with the post-quantum ML-DSA, from the genesis of the first network beyond the devnet. The plan and its cost are in the [cryptographic inventory](cryptographic-inventory.md); none of it is in the node, and the formats of sections 2.1 to 2.7 are those of the devnet until it is.
 
 ### 2.8 KVM (EVM rollup) opcode set
 

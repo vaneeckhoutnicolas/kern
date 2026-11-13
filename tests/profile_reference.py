@@ -15,10 +15,13 @@ the vectors:
     python tests/profile_reference.py                       profile.json
     python tests/profile_reference.py signatures [go.json]  composite_signatures.json
 
-The second command needs the `cryptography` package, for ML-DSA: the node
-does not depend on it yet. It makes new signatures, since signing is
-randomized. The ones the Go program made are kept, or taken from the file
-given, which is the output of `go run profile_check.go -sign`.
+Both commands use the `cryptography` package, for ML-DSA. The profile is
+frozen: the first command must give back every value the file already
+holds, which tests/test_vectors.py checks, and the second is not to be run
+again, since it makes new signatures (signing is randomized) where the
+file must keep the ones it has. The signatures the Go program made are
+kept, or taken from the file given, which is the output of
+`go run profile_check.go -sign`.
 """
 
 from __future__ import annotations
@@ -222,6 +225,43 @@ def key_text(public_key: bytes) -> str:
     return "kpk1." + base64.urlsafe_b64encode(public_key).rstrip(b"=").decode("ascii")
 
 
+def signature_text(signature: bytes) -> str:
+    """The text form of a signature: `ksig1.` and its 3,373 bytes in
+    base64url without padding, 4,504 characters."""
+    if len(signature) != SIGNATURE_BYTES:
+        raise ValueError("signature of 3,373 bytes")
+    return "ksig1." + base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+
+
+_B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+
+def _decode_text(text: str, prefix: str, size: int) -> bytes:
+    """One text per value: the exact prefix, the exact length, the 64
+    characters of base64url and unused bits at zero. Everything else is
+    refused, padding and white space included."""
+    characters = len(prefix) + (4 * size + 2) // 3            # base64 without padding
+    if not isinstance(text, str) or len(text) != characters or not text.startswith(prefix):
+        raise ValueError("not the prefix and the length of this text form")
+    body = text[len(prefix):]
+    if any(c not in _B64URL for c in body):
+        raise ValueError("a character that is not one of the 64 of base64url")
+    data = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
+    if base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii") != body:
+        raise ValueError("unused bits that are not zero")
+    return data
+
+
+def key_from_text(text: str) -> bytes:
+    """The 1,984 bytes of a public key written as `kpk1.`, or ValueError."""
+    return _decode_text(text, "kpk1.", PUBLIC_KEY_BYTES)
+
+
+def signature_from_text(text: str) -> bytes:
+    """The 3,373 bytes of a signature written as `ksig1.`, or ValueError."""
+    return _decode_text(text, "ksig1.", SIGNATURE_BYTES)
+
+
 def contract_address(network_id: bytes, transaction_id: bytes) -> str:
     """The address of a contract: the hash of the identifier of the
     transaction that originates it, under a domain of its own."""
@@ -383,9 +423,8 @@ def state_root(network_id: bytes, state: dict) -> bytes:
 
 def _with_mldsa(mldsa_seed: bytes, ed25519_public_key: bytes, network_id: bytes) -> dict:
     """The values that need ML-DSA.KeyGen_internal (FIPS 204, algorithm 6).
-    They are computed with the `cryptography` package when the vectors are
-    rebuilt, and by the Go program with its standard library: the node
-    does not depend on that package yet."""
+    They are computed with the `cryptography` package here, and by the Go
+    program with its standard library."""
     from cryptography.hazmat.primitives.asymmetric import mldsa
 
     mldsa_public_key = mldsa.MLDSA65PrivateKey.from_seed_bytes(mldsa_seed).public_key().public_bytes_raw()
@@ -458,6 +497,81 @@ def _example_addresses(network: bytes) -> list[str]:
             if keys[i][0] == keys[j][0] and keys[i][1] >> 7 == keys[j][1] >> 7:
                 return [candidates[0], candidates[1], candidates[i], candidates[j]]
     raise AssertionError("no pair found")
+
+
+# The bytes of the text forms that are accepted: byte i is (factor * i +
+# offset) mod 256. Chosen so that the last character of the texts of each
+# kind takes its four possible values: it holds two bits of the last byte,
+# then four unused bits that are zero.
+TEXT_FORM_PATTERNS = {
+    "public_key": ((7, 3), (7, 4), (11, 5), (3, 2)),
+    "signature": ((5, 1), (5, 0), (3, 2), (7, 3)),
+}
+
+
+def _text_form_vectors() -> dict:
+    """Section 5: one text per value. The texts that are accepted, and
+    spellings of the first one of each kind that must be refused."""
+    kinds = {"public_key": ("kpk1.", PUBLIC_KEY_BYTES, key_text, key_from_text),
+             "signature": ("ksig1.", SIGNATURE_BYTES, signature_text, signature_from_text)}
+    accepted, refused = [], []
+    for kind, (prefix, size, encode, decode) in kinds.items():
+        other_prefix = next(p for k, (p, *_) in kinds.items() if k != kind)
+        texts = []
+        for factor, offset in TEXT_FORM_PATTERNS[kind]:
+            data = bytes((factor * i + offset) % 256 for i in range(size))
+            texts.append(encode(data))
+            assert decode(texts[-1]) == data
+            accepted.append({"kind": kind, "factor": factor, "offset": offset, "text": texts[-1]})
+        assert sorted(t[-1] for t in texts) == list("AQgw")
+
+        text, data = texts[0], decode(texts[0])
+        body = text[len(prefix):]
+        standard = body.replace("-", "+").replace("_", "/")
+        assert "-" in body and "_" in body and body[100] not in " \u00e9"
+
+        def b64(raw: bytes) -> str:
+            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+        cases = [
+            ("padding added", text + "=="),
+            ("the alphabet of standard base64: + and / in place of - and _", prefix + standard),
+            ("a space at the end", text + " "),
+            ("a line feed at the end", text + "\n"),
+            ("a space at the start", " " + text),
+            ("a space in place of a character", prefix + body[:100] + " " + body[101:]),
+            ("a letter outside ASCII in place of a character", prefix + body[:100] + "\u00e9" + body[101:]),
+            ("the last character with one of its four unused bits set", text[:-1] + _B64URL[_B64URL.index(text[-1]) + 1]),
+            ("one character short", text[:-1]),
+            ("one character long", text + "A"),
+            ("the text of one byte less", prefix + b64(data[:-1])),
+            ("the text of one byte more", prefix + b64(data + b"\x00")),
+            ("no prefix", body),
+            ("the prefix in upper case", prefix.upper() + body),
+            ("the prefix of a scheme 2", prefix.replace("1", "2") + body),
+            ("the prefix without its full stop", prefix[:-1] + body),
+            ("the prefix of the other kind", other_prefix + body),
+            ("the bytes in hexadecimal after the prefix", prefix + data.hex()),
+            ("the prefix alone", prefix),
+            ("an empty text", ""),
+        ]
+        for why, spelling in cases:
+            assert spelling != text
+            try:
+                decode(spelling)
+            except ValueError:
+                refused.append({"kind": kind, "why": why, "text": spelling})
+            else:
+                raise AssertionError(f"{kind}: {why} is accepted")
+    return {
+        "rule": "The text forms of section 5: one text per value. Under `accepted`, `text` is the text of the "
+                "bytes whose byte i is (factor * i + offset) mod 256: 1,984 bytes for a public key, 3,373 for a "
+                "signature. They are not real keys or signatures. Under `refused`, `text` is a spelling that the "
+                "decoder of its kind must refuse: the first accepted text of that kind, changed as `why` says. "
+                "Added after the freeze of the profile, for a rule that exists: nothing above is changed.",
+        "accepted": accepted,
+        "refused": refused,
+    }
 
 
 def build_vectors() -> dict:
@@ -628,6 +742,7 @@ def build_vectors() -> dict:
                                "`from` is the level from which the key is current. The shape of the registry is "
                                "an example: its schema comes with the registry. What these vectors fix is that "
                                "it is hashed with the rest of the state, with both functions.",
+        "text_forms": _text_form_vectors(),
     }
 
 

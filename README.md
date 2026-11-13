@@ -84,12 +84,14 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1138 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1202 tests passing.**
 
 ```
 kern/
 ├── kern/                       # Core protocol (L1)
 │   ├── crypto.py               # Ed25519, blake2b-256, base58check
+│   ├── composite.py            # Composite ML-DSA signatures (RFC 10073); not used by the node yet
+│   ├── keys.py                 # Signature profile: hash, encoding, key derivation, addresses; not used by the node yet
 │   ├── transaction.py          # 11 OpKinds incl. v1.1-rc attestations
 │   ├── block.py                # BlockHeader, Block, merkle root
 │   ├── chain.py                # State machine + governance tick + delegation
@@ -136,7 +138,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 1138 tests, none skipped
+├── tests/                      # 1202 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -167,7 +169,7 @@ Requires Python 3.11+.
 ```bash
 git clone https://github.com/vaneeckhoutnicolas/kern.git
 cd kern
-pip install -r requirements.txt   # includes pynacl, aiohttp, py_ecc
+pip install -r requirements.txt   # pynacl, aiohttp, py_ecc, cryptography
 
 # Generate a baker keypair
 python scripts/generate_keys.py --out keys/baker1.json
@@ -197,7 +199,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 1138 passed in about 2 minutes (the multi-process consensus tests start real nodes)
+# 1202 passed in about 2 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### A multi-node devnet in one command (Docker)
