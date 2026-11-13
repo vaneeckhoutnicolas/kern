@@ -305,7 +305,7 @@ def test_the_node_does_not_use_the_modules_of_the_release_in_preparation():
     assert {"crypto", "transaction"} <= _kern_modules(ROOT / "kern" / "block.py")           # from .crypto import
     assert "failpoints" in _kern_modules(ROOT / "kern" / "node.py")                         # from . import
     assert "evm" in _kern_modules(ROOT / "kern" / "fuzzing.py")                             # from kern.evm import
-    assert _kern_modules(ROOT / "kern" / "keys.py") == {"composite"}
+    assert _kern_modules(ROOT / "kern" / "keys.py") == {"composite", "nesting"}       # and a helper of the node
     section = _section(_inventory(), "### 1.7 ")
     assert "kern/composite.py" in section and "kern/keys.py" in section
     assert "Nothing in the node, the wallet, the explorer or the scripts imports them" in section

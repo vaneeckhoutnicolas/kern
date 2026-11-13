@@ -36,10 +36,10 @@ import base64
 import hashlib
 import hmac
 import json
-import re
 from typing import Iterable
 
 from . import composite
+from .nesting import json_depth
 
 SCHEME = 1                      # ML-DSA-65 with Ed25519, the combination of kern.composite
 NETWORK_ID_BYTES = 32
@@ -68,24 +68,14 @@ _INT_MIN, _INT_MAX = -(2**63), 2**63 - 1
 # bytes before they are decoded, and on a value before it is encoded.
 MAX_NESTING = 64
 
-_STRING = re.compile(rb'"(?:[^"\\]|\\.)*(?:"|\\?\Z)', re.DOTALL)        # a string, closed or not
-_NOT_BRACKETS = bytes(sorted(set(range(256)) - set(b"[]{}")))
-
 
 def _check_nesting(data: bytes) -> None:
     """Refuse bytes whose arrays and objects are nested more than
-    MAX_NESTING deep: the brackets outside strings are counted, in one
-    pass over the bytes, before any decoder sees them."""
-    if data.count(b"[") + data.count(b"{") <= MAX_NESTING:
-        return
-    depth = 0
-    for byte in _STRING.sub(b"", data).translate(None, _NOT_BRACKETS):
-        if byte in (0x5B, 0x7B):                      # [ and {
-            depth += 1
-            if depth > MAX_NESTING:
-                raise ValueError(f"arrays and objects nested more than {MAX_NESTING} deep")
-        else:
-            depth -= 1
+    MAX_NESTING deep: the brackets outside strings are counted on the
+    bytes (kern.nesting), before any decoder sees them."""
+    # No more levels than opening brackets: most texts are settled by counting them.
+    if data.count(b"[") + data.count(b"{") > MAX_NESTING and json_depth(data) > MAX_NESTING:
+        raise ValueError(f"arrays and objects nested more than {MAX_NESTING} deep")
 
 
 def _check_value(value: object, depth: int = 0) -> None:

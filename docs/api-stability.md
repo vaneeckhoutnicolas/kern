@@ -51,6 +51,8 @@ Transaction = {
 
 **Frozen fields**: All fields above. New fields cannot be added in v1.x.
 
+**Nesting**: a transaction nests arrays and objects 32 deep at most, itself included, so `params` and `initial_storage` hold 31 levels at most. A deeper transaction is malformed.
+
 **Frozen OpKinds** (v1.0 baseline):
 - `transfer`
 - `originate`

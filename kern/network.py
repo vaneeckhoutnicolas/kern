@@ -19,7 +19,8 @@ kinds on the wire (see docs/consensus-wire.md for the full protocol):
     {"kind": "get_blocks", "from": A, "to": B}      catch-up sync request
     {"kind": "blocks",     "blocks": [{...}, ...]}  catch-up sync response
 
-Hardening in this layer: a 16 MiB per-message cap, a connection cap, and
+Hardening in this layer: a 16 MiB per-message cap, a bound on nesting
+checked before a message is decoded (kern.nesting), a connection cap, and
 a per-response block cap on sync replies. Deduplication and re-gossip
 policy live in the node (kern.node), which owns the seen-sets. A
 production node would additionally use a binary framing protocol with
@@ -33,6 +34,8 @@ import asyncio
 import json
 import logging
 from typing import Awaitable, Callable, Dict, List, Optional, Set, Tuple
+
+from . import nesting
 
 LOG = logging.getLogger("kern.network")
 
@@ -54,8 +57,8 @@ async def _read_msg(reader: asyncio.StreamReader) -> Optional[dict]:
     except asyncio.IncompleteReadError:
         return None
     try:
-        msg = json.loads(payload.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+        msg = nesting.decode(payload)      # refused before decoding when it nests too deep
+    except ValueError:
         return None
     if not isinstance(msg, dict):
         return None
