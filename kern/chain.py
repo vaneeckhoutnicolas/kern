@@ -39,11 +39,11 @@ import hashlib
 import json
 import copy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .block import Block, BlockHeader, txs_merkle_root_hex
 from .crypto import blake2b256
-from .transaction import OpKind, Transaction
+from .transaction import OpKind, Transaction, Waiting
 from .skald import interpret_origination, interpret_call, SkaldError
 
 
@@ -171,6 +171,13 @@ def initial_state_from_genesis(genesis: dict) -> dict:
         raise ValueError("delegation_unbonding_blocks must be >= epoch_blocks")
     state["consensus_set"] = compute_consensus_set(state)
     state["treasury_address"] = genesis.get("treasury_address")
+    # What a genesis says of the issuance passes the checks of a proposal.
+    # Nothing read it before the first block, which raised on a block time
+    # of zero and went on with a curve whose bounds were crossed.
+    from .governance import issuance_error
+    refused = issuance_error(genesis.get("issuance_params"))
+    if refused is not None:
+        raise ValueError(f"genesis issuance_params: {refused}")
     state["issuance_params"] = genesis.get("issuance_params")
     return state
 
@@ -1329,7 +1336,7 @@ def _apply_governance_tick(state: dict, current_level: int) -> None:
     # ----- Protocol track -----
     activated_count_before = len(gov_state["protocol"].get("activated_changes", []))
     gov = load_protocol_governance(gov_state, _governance_validator_set(state))
-    transitions = gov.advance_phases(current_level)
+    transitions = gov.advance_phases(current_level, issuance=state.get("issuance_params") or {})
     save_protocol_governance(gov_state, gov)
 
     # Resolve bonds for any proposals that just terminated.
@@ -1573,6 +1580,24 @@ def admission_error(tx: Transaction, state: dict) -> Optional[str]:
         return f"wrong chain_id: expected {expected_chain!r}, got {tx.chain_id!r}"
     verdict, reason = mempool_verdict(tx.sender, tx.nonce, tx.fee, tx.encoded_size(), state, fee_params(state))
     return reason if verdict == DROP else None
+
+
+def mempool_pass(rows: Iterable[Waiting], state: dict, fees: dict) -> Tuple[List[str], List[str]]:
+    """What a node finds when it goes through rows of its mempool, oldest
+    first, on top of `state`: the transactions no block could charge any
+    more, and those that wait, the one farthest ahead of its account first
+    and, among those as far ahead, the one that came last. Each is given by
+    its identifier. What the next block can charge is in neither list."""
+    dead: List[str] = []
+    ahead: List[Tuple[int, int, str]] = []
+    for arrival, row in enumerate(rows):
+        verdict, _ = mempool_verdict(row.sender, row.nonce, row.fee, row.size, state, fees)
+        if verdict == DROP:
+            dead.append(row.hash_hex)
+        elif verdict == WAIT:
+            ahead.append((row.nonce - state["nonces"].get(row.sender, 0), arrival, row.hash_hex))
+    ahead.sort(reverse=True)
+    return dead, [tx_hash for _distance, _arrival, tx_hash in ahead]
 
 
 def proposed_block_bytes(fees: dict) -> int:

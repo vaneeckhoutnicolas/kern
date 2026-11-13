@@ -116,6 +116,16 @@ The first ten names are the parameters of structure version 1, with the same ran
 
 A value is checked a second time when the proposal would be activated: a proposal that a state already holds with a value the node cannot use becomes `REJECTED` at that moment, instead of activated.
 
+**The lowest rate is not above the highest.** One rule ties two values together: `i_min_ppm` is not above `i_max_ppm`, since the curve falls from the highest rate, when nothing is staked, to the lowest, at the target. The two are read as the node reads them: a name in parts per million comes before the older name of the same rate, and a rate no one has set has its default, 2,500 for the lowest and 60,000 for the highest.
+
+- A proposal that carries both bounds is refused when it is submitted if they cross.
+- A proposal that carries one bound cannot be judged before the other is known. It is judged at the block that would activate it, against what the state then holds, and becomes `REJECTED` if it would leave the bounds crossed. When one block activates several proposals, they are looked at in the order they were submitted, each on top of those activated before it: of two proposals that cross together, the first stays.
+- A proposal that does not move the bounds is not held to account for them: a state written before this rule can hold crossed bounds, and a proposal about something else is activated as before.
+
+A genesis passes the same checks ([`running-a-node.md`](running-a-node.md)).
+
+Until this rule nothing compared the two. With the lowest rate above the highest no block raised: the curve was upside down, the rate growing with what is staked. And its formula then divides a negative number, which two languages do not round the same way: a second implementation could have computed another reward from the same state.
+
 Until these checks a proposal was looked at for the names of its parameters only. A block time of zero, or a rate given as a text, was voted and activated like any other, and from the block of its activation no block could be applied.
 
 ### Activation
