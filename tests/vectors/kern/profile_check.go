@@ -1962,6 +1962,82 @@ type schemaVector struct {
 	} `json:"mutations"`
 }
 
+// ------------------------------------------- the four bytes of a frame
+
+// announcedBy reads the four bytes that precede a frame: how many bytes
+// of canonical JSON follow, and the rule that refuses them when that is
+// more than a frame holds. The four bytes are a number without a sign,
+// most significant byte first, and are not counted in the bound.
+func announcedBy(four []byte) (uint64, string) {
+	var n uint64
+	for _, b := range four {
+		n = n<<8 | uint64(b)
+	}
+	if n > maxFrameBytes {
+		return n, "too_long"
+	}
+	return n, ""
+}
+
+// ------------------------------------- a request for blocks, its answer
+
+// A blocks frame that holds no block: {"blocks":[],"kind":"blocks"}.
+const emptyBlocksFrame = 29
+
+// answerTo gives the levels of the blocks a node sends in answer to a
+// get_blocks from first to last, when it holds the final blocks whose
+// sizes held gives. The run it holds from first is found before any size
+// is added up, and the sizes are then counted from the bound downward.
+func answerTo(held map[int64]int, first, last int64) []int64 {
+	run := []int64{}
+	for level := first; ; level++ {
+		if _, ok := held[level]; !ok {
+			break
+		}
+		run = append(run, level)
+		if level == last { // no level above the last one asked for, and no level after the highest there is
+			break
+		}
+	}
+	left := maxFrameBytes - emptyBlocksFrame
+	for n, level := range run {
+		left -= held[level]
+		if n > 0 {
+			left-- // the comma before every block but the first
+		}
+		if left < 0 {
+			return run[:n]
+		}
+	}
+	return run
+}
+
+// answerRule gives the rule that refuses a blocks frame whose blocks are
+// of these levels as the answer to a get_blocks from first to last, or
+// the empty string. The end is looked at before the start, and the order
+// of the levels last.
+func answerRule(first, last int64, levels []int64) string {
+	if len(levels) == 0 {
+		return ""
+	}
+	for _, level := range levels {
+		if level > last {
+			return "inconsistent"
+		}
+	}
+	if levels[0] != first {
+		return "inconsistent"
+	}
+	// A level is never negative: one more than the highest level there is wraps
+	// around to a negative number, which is the level of no block.
+	for n := 1; n < len(levels); n++ {
+		if levels[n] != levels[n-1]+1 {
+			return "inconsistent"
+		}
+	}
+	return ""
+}
+
 // checkSchemas runs the vectors of the schemas with the tables above.
 func checkSchemas(path string) {
 	raw, err := os.ReadFile(path)
@@ -1975,6 +2051,26 @@ func checkSchemas(path string) {
 		Refused       []schemaVector `json:"refused"`
 		AcceptedTexts []schemaVector `json:"accepted_texts"`
 		RefusedTexts  []schemaVector `json:"refused_texts"`
+		Prefixes      []struct {
+			Prefix    string  `json:"prefix"`
+			Announces *uint64 `json:"announces"`
+			Rule      string  `json:"rule"`
+			Why       string  `json:"why"`
+		} `json:"prefixes"`
+		Answers []struct {
+			Held   [][2]int64 `json:"held"`
+			From   int64      `json:"from"`
+			To     int64      `json:"to"`
+			Levels []int64    `json:"levels"`
+			Why    string     `json:"why"`
+		} `json:"answers"`
+		Replies []struct {
+			From   int64   `json:"from"`
+			To     int64   `json:"to"`
+			Levels []int64 `json:"levels"`
+			Rule   string  `json:"rule"`
+			Why    string  `json:"why"`
+		} `json:"replies"`
 	}
 	if err := json.Unmarshal(raw, &file); err != nil {
 		panic(err)
@@ -1996,6 +2092,9 @@ func checkSchemas(path string) {
 		encoding, err := canonicalJSON(object)
 		check("accepted "+v.Name+": the object", err == nil && len(encoding) == v.Bytes && pinOf(encoding) == v.Pin)
 		check("accepted "+v.Name, schemas[v.Schema](object) == "")
+		// A frame travels after four bytes that give the length of its canonical JSON, and nothing else does.
+		four := hex.EncodeToString(binary.BigEndian.AppendUint32(nil, uint32(len(encoding))))
+		check("accepted "+v.Name+": the four bytes", (v.Schema == "frame" && v.Prefix == four) || (v.Schema != "frame" && v.Prefix == ""))
 		vectors.objects[v.Name], kept[v.Name] = object, v.Schema
 		o := object.(map[string]any)
 		switch v.Schema {
@@ -2064,9 +2163,30 @@ func checkSchemas(path string) {
 		check("text, "+v.Why+": the text", len(text) == v.Bytes && pinOf(text) == v.Pin)
 		check("text, "+v.Why+": "+receive(v.Schema, text)+", expected "+v.Rule, receive(v.Schema, text) == v.Rule)
 	}
+	for _, v := range file.Prefixes {
+		four := unhex(v.Prefix)
+		n, rule := announcedBy(four)
+		check("four bytes "+v.Prefix+": four of them", len(four) == 4)
+		check("four bytes "+v.Prefix+": "+rule+", expected "+v.Rule, rule == v.Rule)
+		check("four bytes "+v.Prefix+": what they announce", (v.Announces == nil) == (rule != "") && (v.Announces == nil || *v.Announces == n))
+	}
+	for _, v := range file.Answers {
+		held := map[int64]int{}
+		for _, block := range v.Held {
+			held[block[0]] = int(block[1])
+		}
+		levels := answerTo(held, v.From, v.To)
+		check("answer, "+v.Why+": "+fmt.Sprint(levels), fmt.Sprint(levels) == fmt.Sprint(v.Levels))
+		check("answer, "+v.Why+": an answer to its request", answerRule(v.From, v.To, levels) == "")
+	}
+	for _, v := range file.Replies {
+		rule := answerRule(v.From, v.To, v.Levels)
+		check("reply, "+v.Why+": "+rule+", expected "+v.Rule, rule == v.Rule)
+	}
 	if failures == 0 {
-		fmt.Printf("schemas: %d objects accepted, %d refused, %d texts, %d objects one change away, as the Python reference\n",
-			len(file.Accepted), len(file.Refused), len(file.AcceptedTexts)+len(file.RefusedTexts), derived)
+		fmt.Printf("schemas: %d objects accepted, %d refused, %d texts, %d objects one change away, %d prefixes, %d answers and %d replies, as the Python reference\n",
+			len(file.Accepted), len(file.Refused), len(file.AcceptedTexts)+len(file.RefusedTexts), derived,
+			len(file.Prefixes), len(file.Answers), len(file.Replies))
 	}
 }
 

@@ -28,7 +28,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))      # the reference of the profile stands next to this file
 
@@ -41,7 +41,7 @@ import profile_reference as ref                               # noqa: E402
 LIMITS = {
     "json_nesting": 64,                 # arrays and objects in any JSON text received, measured before decoding
     "transaction_nesting": 32,          # arrays and objects in a transaction, itself included
-    "frame_bytes": 16_777_216,          # a frame between peers
+    "frame_bytes": 16_777_216,          # the canonical JSON of a frame, without the four bytes that announce it
     "transaction_bytes": 131_072,       # the size of a transaction: its canonical encoding, witness included
     "block_bytes": 8_388_608,           # the sizes of the transactions of a block, added up
     "certificate_signatures": 1_024,    # the signatures of a certificate
@@ -1016,6 +1016,109 @@ SCHEMAS: dict[str, Type] = {
 
 
 # ---------------------------------------------------------------------------
+# The four bytes of a frame (section 9.8)
+# ---------------------------------------------------------------------------
+
+def frame_prefix(size: int) -> bytes:
+    """The four bytes that travel before a frame whose canonical JSON is
+    `size` bytes: that number, most significant byte first. They are not
+    part of what they count."""
+    return size.to_bytes(4, "big")
+
+
+def announced(prefix: bytes) -> int:
+    """How many bytes of canonical JSON follow the four bytes `prefix`, as
+    a node reads them: an integer without a sign, most significant byte
+    first. Raises Refused when they announce more than a frame can hold:
+    the node reads no further. The bound is on what follows, so the four
+    bytes themselves are not counted."""
+    size = int.from_bytes(prefix, "big")
+    if size > LIMITS["frame_bytes"]:
+        refuse("too_long", "", f"a frame of {number(size)} bytes")
+    return size
+
+
+# ---------------------------------------------------------------------------
+# A request for blocks and its answer (section 9.8)
+# ---------------------------------------------------------------------------
+# A schema checks one frame. An answer is also the answer to a request: the
+# rules below tie the two frames together. Two of them can be checked by the
+# node that asked, on the levels it receives; the two others say what the
+# node that answers does with the blocks it holds.
+
+BLOCKS_FRAME_BYTES = len(ref.canonical_json({"kind": "blocks", "blocks": []}))     # 29: a frame that holds no block
+
+
+def _starts_at_from(first: int, last: int, levels: list[int]) -> bool:
+    return not levels or levels[0] == first
+
+
+def _stays_within_to(first: int, last: int, levels: list[int]) -> bool:
+    return all(level <= last for level in levels)
+
+
+ANSWER_RULES: list[tuple[str, Callable[[int, int, list[int]], bool]]] = [
+    ("When the answer holds blocks, the first one is the block of level `from`.", _starts_at_from),
+    ("It holds no block above `to`.", _stays_within_to),
+]
+ANSWERING_RULES = [
+    "It holds every block the node has from `from` upward, in order, as far as the first of three things: a level "
+    "the node does not hold, the level `to`, or a block that would take the frame beyond its bound. A node never "
+    "leaves a level out to send a later one.",
+    "An empty list says that the node does not hold the block of level `from`. It says nothing of the levels "
+    "after it.",
+]
+
+
+def answer(held: Mapping[int, int], first: int, last: int) -> list[int]:
+    """The levels of the blocks a node sends in answer to a `get_blocks`
+    from `first` to `last`. `held` gives, for each level the node holds,
+    the bytes of its final block in canonical JSON, as it stands in the
+    frame.
+
+    The longest run of levels that starts at `first`, goes no further than
+    `last`, has no gap, and keeps the frame within its bound. A frame that
+    holds no block is 29 bytes; each block adds its bytes, and each block
+    after the first one byte more, a comma."""
+    levels: list[int] = []
+    size = BLOCKS_FRAME_BYTES
+    level = first
+    while level <= last and level in held:
+        more = held[level] + (1 if levels else 0)
+        if size + more > LIMITS["frame_bytes"]:
+            break
+        levels.append(level)
+        size += more
+        level += 1
+    return levels
+
+
+def answer_verdict(first: int, last: int, levels: list[int]) -> str:
+    """`accepted`, or the code of the rule that refuses a `blocks` frame
+    whose blocks are of the levels `levels` as the answer to a `get_blocks`
+    from `first` to `last`: the rule of the frame itself, then the rules
+    that tie it to the request."""
+    follow = all(b == a + 1 for a, b in zip(levels, levels[1:]))
+    if follow and all(holds(first, last, levels) for _, holds in ANSWER_RULES):
+        return "accepted"
+    return "inconsistent"
+
+
+def check_answer(request: dict, reply: dict, network_id: bytes) -> None:
+    """Raises Refused unless `reply`, a `blocks` frame, is an answer to
+    `request`, a `get_blocks` frame, on this network. Each frame is checked
+    against its schema first."""
+    check("frame", request, network_id)
+    check("frame", reply, network_id)
+    if request["kind"] != "get_blocks" or reply["kind"] != "blocks":
+        refuse("inconsistent", "kind", "not a request for blocks and its answer")
+    levels = [pair["block"]["header"]["level"] for pair in reply["blocks"]]
+    for sentence, holds in ANSWER_RULES:
+        if not holds(request["from"], request["to"], levels):
+            refuse("inconsistent", "blocks", sentence)
+
+
+# ---------------------------------------------------------------------------
 # Reception
 # ---------------------------------------------------------------------------
 
@@ -1140,5 +1243,6 @@ def rules() -> dict[str, list[str]]:
     for kind, frame in FRAMES.items():
         if frame.rules:
             out[f"Frame `{kind}`"] = [sentence for sentence, _ in frame.rules]
+    out["Answering `get_blocks`"] = [sentence for sentence, _ in ANSWER_RULES] + ANSWERING_RULES
     return out
 

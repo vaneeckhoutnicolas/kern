@@ -213,7 +213,15 @@ DESCRIPTION = (
     "replaced by 0, every boolean by 1, every integer by its digits as a string, then by true. `accepted_texts` and "
     "`refused_texts` are texts as a node receives them: the size of a frame and the nesting are checked on the "
     "bytes, then the canonical encoding, then the schema; the schema `json` is any value of canonical JSON, and "
-    "`prefix` is the four bytes that precede the text in a frame."
+    "`prefix` is the four bytes that precede the text in a frame. An accepted object of the schema `frame` has its "
+    "`prefix` too: the length of its canonical encoding, most significant byte first, and nothing else. `prefixes` "
+    "holds four bytes as a node reads them before a frame: `announces` is the number of bytes that follow, and "
+    "`rule` refuses those that announce more than `frame_bytes`, which bounds what follows and does not count the "
+    "four bytes. `answers` holds what a node sends in answer to a `get_blocks` from `from` to `to`: `held` lists the "
+    "blocks it holds, each as a level and the bytes of its final block in the frame, and `levels` the levels of the "
+    "blocks of its answer; a frame without a block is 29 bytes, and each block after the first adds a comma. "
+    "`replies` holds answers as the node that asked sees them, by the levels of their blocks: accepted, or refused "
+    "by `rule`."
 )
 
 
@@ -227,6 +235,9 @@ class Builder(Vectors):
         self.refused: list[dict] = []
         self.accepted_texts: list[dict] = []
         self.refused_texts: list[dict] = []
+        self.prefixes: list[dict] = []
+        self.answers: list[dict] = []
+        self.replies: list[dict] = []
 
     # -- recording --------------------------------------------------------
 
@@ -236,6 +247,8 @@ class Builder(Vectors):
         sch.check(schema, value, self.network_id)
         record = {"name": name, "schema": schema, "what": what, "object": obj, **pin(ref.canonical_json(value)),
                   **derived(name, schema, value, self.network_id)}
+        if schema == "frame":
+            record["prefix"] = sch.frame_prefix(record["bytes"]).hex()
         if mutate:
             optional = []
             for change, path, changed in mutations(value, list(maps), list(free)):
@@ -342,9 +355,12 @@ class Builder(Vectors):
         self.blocks()
         self.frames()
         self.texts()
+        self.four_bytes()
+        self.requests_and_answers()
         return {"description": DESCRIPTION, "network_id": self.network_id.hex(), "limits": LIMITS,
                 "rules": sch.RULES, "directives": DIRECTIVES, "accepted": self.accepted, "refused": self.refused,
-                "accepted_texts": self.accepted_texts, "refused_texts": self.refused_texts}
+                "accepted_texts": self.accepted_texts, "refused_texts": self.refused_texts,
+                "prefixes": self.prefixes, "answers": self.answers, "replies": self.replies}
 
     def transactions(self) -> None:
         yes, no, tx, limit = self.yes, self.no, self.tx, LIMITS
@@ -925,6 +941,79 @@ class Builder(Vectors):
                       {"$text": [LIMITS[name], " "]})
             self.text(schema, "too_long", f"{what} of {LIMITS[name] + 1:,} spaces: too long, whatever it holds",
                       {"$text": [LIMITS[name] + 1, " "]})
+
+
+    def four_bytes(self) -> None:
+        """The four bytes that precede a frame: what they announce, and
+        where a node stops reading."""
+        limit = LIMITS["frame_bytes"]
+        for prefix, why in (
+            ("0000006a", "the frame hello of the texts: 106 bytes follow"),
+            ("00000100", "256 bytes follow: the most significant byte comes first, or this would read 65,536"),
+            ("00000000", "nothing follows; the empty text is then refused, since it is not canonical JSON"),
+            ("01000000", f"{limit:,} bytes follow: the largest frame, which travels as {limit + 4:,} bytes"),
+            ("01000001", f"{limit + 1:,} bytes would follow: one more than a frame holds"),
+            ("7fffffff", "2,147,483,647 bytes would follow"),
+            ("80000000", "2,147,483,648 bytes would follow: the four bytes are a number without a sign"),
+            ("ffffffff", "4,294,967,295 bytes would follow, the most four bytes can announce"),
+        ):
+            try:
+                self.prefixes.append({"prefix": prefix, "announces": sch.announced(bytes.fromhex(prefix)), "why": why})
+            except sch.Refused as refusal:
+                self.prefixes.append({"prefix": prefix, "rule": refusal.rule, "why": why})
+        assert [p.get("rule", "") for p in self.prefixes] == ["", "", "", "", "too_long", "too_long", "too_long",
+                                                              "too_long"]
+        self.text("frame", "not_canonical", "an empty frame: four bytes that announce nothing, and nothing", "")
+
+    def requests_and_answers(self) -> None:
+        """What a node answers to a `get_blocks`, and what the node that
+        asked accepts as an answer."""
+        limit, top = LIMITS["frame_bytes"], sch.INT_MAX
+        third = limit - sch.BLOCKS_FRAME_BYTES - 2 - 2 * 6_000_000        # what is left for a third block, to the byte
+
+        def answer(why: str, held: list[list[int]], first: int, last: int, levels: list[int]) -> None:
+            assert sch.answer(dict(map(tuple, held)), first, last) == levels, why
+            assert sch.answer_verdict(first, last, levels) == "accepted", why
+            self.answers.append({"held": held, "from": first, "to": last, "levels": levels, "why": why})
+
+        def run(first: int, last: int, size: int = 5_000) -> list[list[int]]:
+            return [[level, size] for level in range(first, last + 1)]
+
+        answer("every block asked for", run(1, 5), 2, 4, [2, 3, 4])
+        answer("one block asked for", run(1, 9), 7, 7, [7])
+        answer("the node holds fewer blocks than were asked for", run(1, 3), 2, 9, [2, 3])
+        answer("a level is missing: the answer stops before it, and the blocks after it are not sent",
+               run(1, 3) + run(5, 6), 2, 6, [2, 3])
+        answer("the first level asked for is missing: an empty answer, although the node holds the next ones",
+               run(3, 4), 2, 4, [])
+        answer("the node holds nothing", [], 1, 3, [])
+        answer("the node holds nothing that high", run(1, 3), 5, 9, [])
+        answer(f"three blocks that fill a frame of {limit:,} bytes, to the byte, and a fourth that is held",
+               [[10, 6_000_000], [11, 6_000_000], [12, third], [13, 5_000]], 10, 13, [10, 11, 12])
+        answer("the same with one byte more in the third block: two blocks",
+               [[10, 6_000_000], [11, 6_000_000], [12, third + 1], [13, 5_000]], 10, 13, [10, 11])
+        answer("a small block after one that does not fit is not sent in its place",
+               [[10, 13_000_000], [11, 5_000_000], [12, 5_000]], 10, 12, [10])
+        answer("the two highest levels there are", [[top - 1, 5_000], [top, 5_000]], top - 1, top, [top - 1, top])
+
+        def reply(why: str, first: int, last: int, levels: list[int], rule: str = "accepted") -> None:
+            assert sch.answer_verdict(first, last, levels) == rule, why
+            record: dict[str, Any] = {"from": first, "to": last, "levels": levels}
+            self.replies.append({**record, "why": why} if rule == "accepted" else {**record, "rule": rule, "why": why})
+
+        reply("the levels asked for", 2, 4, [2, 3, 4])
+        reply("fewer than were asked for, from the first one", 2, 9, [2, 3])
+        reply("no block", 2, 4, [])
+        reply("the one level asked for", 7, 7, [7])
+        reply("the two highest levels there are", top - 1, top, [top - 1, top])
+        reply("the first level asked for was left out", 2, 4, [3, 4], "inconsistent")
+        reply("a block below the first level asked for", 2, 4, [1, 2], "inconsistent")
+        reply("a block above the last level asked for", 2, 4, [2, 3, 4, 5], "inconsistent")
+        reply("one level was asked for, and two come", 7, 7, [7, 8], "inconsistent")
+        reply("a level is left out in the middle", 2, 6, [2, 3, 5], "inconsistent")
+        reply("the levels asked for, the highest first", 2, 4, [4, 3, 2], "inconsistent")
+        reply("a level twice", 2, 4, [2, 2, 3], "inconsistent")
+        reply("the level asked for, then the lowest level there is", top, top, [top, 0], "inconsistent")
 
 
 def build() -> dict:

@@ -383,6 +383,14 @@ A schema says, for one kind of object, which members it has, what each one may h
 
 A schema checks a form. It needs the network identifier, which is in the checksum of every address, and nothing else: no state, no key. Whether a nonce is the next one, whether a balance covers an amount, whether a signature verifies, whether a signer is a validator of the level are rules of the state and of the consensus, stated in the note and in the pages of the consensus. A transaction of the right form can still fail when it is applied.
 
+Three cases are kept apart, since a block does not treat them alike:
+
+- an object that is not of its schema is not a transaction. A node refuses it, and a block that holds it is invalid, as said above;
+- a transaction of the right form whose signature does not verify makes the block that holds it invalid too (note, section 6.3). It is not a transaction that failed: it is not applied, and it pays no fee;
+- a transaction of the right form whose signature verifies can still fail when its operation is applied. It is a transaction of its block like the others: it stays there and pays its fee, as it does today.
+
+What a block does with a transaction whose nonce is not the next one, or whose sender cannot pay the fee, is a rule of the state: chapter 2 states it.
+
 Everything below is held three ways. [`tests/schema_reference.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/schema_reference.py) is this section as executable text, written with the Python standard library, and a test compares every table of this section with it. [`tests/vectors/kern/schemas.json`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/vectors/kern/schemas.json) holds objects that are accepted and objects that are refused, each with the rule that refuses it. The Go program kept next to that file checks the same vectors with tables of its own (section 9.11).
 
 ### 9.2 Reading the tables
@@ -436,7 +444,7 @@ Every text, every list and every map has a bound, and so has every object that t
 |---|---|---|
 | `json_nesting` | 64 | Arrays and objects, one inside the other, in any JSON text a node receives |
 | `transaction_nesting` | 32 | The same in a transaction, itself included |
-| `frame_bytes` | 16,777,216 | A frame between peers |
+| `frame_bytes` | 16,777,216 | The canonical JSON of a frame between peers, without the four bytes that announce its length |
 | `transaction_bytes` | 131,072 | The size of a transaction: its canonical encoding, witness included |
 | `block_bytes` | 8,388,608 | The sizes of the transactions of a block, added up |
 | `certificate_signatures` | 1,024 | The signatures of a certificate |
@@ -449,10 +457,10 @@ Every text, every list and every map has a bound, and so has every object that t
 Where they come from:
 
 - **64 and 32** are the two limits the node applies since November 2026 ([consensus-wire.md](consensus-wire.md)). They become rules of the structure version, the same in every client: the JSON library of Go reads 10,000 levels, so a client in Go measures by itself.
-- **16,777,216 bytes** is the cap of a frame today.
+- **16,777,216 bytes** is the cap of a frame today, counted the same way: on the bytes that follow the four bytes of length, which are not part of it (section 9.8).
 - **131,072 bytes per transaction.** A transfer weighs 4,791 bytes, 7,458 when it carries the public key of its account, and a change of key 11,899. The largest example contract of the repository is 14,896 bytes of source.
 - **8,388,608 bytes per block** is the largest value the parameter `max_block_bytes` can take, not its default, which is chosen from measurements (note, section 7). It is set so that a block and a certificate always fit in one frame (section 9.8).
-- **1,024 signatures per certificate**: a network of structure version 1 has at most 1,024 validators (chapter 2). The note measures up to 100 and projects beyond; this bound is a limit of the format, not a claim about performance.
+- **1,024 signatures per certificate** is a bound of the format of a certificate. That a network of structure version 1 has at most 1,024 validators is another rule, of the validator set, which chapter 2 states: the two go together, and neither follows from the other. The note measures up to 100 validators and projects beyond; these bounds are limits of the format, not a claim about performance.
 - **65,536 bytes of code, 4,096 bytes per text, 256 fields.** The example contracts declare 32 fields at most, and their longest name has 39 characters.
 - **16,384 bytes per claim, 64 recipients, 256 bytes of memo**: room for what exists, with a margin.
 
@@ -460,7 +468,7 @@ Where they come from:
 
 A node receives bytes from outside in two places: a frame from a peer, and the body of a request that injects a transaction. It checks, in this order:
 
-1. the length: at most 16,777,216 bytes for a frame, and 131,072 for the body of a request, which is one transaction;
+1. the length: at most 16,777,216 bytes for the canonical JSON of a frame, the four bytes that announce it not counted, and 131,072 for the body of a request, which is one transaction;
 2. the nesting, measured on the bytes before anything is decoded: at most 64;
 3. the encoding: the bytes are the canonical JSON of the value they decode to (note, section 4.3);
 4. the schema.
@@ -593,6 +601,8 @@ The identifier of the proposal is `H("kern.gov.id", ...)` of the canonical JSON 
 | `max_block_bytes` | integer, 131,072 to 8,388,608 | optional | The most bytes the transactions of a block may add up to |
 
 - At least one parameter is present.
+
+The schema checks each value against its own range. What ties two parameters together, such as an `i_min_ppm` that is not above `i_max_ppm`, is a rule of the state: chapter 2 says which combinations a network refuses, and when.
 
 Every parameter is an integer or a boolean. The names that take a fraction today (`i_max` and six others) are not parameters of structure version 1. The smallest block holds the largest transaction, and the largest one fits in a frame with its certificate.
 
@@ -781,6 +791,8 @@ The certificate is not in the block and not under its hash: it is gathered after
 
 A frame is four bytes that give a length, most significant byte first, then that many bytes: the canonical JSON of one of the seven objects below. Every frame has a member `kind`, which is the name of its table.
 
+The four bytes are a number without a sign, and they give exactly the number of bytes that follow them. The bound of a frame, `frame_bytes`, is on what follows: the four bytes are not counted. The largest frame is 16,777,216 bytes of canonical JSON after the four bytes `01 00 00 00`, and travels as 16,777,220 bytes. A node that reads four bytes that announce more reads no further.
+
 #### Frame `hello`
 
 | Field | Type | Presence | Meaning |
@@ -843,7 +855,20 @@ A proposal never travels in this frame: it travels with its block.
 
 - The levels of the blocks follow one another, each one more than the one before.
 
-The answer to a `get_blocks`. It holds as many blocks as fit in one frame, from the level `from` upward, and none when the node has none of them: the node that asked asks again from the level after the last one it received. The list has no bound of its own. Its bound is the size of the frame.
+The answer to a `get_blocks`. The list has no bound of its own. Its bound is the size of the frame.
+
+#### Answering `get_blocks`
+
+A node answers a `get_blocks` with one `blocks` frame. Four rules tie the answer to the request, which neither schema can state alone:
+
+- When the answer holds blocks, the first one is the block of level `from`.
+- It holds no block above `to`.
+- It holds every block the node has from `from` upward, in order, as far as the first of three things: a level the node does not hold, the level `to`, or a block that would take the frame beyond its bound. A node never leaves a level out to send a later one.
+- An empty list says that the node does not hold the block of level `from`. It says nothing of the levels after it.
+
+The node that asked checks the first two on what it receives, with the rule of the frame itself, that the levels follow one another. An answer that breaks one of them is refused like a frame that is not of its schema: it is not an answer to that request. The last two are what the node that answers does. A frame that holds no block is 29 bytes; each block adds its canonical encoding, and each block after the first adds one byte more, a comma. The answer is the longest run of blocks that starts at `from` and keeps that sum within 16,777,216.
+
+The node that asked asks again from the level after the last one it received, until it has what it asked for or an answer brings no block.
 
 **A block always fits.** The heaviest frame that carries one block is a `proposal` whose block holds 8,388,608 bytes of transactions and whose `proof` holds 1,024 signatures: 13,093,853 bytes in the vectors, under the 16,777,216 of a frame. A `block` frame with the same block and a certificate of the same size is lighter by one message. Only a `blocks` frame can reach the bound, and the vectors hold one of 16,777,216 bytes, to the byte.
 
@@ -873,7 +898,7 @@ The answer to a `get_blocks`. It holds as many blocks as fit in one frame, from 
 | A proposal of a new payload | `valid_round` is -1 | `valid_round` is absent | Note, 4.3 |
 | Frames | Any spelling of JSON | Canonical JSON only | Note, 4.3 |
 | `hello` | The level | The network identifier and the level | Note, 3.1 |
-| `blocks` | 512 blocks at most | As many as fit in a frame | The size of a block depends on its certificate |
+| `blocks` | 512 blocks and 8 MiB at most | As many as fit in a frame | The size of a block depends on its certificate |
 | `get_blocks` | From level 0 | From level 1 | The genesis has no certificate |
 | Nesting | 64 for a frame and 32 for a transaction, limits of the node | The same numbers, rules of the structure version | One verdict in every client |
 
@@ -899,7 +924,9 @@ What it does not hold, and cannot without new rules: `rotate_key` takes a key of
 - **accepted objects**: every kind of transaction, vote, proposal, certificate, header, block and frame, for every limit an object that reaches it, and for every range an object at each of its ends. Each one is pinned by the length and the start of the SHA3-384 of its canonical encoding, and comes with what the profile computes from it: the identifier and the witness leaf of a transaction, the hash of a header, the text a validator signs and its context, the identifier of a proposal and of an attestation. Four of them are objects of the vectors of the note, and give back its digests;
 - **refused objects**, each with the rule that refuses it: a value out of its range, a text outside its alphabet, a field of another kind, a field under its name of today, a bound passed by one, a root that does not match. Each is one to three changes away from an accepted object, so that it is refused for the reason it gives; one stands alone, the two largest blocks in one frame;
 - **mutations**: for most accepted objects, every object one change away must be refused, a member removed, a member added, a value of another JSON type, except where the schema says the member is optional;
-- **texts as a node receives them**: the canonical encoding of a frame, 64 and 65 arrays one inside the other, the same with objects, strings that hold brackets and escaped quotation marks, a frame and a request body at their longest and one byte beyond, and the spellings that are not canonical.
+- **texts as a node receives them**: the canonical encoding of a frame, 64 and 65 arrays one inside the other, the same with objects, strings that hold brackets and escaped quotation marks, a frame and a request body at their longest and one byte beyond, and the spellings that are not canonical;
+- **the four bytes of a frame**: what they announce, the largest value a node accepts and the first it refuses, and values that a reader of the least significant byte first, or of a number with a sign, would take for others. Every accepted frame comes with its four bytes;
+- **requests for blocks and their answers**: what a node answers, given the blocks it holds and their sizes, among them an answer that fills a frame to the byte and the two highest levels there are; and answers as the node that asked sees them, accepted or refused.
 
 Keys and signatures are written by rule in the file and are not real ones: no signature in these vectors verifies, since a schema verifies none. The signatures of the profile have vectors of their own (note, section 17).
 
