@@ -117,7 +117,7 @@ def test_a_refused_object_is_a_change_or_two_away_from_an_accepted_one(read):
 
 
 def test_texts_are_received_as_the_file_says(read):
-    assert len(read["texts"]) == 23
+    assert len(read["texts"]) == 24
     for record, text in read["texts"]:
         assert sv.pin(text) == {"bytes": record["bytes"], "pin": record["pin"]}, record["why"]
         try:
@@ -128,6 +128,175 @@ def test_texts_are_received_as_the_file_says(read):
         assert answer == record.get("rule", "accepted"), record["why"]
     hello = FILE["accepted_texts"][0]
     assert hello["schema"] == "frame" and bytes.fromhex(hello["prefix"]) == hello["bytes"].to_bytes(4, "big")
+
+
+# ---------------------------------------------------------------------------
+# The four bytes of a frame
+# ---------------------------------------------------------------------------
+
+def test_the_four_bytes_of_a_frame_give_the_length_of_what_follows_and_are_not_counted(read):
+    limit = sch.LIMITS["frame_bytes"]
+    # Every accepted frame, object or text, comes with its four bytes: the length of its canonical JSON.
+    frames = [record for record in FILE["accepted"] + FILE["accepted_texts"] if record["schema"] == "frame"]
+    assert len(frames) == 17 and all(len(record["prefix"]) == 8 for record in frames)
+    for record in frames:
+        assert sch.announced(bytes.fromhex(record["prefix"])) == record["bytes"], record
+        assert sch.frame_prefix(record["bytes"]).hex() == record["prefix"]
+    # No other accepted record has them: they are not part of a transaction, a block or a certificate.
+    others = [record for record in FILE["accepted"] + FILE["accepted_texts"] if record["schema"] != "frame"]
+    assert others and not any("prefix" in record for record in others)
+    # The largest frame fills the bound without them, and travels four bytes longer.
+    largest = by_name("frame_blocks_largest")
+    assert (largest["bytes"], largest["prefix"]) == (limit, "01000000")
+    assert len(ref.canonical_json(read["objects"]["frame_blocks_largest"])) == limit
+    assert sch.verdict("frame", read["objects"]["frame_blocks_largest"], NETWORK) == "accepted"
+
+    assert len(FILE["prefixes"]) == 8
+    for record in FILE["prefixes"]:
+        four = bytes.fromhex(record["prefix"])
+        assert len(four) == 4 and set(record) in ({"prefix", "announces", "why"}, {"prefix", "rule", "why"})
+        if "rule" in record:
+            with pytest.raises(sch.Refused) as refusal:
+                sch.announced(four)
+            assert refusal.value.rule == record["rule"] == "too_long"
+        else:
+            assert sch.announced(four) == record["announces"] <= limit
+            assert sch.frame_prefix(record["announces"]) == four
+    by_prefix = {record["prefix"]: record for record in FILE["prefixes"]}
+    # The bound, to the unit; the order of the bytes; and a number without a sign.
+    assert by_prefix["01000000"]["announces"] == limit and by_prefix["01000001"]["rule"] == "too_long"
+    assert by_prefix["00000100"]["announces"] == 256 != int.from_bytes(bytes.fromhex("00000100"), "little")
+    assert int.from_bytes(bytes.fromhex("80000000"), "big", signed=True) < 0 and "rule" in by_prefix["80000000"]
+    assert by_prefix["00000000"]["announces"] == 0 and _text("an empty frame: four bytes that announce nothing, "
+                                                           "and nothing")["rule"] == "not_canonical"
+    # What the document says of them.
+    frames_text = PARTS["9.8 Frames"]
+    for sentence in ("The four bytes are a number without a sign, and they give exactly the number of bytes that follow "
+                     "them.", "the four bytes are not counted", "after the four bytes `01 00 00 00`",
+                     f"travels as {limit + 4:,} bytes", "A node that reads four bytes that announce more reads no further."):
+        assert sentence in frames_text, sentence
+    assert "the four bytes that announce it not counted" in PARTS["9.4 Receiving a text"]
+    assert "without the four bytes that announce its length" in PARTS["Limits"]
+
+
+# ---------------------------------------------------------------------------
+# A request for blocks and its answer
+# ---------------------------------------------------------------------------
+
+def _frame_bytes(sizes: list[int]) -> int:
+    """The canonical encoding of a `blocks` frame whose blocks have these sizes, counted without building it."""
+    return sch.BLOCKS_FRAME_BYTES + sum(sizes) + max(0, len(sizes) - 1)
+
+
+def test_what_a_node_answers_to_a_request_for_blocks(read):
+    limit = sch.LIMITS["frame_bytes"]
+    assert sch.BLOCKS_FRAME_BYTES == 29 == by_name("frame_blocks_none")["bytes"]
+    # The count of the bytes is the count of a real frame: 29 bytes, the blocks, and a comma between two blocks.
+    frame = read["objects"]["frame_blocks"]
+    sizes = [len(ref.canonical_json(pair)) for pair in frame["blocks"]]
+    assert len(sizes) >= 2 and _frame_bytes(sizes) == by_name("frame_blocks")["bytes"]
+    largest = [len(ref.canonical_json(pair)) for pair in read["objects"]["frame_blocks_largest"]["blocks"]]
+    assert len(largest) == 3 and _frame_bytes(largest) == limit
+
+    assert len(FILE["answers"]) == 11
+    for record in FILE["answers"]:
+        held = {level: size for level, size in record["held"]}
+        first, last, levels = record["from"], record["to"], record["levels"]
+        assert len(held) == len(record["held"]) and 1 <= first <= last <= sch.INT_MAX, record["why"]
+        assert sch.answer(held, first, last) == levels, record["why"]
+        # The same answer, found another way: of all the runs that start at `from`, the longest one that the node
+        # holds whole, that stops at `to`, and that fits.
+        runs = [list(range(first, first + n)) for n in range(0, min(last - first + 1, len(held)) + 1)]
+        fitting = [run for run in runs if all(level in held for level in run)
+                   and _frame_bytes([held[level] for level in run]) <= limit]
+        assert max(fitting, key=len) == levels, record["why"]
+        # And it is an answer the node that asked accepts.
+        assert sch.answer_verdict(first, last, levels) == "accepted", record["why"]
+    whys = {record["why"]: record for record in FILE["answers"]}
+    full = whys["three blocks that fill a frame of 16,777,216 bytes, to the byte, and a fourth that is held"]
+    assert _frame_bytes([size for level, size in full["held"] if level in full["levels"]]) == limit
+    over = whys["the same with one byte more in the third block: two blocks"]
+    assert _frame_bytes([size for _, size in over["held"][:3]]) == limit + 1 and over["levels"] == [10, 11]
+    hole = whys["a level is missing: the answer stops before it, and the blocks after it are not sent"]
+    assert {level for level, _ in hole["held"]} > set(hole["levels"]) and 4 not in dict(map(tuple, hole["held"]))
+    assert whys["the first level asked for is missing: an empty answer, although the node holds the next ones"][
+        "levels"] == []
+    assert whys["the two highest levels there are"]["levels"] == [sch.INT_MAX - 1, sch.INT_MAX]
+    # No vector asks a node to send a block heavier than a frame: the limits of a block and of a certificate
+    # rule it out (test_a_block_and_its_certificate_always_fit_in_a_frame).
+    assert all(size <= by_name("frame_proposal_largest")["bytes"] for record in FILE["answers"]
+               for _, size in record["held"])
+
+
+def test_what_the_node_that_asked_accepts_as_an_answer(read):
+    assert len(FILE["replies"]) == 13
+    verdicts = []
+    for record in FILE["replies"]:
+        first, last, levels = record["from"], record["to"], record["levels"]
+        assert sch.answer_verdict(first, last, levels) == record.get("rule", "accepted"), record["why"]
+        verdicts.append(record.get("rule", "accepted"))
+    assert verdicts.count("accepted") == 5 and set(verdicts) == {"accepted", "inconsistent"}
+    # Each of the two rules, and the rule of the frame, refuses a vector that the two others let through.
+    first_rule, second_rule = (holds for _, holds in sch.ANSWER_RULES)
+    follow = lambda levels: all(b == a + 1 for a, b in zip(levels, levels[1:]))                     # noqa: E731
+    alone = {"first": 0, "second": 0, "frame": 0}
+    for record in FILE["replies"]:
+        args = (record["from"], record["to"], record["levels"])
+        broken = (not first_rule(*args), not second_rule(*args), not follow(record["levels"]))
+        if sum(broken) == 1:
+            alone[("first", "second", "frame")[broken.index(True)]] += 1
+    assert all(alone.values()), alone
+
+    # On frames, as two nodes exchange them.
+    blocks = read["objects"]["frame_blocks"]
+    levels = [pair["block"]["header"]["level"] for pair in blocks["blocks"]]
+    assert len(levels) >= 2 and levels[0] >= 2
+
+    def ask(first: int, last: int) -> dict:
+        return {"kind": "get_blocks", "from": first, "to": last}
+
+    for first, last in ((levels[0], levels[-1]), (levels[0], levels[-1] + 5), (levels[0], sch.INT_MAX)):
+        sch.check_answer(ask(first, last), blocks, NETWORK)
+    about_from, about_to = (sentence for sentence, _ in sch.ANSWER_RULES)
+    assert "`from`" in about_from and "`to`" in about_to
+    for first, last, sentence in ((levels[0] - 1, levels[-1], about_from), (levels[0] + 1, levels[-1], about_from),
+                                  (levels[0], levels[-1] - 1, about_to), (levels[0], levels[0], about_to)):
+        with pytest.raises(sch.Refused) as refusal:
+            sch.check_answer(ask(first, last), blocks, NETWORK)
+        assert refusal.value.rule == "inconsistent" and sentence in str(refusal.value), (first, last)
+    # Each of the two frames is first a frame of its schema, whatever the levels say.
+    fits = ask(levels[0], levels[-1])
+    for request, reply in (({**fits, "more": 0}, blocks), (fits, {**blocks, "more": 0})):
+        with pytest.raises(sch.Refused) as refusal:
+            sch.check_answer(request, reply, NETWORK)
+        assert refusal.value.rule == "unknown_field"
+    # An empty answer answers any request, and each frame is first a frame of its schema.
+    sch.check_answer(ask(1, 9), read["objects"]["frame_blocks_none"], NETWORK)
+    sch.check_answer(read["objects"]["frame_get_blocks"], read["objects"]["frame_blocks_none"], NETWORK)
+    for request, reply in ((ask(9, 1), blocks), (ask(0, 3), blocks), (blocks, blocks),
+                           (ask(levels[0], levels[-1]), ask(levels[0], levels[-1])),
+                           (ask(levels[0], levels[-1]), {**blocks, "blocks": blocks["blocks"][::-1]})):
+        with pytest.raises(sch.Refused):
+            sch.check_answer(request, reply, NETWORK)
+
+
+def test_the_document_ties_an_answer_to_its_request():
+    part = PARTS["Answering `get_blocks`"]
+    assert [line[2:] for line in part.splitlines() if line.startswith("- ")] == sch.rules()["Answering `get_blocks`"]
+    assert len(sch.ANSWER_RULES) == len(sch.ANSWERING_RULES) == 2
+    for sentence in ("A frame that holds no block is 29 bytes", "each block after the first adds one byte more, a comma",
+                     "is refused like a frame that is not of its schema",
+                     "asks again from the level after the last one it received"):
+        assert sentence in part, sentence
+    # The frame keeps its one rule, and its text no longer states the answer by halves.
+    assert "from the level `from` upward, and none when" not in SECTION
+    # What a schema does not decide, and where it is decided.
+    schema = PARTS["9.1 What a schema is"]
+    for sentence in ("makes the block that holds it invalid too (note, section 6.3)", "it pays no fee",
+                     "it stays there and pays its fee", "is a rule of the state: chapter 2 states it"):
+        assert sentence in schema, sentence
+    assert "neither follows from the other" in PARTS["Limits"]
+    assert "is a rule of the state: chapter 2 says which combinations a network refuses" in PARTS["Parameters"]
 
 
 def test_one_change_away_from_an_accepted_object_is_refused(read):
@@ -538,7 +707,7 @@ def test_every_table_of_the_document_is_the_table_of_the_reference():
 
 def test_every_rule_of_the_reference_is_a_sentence_of_the_document():
     rules = sch.rules()
-    assert sum(len(sentences) for sentences in rules.values()) == 17
+    assert sum(len(sentences) for sentences in rules.values()) == 21
     for name, sentences in rules.items():
         listed = [line[2:] for line in PARTS[name].splitlines() if line.startswith("- ")]
         assert listed[:len(sentences)] == sentences, name
