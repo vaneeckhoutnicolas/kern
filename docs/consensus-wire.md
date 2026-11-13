@@ -176,13 +176,23 @@ cadence `block_time`):
 
 Every validator, on a valid proposal or consensus message:
 
-1. Deduplicate by `(kind, level, round, validator, block_hash)`. For a
-   valid proposal: keep its block on disk before the engine may sign,
-   then count the endorsements its `commits` carry as ENDORSE votes of the
-   payload round (the self-commit of a proposer holding the quorum alone).
+1. A vote received from a peer is taken only if the engine can use it
+   (`BftEngine.wants`): a PREENDORSE or an ENDORSE of a validator of the
+   set, for a level and a round inside the window, that is the first
+   vote of that validator for that kind, level and round, or the first
+   one that conflicts with it. Only then is its signature checked. Any
+   other vote is dropped unchecked: a copy of a vote already held, a
+   vote signed by a key that is not a validator, a vote for a level or
+   a round out of reach. For a valid proposal: keep its block on disk
+   before the engine may sign, then count the endorsements its
+   `commits` carry as ENDORSE votes of the payload round (the
+   self-commit of a proposer holding the quorum alone).
 2. Feed `BftEngine.on_message`; broadcast and self-ingest any outbound
    messages it returns.
-3. Re-gossip newly seen wire messages for mesh propagation.
+3. Relay the vote taken in step 1 to every peer, once, for mesh
+   propagation. A vote the engine did not want is never relayed, so a
+   message that no validator signed goes no further than the node that
+   received it.
 4. Try to finalize: if `find_endorse_qc(level, hash)` returns an
    endorsement certificate at any round for a pending block, set
    `endorsements` from it and `cert_round` to its round, then
@@ -264,9 +274,10 @@ valid certificate exists, every new vote or the late arrival of the
 proposal re-evaluates the round. A vote for another block can therefore
 neither poison a certificate nor freeze a round.
 
-**Equivocation is visible and punishable.** The node's message
-deduplication key includes the block hash, so a second, conflicting vote
-reaches the engine and is re-gossiped. The engine turns it into
+**Equivocation is visible and punishable.** A second, conflicting vote
+of a validator reaches the engine and is relayed, once: every node then
+holds the two votes. Further votes of that validator for the same kind,
+level and round add nothing and are dropped. The engine turns the pair into
 `SlashingEvidence` once per offence; the validator's node files a
 `SLASH_CONSENSUS_EQUIVOCATION` transaction carrying both signed votes.
 The chain accepts it when both votes decode strictly, are signed with the

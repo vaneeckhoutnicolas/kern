@@ -131,19 +131,31 @@ def derive_attestation_id(
 # Equivocation detection
 # ---------------------------------------------------------------------------
 
+def _claim_json(claim: Any) -> str:
+    """The JSON of a claim, written as `derive_attestation_id` writes it."""
+    return json.dumps(claim, sort_keys=True, separators=(",", ":"))
+
+
 def claims_contradict(claim_a: Any, claim_b: Any) -> bool:
     """Return True iff two claims contradict each other.
 
-    Two claims contradict iff they are deep-unequal. This is the
+    Two claims contradict iff their JSON differs: the JSON the identifier
+    of an attestation is computed from, with sorted keys. This is the
     conservative default — any difference at all is treated as a
-    contradiction.
+    contradiction, and the order of the keys of an object is not one.
+
+    The equality of Python is not that test: for it `True == 1`,
+    `False == 0` and `1 == 1.0`, while `true`, `1` and `1.0` are three
+    different JSON values, which give three different identifiers. Two
+    claims are equal here exactly when, everything else being the same,
+    their attestations would have the same identifier.
 
     Schemas may override this in their own logic (e.g., for prices,
     "10001" and "10000" might be both within an acceptable error
     band and not considered contradictory). The protocol-level check
     is strict equality; schema-specific tolerance is a layer above.
     """
-    return claim_a != claim_b
+    return _claim_json(claim_a) != _claim_json(claim_b)
 
 
 def find_equivocation_pair(

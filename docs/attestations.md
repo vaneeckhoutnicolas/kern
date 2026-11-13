@@ -39,6 +39,8 @@ An attestation is **(issuer, schema_id, subject, claim, bond)**:
 
 **Equivocation** means: same `(issuer, schema_id, subject)` with two attestations whose claims differ, whose validity windows overlap (neither was revoked before the other was issued).
 
+Two claims differ when their JSON differs: the JSON the attestation identifier is computed from, in which the keys of an object are sorted. `{"passed": true}` and `{"passed": 1}` differ, and so do `1` and `1.0`; the order in which the keys were written does not count. Two attestations of one issuer about one subject either have equal claims, or are evidence against that issuer.
+
 If equivocation is proven via the `SLASH_ATTESTATION_EQUIVOCATION` transaction, the issuer loses 30% of the higher bond, the prover earns 10% of the slashed amount, the rest is burned.
 
 ---
@@ -289,7 +291,7 @@ contract PriceConsumer {
 ### v1.1-rc scope (this release)
 
 - Single-issuer registry, per-attestation bond
-- Strict equality for contradiction detection
+- Strict equality for contradiction detection: two claims are equal only if their JSON is the same
 - No on-chain schema validation (claims are opaque dicts to the protocol)
 
 ### Planned for v1.2 (schema marketplace)
