@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 
+from kern.crypto import KernKeypair
 from kern.governance import (
     PROTOCOL_GOVERNANCE_SKALD,
     TREASURY_GOVERNANCE_SKALD,
@@ -21,6 +22,11 @@ from kern.governance import (
     validate_protocol_payload,
     validate_treasury_payload,
 )
+
+
+# The recipients of the treasury proposals below: a recipient is an address.
+GRANTEE_A = KernKeypair.from_seed(bytes([0xA1]) * 32).address
+GRANTEE_B = KernKeypair.from_seed(bytes([0xB1]) * 32).address
 
 
 def _validators(stakes):
@@ -59,14 +65,14 @@ def test_validate_protocol_payload_rejects_unknown_swap_value():
 
 def test_validate_treasury_payload_basic():
     err = validate_treasury_payload({"recipients": [
-        {"address": "kn1a", "amount": 1_000_000},
+        {"address": GRANTEE_A, "amount": 1_000_000},
     ]})
     assert err is None
 
 
 def test_validate_treasury_payload_rejects_negative():
     err = validate_treasury_payload({"recipients": [
-        {"address": "kn1a", "amount": -1},
+        {"address": GRANTEE_A, "amount": -1},
     ]})
     assert err is not None
 
@@ -267,7 +273,7 @@ def test_treasury_happy_path():
 
     ok, _, pid = treasury.submit(
         submitter="kn1submitter",
-        payload={"recipients": [{"address": "kn1grantee", "amount": 5_000_000}]},
+        payload={"recipients": [{"address": GRANTEE_A, "amount": 5_000_000}]},
         current_level=0,
     )
     assert ok
@@ -291,7 +297,7 @@ def test_treasury_oversubscribed_at_submit():
     treasury = TreasuryGovernance(vs, treasury_balance=1_000_000)
     ok, reason, _ = treasury.submit(
         "kn1s",
-        {"recipients": [{"address": "kn1a", "amount": 5_000_000}]},
+        {"recipients": [{"address": GRANTEE_A, "amount": 5_000_000}]},
         0,
     )
     assert not ok
@@ -304,7 +310,7 @@ def test_treasury_anyone_can_submit():
     treasury = TreasuryGovernance(vs, treasury_balance=10_000_000)
     ok, _, _ = treasury.submit(
         "kn1random_person_not_validator",
-        {"recipients": [{"address": "kn1a", "amount": 100}]},
+        {"recipients": [{"address": GRANTEE_A, "amount": 100}]},
         0,
     )
     assert ok
@@ -314,7 +320,7 @@ def test_treasury_only_validators_vote():
     vs = _validators([1000])
     treasury = TreasuryGovernance(vs, treasury_balance=10_000_000)
     _, _, pid = treasury.submit("kn1s",
-        {"recipients": [{"address": "kn1a", "amount": 100}]}, 0)
+        {"recipients": [{"address": GRANTEE_A, "amount": 100}]}, 0)
     prop = treasury.proposals[pid]
     treasury.advance_phases(prop.proposal_blocks)
     ok, _ = treasury.vote(pid, "kn1not_validator", Vote.YES, prop.proposal_blocks + 1)
@@ -326,7 +332,7 @@ def test_treasury_simple_majority():
     vs = _validators([100, 100, 100])  # 300 total stake
     treasury = TreasuryGovernance(vs, treasury_balance=10_000_000)
     _, _, pid = treasury.submit("kn1s",
-        {"recipients": [{"address": "kn1a", "amount": 500}]}, 0)
+        {"recipients": [{"address": GRANTEE_A, "amount": 500}]}, 0)
     prop = treasury.proposals[pid]
     treasury.advance_phases(prop.proposal_blocks)
 
@@ -345,9 +351,9 @@ def test_treasury_drain_protection():
     vs = _validators([1000])
     treasury = TreasuryGovernance(vs, treasury_balance=1_500_000)
     _, _, p1 = treasury.submit("kn1s",
-        {"recipients": [{"address": "kn1a", "amount": 1_000_000}]}, 0)
+        {"recipients": [{"address": GRANTEE_A, "amount": 1_000_000}]}, 0)
     _, _, p2 = treasury.submit("kn1s",
-        {"recipients": [{"address": "kn1b", "amount": 1_000_000}]}, 0)
+        {"recipients": [{"address": GRANTEE_B, "amount": 1_000_000}]}, 0)
 
     pr1 = treasury.proposals[p1]
     pr2 = treasury.proposals[p2]

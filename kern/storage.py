@@ -10,7 +10,8 @@ The schema is deliberately simple:
 
     blocks(level INTEGER PRIMARY KEY, hash TEXT UNIQUE, json TEXT)
     state(key TEXT PRIMARY KEY, json TEXT)
-    mempool(hash TEXT PRIMARY KEY, json TEXT, received_at INTEGER, sender TEXT)
+    mempool(hash TEXT PRIMARY KEY, json TEXT, received_at INTEGER, sender TEXT,
+            nonce INTEGER, fee INTEGER, size INTEGER)
 
 State snapshots are stored as a single JSON blob keyed by "head",
 alongside the level it was taken at ("head_level"). Snapshots are
@@ -29,6 +30,10 @@ cap and a per-sender cap so that a single sender cannot exhaust node
 memory by flooding cheap, never-includable transactions. Both the RPC
 injection path and the P2P gossip path go through ``add_to_mempool``, so
 the caps protect every intake route. See ``docs/mempool-rpc-hardening.md``.
+
+Each row of the mempool also carries the nonce, the fee and the size of its
+transaction. A proposer reads these rows, oldest first, to decide what its
+block takes (``waiting``), and decodes only the transactions it takes.
 """
 
 from __future__ import annotations
@@ -38,10 +43,12 @@ import os
 import sqlite3
 import time
 from contextlib import contextmanager
+from functools import partial
 from typing import Iterator, List, Optional
 
+from . import nesting
 from .block import Block
-from .transaction import Transaction
+from .transaction import Transaction, Waiting
 
 
 _SCHEMA = """
@@ -58,7 +65,10 @@ CREATE TABLE IF NOT EXISTS mempool (
     hash  TEXT PRIMARY KEY,
     json  TEXT NOT NULL,
     received_at INTEGER NOT NULL,
-    sender TEXT NOT NULL DEFAULT ''
+    sender TEXT NOT NULL DEFAULT '',
+    nonce INTEGER NOT NULL DEFAULT 0,
+    fee   INTEGER NOT NULL DEFAULT 0,
+    size  INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -69,6 +79,25 @@ CREATE TABLE IF NOT EXISTS mempool (
 # constructor.
 MAX_MEMPOOL_SIZE = 50_000
 MAX_MEMPOOL_PER_SENDER = 256
+# What a node answers when one of the two caps is reached: the only refusal
+# that says nothing against the transaction, which may come again later.
+MEMPOOL_FULL = "mempool full or per-sender limit reached"
+
+# The columns added to the mempool since its first form, in the order they
+# came. SQLite has no "ADD COLUMN IF NOT EXISTS": each is added to a database
+# that lacks it. A size of zero marks a row written before the column
+# existed; no transaction is zero bytes.
+_MEMPOOL_COLUMNS = (
+    ("sender", "TEXT NOT NULL DEFAULT ''"),
+    ("nonce", "INTEGER NOT NULL DEFAULT 0"),
+    ("fee", "INTEGER NOT NULL DEFAULT 0"),
+    ("size", "INTEGER NOT NULL DEFAULT 0"),
+)
+_MEMPOOL_INDEXES = """
+CREATE INDEX IF NOT EXISTS mempool_arrival ON mempool(received_at);
+CREATE INDEX IF NOT EXISTS mempool_sender ON mempool(sender);
+"""
+_SQLITE_INTEGER_MAX = 2**63 - 1
 
 
 class Storage:
@@ -88,15 +117,36 @@ class Storage:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(_SCHEMA)
-        # Migration: older databases created before mempool bounds lack the
-        # `sender` column. Add it idempotently; SQLite has no
-        # "ADD COLUMN IF NOT EXISTS", so we swallow the duplicate-column error.
-        try:
-            self.conn.execute(
-                "ALTER TABLE mempool ADD COLUMN sender TEXT NOT NULL DEFAULT ''"
-            )
-        except sqlite3.OperationalError:
-            pass  # column already present
+        self._migrate_mempool()
+
+    def _migrate_mempool(self) -> None:
+        """Bring the mempool of an older database to the present columns,
+        and describe the rows that were written without them."""
+        present = {row[1] for row in self.conn.execute("PRAGMA table_info(mempool)")}
+        for name, definition in _MEMPOOL_COLUMNS:
+            if name not in present:
+                self.conn.execute(f"ALTER TABLE mempool ADD COLUMN {name} {definition}")
+        self.conn.executescript(_MEMPOOL_INDEXES)
+        for h, blob in self.conn.execute("SELECT hash, json FROM mempool WHERE size = 0").fetchall():
+            try:
+                tx = self._read_row(blob)
+                if max(tx.nonce, tx.fee) > _SQLITE_INTEGER_MAX:
+                    raise ValueError("a nonce or a fee no row can hold")
+            except ValueError:
+                # Not JSON, not a transaction, or nested without end: nothing a block could take.
+                self.conn.execute("DELETE FROM mempool WHERE hash = ?", (h,))
+                continue
+            self.conn.execute("UPDATE mempool SET sender = ?, nonce = ?, fee = ?, size = ? WHERE hash = ?",
+                              (tx.sender, tx.nonce, tx.fee, tx.encoded_size(), h))
+
+    @staticmethod
+    def _read_row(text: str) -> Transaction:
+        """The transaction a row holds. Raises ValueError when the text is
+        not JSON, is not a transaction, or nests deeper than any frame: the
+        depth is measured before anything is decoded (kern.nesting), as for
+        what comes from a peer, since decoding a text nested without end
+        can take the process down."""
+        return Transaction.from_dict(nesting.decode(text.encode("utf-8")))
 
     def close(self) -> None:
         self.conn.close()
@@ -183,7 +233,12 @@ class Storage:
         cap was reached. Re-inserting a transaction already in the mempool
         (same hash) never counts against the caps, so honest resubmission is
         always allowed.
+
+        A nonce or a fee beyond 2^63 - 1 is refused: no account reaches that
+        nonce nor holds that fee, and no row can hold the number.
         """
+        if max(tx.nonce, tx.fee) > _SQLITE_INTEGER_MAX:
+            return False
         h = tx.hash_hex()
         already_present = (
             self.conn.execute(
@@ -197,9 +252,9 @@ class Storage:
             if self._mempool_count_for_sender(tx.sender) >= self.max_mempool_per_sender:
                 return False
         self.conn.execute(
-            "INSERT OR REPLACE INTO mempool(hash, json, received_at, sender) "
-            "VALUES (?, ?, ?, ?)",
-            (h, json.dumps(tx.to_dict()), int(time.time()), tx.sender),
+            "INSERT OR REPLACE INTO mempool(hash, json, received_at, sender, nonce, fee, size) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (h, json.dumps(tx.to_dict()), int(time.time()), tx.sender, tx.nonce, tx.fee, tx.encoded_size()),
         )
         return True
 
@@ -209,18 +264,70 @@ class Storage:
         ).fetchone()
         return row[0] if row else 0
 
+    def waiting_fees(self, sender: str) -> int:
+        """What the transactions of `sender` that wait here will pay in
+        fees, in all."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(fee), 0) FROM mempool WHERE sender = ?", (sender,)
+        ).fetchone()
+        return int(row[0])
+
+    def next_free_nonce(self, sender: str, account_nonce: int) -> int:
+        """The first nonce, from that of the account, that no transaction
+        of `sender` waiting here has taken: the one its next transaction
+        can use without leaving a gap behind it."""
+        taken = {row[0] for row in self.conn.execute(
+            "SELECT nonce FROM mempool WHERE sender = ? AND nonce >= ?", (sender, account_nonce))}
+        nonce = account_nonce
+        while nonce in taken:
+            nonce += 1
+        return nonce
+
     def drain_mempool(self, max_n: int = 1000) -> List[Transaction]:
+        """The `max_n` oldest transactions, decoded. Arrival is recorded to
+        the second; within a second, the order is that of insertion."""
         rows = self.conn.execute(
-            "SELECT json FROM mempool ORDER BY received_at LIMIT ?", (max_n,)
+            "SELECT json FROM mempool ORDER BY received_at, rowid LIMIT ?", (max_n,)
         ).fetchall()
         txs = [Transaction.from_dict(json.loads(r[0])) for r in rows]
         return txs
 
+    def waiting(self, page: int = 2_000) -> Iterator[Waiting]:
+        """Everything that waits, oldest first, as rows: sender, nonce, fee
+        and size, without the text of the transaction, which `transaction()`
+        reads when a proposer takes it. Read a page at a time, so that a
+        proposer whose block is full stops reading."""
+        last = (-1, -1)
+        while True:
+            rows = self.conn.execute(
+                "SELECT received_at, rowid, hash, sender, nonce, fee, size FROM mempool "
+                "WHERE (received_at, rowid) > (?, ?) ORDER BY received_at, rowid LIMIT ?",
+                (last[0], last[1], page),
+            ).fetchall()
+            for _at, _row, h, sender, nonce, fee, size in rows:
+                yield Waiting(h, sender, nonce, fee, size, partial(self.get_from_mempool, h))
+            if len(rows) < page:
+                return
+            last = (rows[-1][0], rows[-1][1])
+
+    def get_from_mempool(self, tx_hash: str) -> Optional[Transaction]:
+        """The transaction that waits under this identifier, or None when
+        there is none or when its text can no longer be read."""
+        row = self.conn.execute("SELECT json FROM mempool WHERE hash = ?", (tx_hash,)).fetchone()
+        if row is None:
+            return None
+        try:
+            return self._read_row(row[0])
+        except ValueError:
+            return None
+
     def remove_from_mempool(self, hashes: List[str]) -> None:
-        if not hashes:
-            return
-        qmarks = ",".join("?" for _ in hashes)
-        self.conn.execute(f"DELETE FROM mempool WHERE hash IN ({qmarks})", hashes)
+        # A statement takes a limited number of values: a block of thousands
+        # of transactions is removed a few hundred at a time.
+        for start in range(0, len(hashes), 500):
+            some = hashes[start:start + 500]
+            qmarks = ",".join("?" for _ in some)
+            self.conn.execute(f"DELETE FROM mempool WHERE hash IN ({qmarks})", some)
 
     def mempool_size(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM mempool").fetchone()

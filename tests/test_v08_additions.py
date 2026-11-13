@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 
+from kern.crypto import KernKeypair
 from kern.governance import (
     ProtocolGovernance,
     ProtocolPhase,
@@ -19,6 +20,10 @@ from kern.governance import (
     _isqrt,
     vote_weight,
 )
+
+
+# The recipient of the treasury proposals below: a recipient is an address.
+GRANTEE = KernKeypair.from_seed(bytes([0xA1]) * 32).address
 
 
 def _validators(stakes):
@@ -94,7 +99,7 @@ def test_treasury_quadratic_changes_outcome():
     )
 
     ok, _, pid = treasury.submit("kn1submitter",
-        {"recipients": [{"address": "kn1grant" + "g"*29, "amount": 100_000}]}, 0)
+        {"recipients": [{"address": GRANTEE, "amount": 100_000}]}, 0)
     assert ok
     prop = treasury.proposals[pid]
     treasury.advance_phases(prop.proposal_blocks)
@@ -188,7 +193,7 @@ def test_delegated_stake_follows_validator_vote():
     t.validator_set = vs
 
     ok, _, pid = t.submit("kn1s",
-        {"recipients": [{"address": "kn1g" + "x"*32, "amount": 100}]}, 0)
+        {"recipients": [{"address": GRANTEE, "amount": 100}]}, 0)
     assert ok
     prop = t.proposals[pid]
     t.advance_phases(prop.proposal_blocks)
@@ -213,7 +218,7 @@ def test_delegator_can_override_validators_vote():
     t.validator_set = vs
 
     ok, _, pid = t.submit("kn1s",
-        {"recipients": [{"address": "kn1g" + "x"*32, "amount": 100}]}, 0)
+        {"recipients": [{"address": GRANTEE, "amount": 100}]}, 0)
     prop = t.proposals[pid]
     t.advance_phases(prop.proposal_blocks)
     # Validator votes YES with their 100 stake; delegator overrides with NO.

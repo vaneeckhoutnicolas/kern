@@ -27,7 +27,7 @@ Wrote keyfile: keys/baker1.json
 
 The seed in this file is the private signing material. Keep it secret; anyone with it controls the account.
 
-### 2. (Optional) Generate user keys and build a custom genesis
+### 2. Generate user keys and build a genesis
 
 ```bash
 python scripts/generate_keys.py --out keys/alice.json
@@ -42,7 +42,9 @@ python scripts/build_genesis.py \
 
 Amounts are in **mukrn** (1 KRN = 1 000 000 mukrn). The validator's stake (`1000000000` mukrn = 1 000 KRN) is also added to its starting balance.
 
-A pre-built `genesis.json` is included in the repository for quick testing.
+The genesis file carries a `timestamp`, in seconds, which `build_genesis.py` writes: it is the time of the genesis block, hence part of its hash. A node reads it from the file and from nowhere else, and `init` refuses a genesis without it (`error: invalid genesis`). Every node of a network starts from the same file.
+
+The `genesis.json` at the root of the repository describes the planned distribution of the mainnet. It is not a file a node starts from: build one as above.
 
 ### 3. Initialize the node data directory
 

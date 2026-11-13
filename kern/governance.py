@@ -68,6 +68,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+from .crypto import address_is_valid
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -183,54 +185,107 @@ class Vote(str, Enum):
 
 KNOWN_PROTOCOL_PAYLOAD_KEYS = {"params", "swap", "to"}
 
-# Allowed parameter names for the "params" payload.
-ALLOWED_PARAMS = {
-    # Canonical integer (ppm) issuance parameters.
-    "i_min_ppm", "i_max_ppm", "target_staking_ratio_ppm", "target_block_time_ms",
-    "treasury_share_ppm", "proposer_bonus_ppm",
-    # Legacy float names, still accepted and converted at the parsing
-    # boundary by IssuanceParams.from_dict (pre-integer-migration chains).
-    "i_min", "i_max", "target_staking_ratio", "target_block_time_seconds",
-    "treasury_share", "proposer_bonus",
-    "block_time_seconds",
+# What each parameter may be worth. A proposal used to be checked for the
+# names of its parameters and never for their values: a block time of zero,
+# or a rate given as a text, was voted and activated like any other, and
+# from then on no block could be applied. Every name now has a type and a
+# range, checked when the proposal is submitted and again when it would be
+# activated.
+#
+# The integer names and the switch are the parameters of structure version 1
+# (docs/api-stability.md, section 9), with the ranges written there. A
+# boolean is not an integer.
+INTEGER_PARAM_RANGES: Dict[str, Tuple[int, int]] = {
+    # Issuance, in parts per million.
+    "i_min_ppm": (0, 1_000_000),
+    "i_max_ppm": (0, 1_000_000),
+    "target_staking_ratio_ppm": (0, 1_000_000),
+    "treasury_share_ppm": (0, 1_000_000),
+    "proposer_bonus_ppm": (0, 1_000_000),
+    # From a millisecond to an hour: the issuance per block divides by the
+    # number of blocks in a year, which must not be zero.
+    "target_block_time_ms": (1, 3_600_000),
     # Optional L1 fee floor + block size cap (see kern.chain). Off unless
     # `fee_floor_enabled` is set. Changing these is a consensus rule change,
     # which is exactly why they live behind the governance whitelist.
-    "fee_floor_enabled", "fee_floor_base", "fee_floor_per_byte", "max_block_bytes",
+    "fee_floor_base": (0, 10**12),
+    "fee_floor_per_byte": (0, 10**9),
+    # The smallest block holds the largest transaction, and the largest one
+    # fits in a frame with its certificate.
+    "max_block_bytes": (131_072, 8_388_608),
 }
+BOOLEAN_PARAMS = frozenset({"fee_floor_enabled"})
+
+# Legacy names, still accepted and converted at the parsing boundary by
+# IssuanceParams.from_dict (pre-integer-migration chains): a rate as a
+# fraction, a time in seconds. A time shorter than a millisecond would be
+# converted to zero.
+FRACTION_PARAMS = frozenset({"i_min", "i_max", "target_staking_ratio", "treasury_share", "proposer_bonus"})
+FRACTION_RANGE = (0, 1)
+SECONDS_PARAMS = frozenset({"target_block_time_seconds", "block_time_seconds"})
+SECONDS_RANGE = (0.001, 3_600)
+
+# Allowed parameter names for the "params" payload: those that have a rule.
+ALLOWED_PARAMS = set(INTEGER_PARAM_RANGES) | BOOLEAN_PARAMS | FRACTION_PARAMS | SECONDS_PARAMS
 
 # Allowed swap targets.
 ALLOWED_SWAPS = {"state_root_function": {"json", "trie"}}
 
 
+def _param_error(name: str, value: Any) -> Optional[str]:
+    """Why `value` cannot be the value of the parameter `name`, or None."""
+    if name in INTEGER_PARAM_RANGES:
+        low, high = INTEGER_PARAM_RANGES[name]
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            return f"param {name} must be an integer from {low} to {high}"
+        return None
+    if name in BOOLEAN_PARAMS:
+        return None if isinstance(value, bool) else f"param {name} must be true or false"
+    bottom, top = FRACTION_RANGE if name in FRACTION_PARAMS else SECONDS_RANGE
+    # An integer of any size compares with a float, and a float that is not
+    # a number is outside every range: no comparison with it holds.
+    is_number = isinstance(value, (int, float)) and not isinstance(value, bool)
+    if not is_number or not bottom <= value <= top:
+        return f"param {name} must be a number from {bottom} to {top}"
+    return None
+
+
 def validate_protocol_payload(payload: dict) -> Optional[str]:
-    """Return None if payload is well-formed, else an error string."""
+    """Return None if payload is well-formed, else an error string. Never
+    raises, whatever the payload holds."""
     if not isinstance(payload, dict):
         return "payload must be a dict"
     keys = set(payload.keys())
     extra = keys - KNOWN_PROTOCOL_PAYLOAD_KEYS
     if extra:
-        return f"unknown payload keys: {sorted(extra)}"
+        return f"unknown payload keys: {sorted(extra, key=repr)}"
     if "params" in payload:
         params = payload["params"]
         if not isinstance(params, dict):
             return "'params' must be a dict"
-        for k in params:
+        for k, value in params.items():
             if k not in ALLOWED_PARAMS:
                 return f"unknown param: {k}"
+            err = _param_error(k, value)
+            if err:
+                return err
     if "swap" in payload:
         target = payload["swap"]
         to = payload.get("to")
-        if target not in ALLOWED_SWAPS:
+        if not isinstance(target, str) or target not in ALLOWED_SWAPS:
             return f"unknown swap target: {target}"
-        if to not in ALLOWED_SWAPS[target]:
+        if not isinstance(to, str) or to not in ALLOWED_SWAPS[target]:
             return f"unknown swap value '{to}' for {target}"
     return None
 
 
 def validate_treasury_payload(payload: dict) -> Optional[str]:
     """A treasury payload says who receives how much KRN, with an optional
-    memo. Multi-recipient batches are allowed."""
+    memo. Multi-recipient batches are allowed. Never raises.
+
+    Each recipient is an address, of an account or of a contract: a payout
+    to a value that is not a text could not be applied, and a block that
+    cannot be applied stops the chain."""
     if not isinstance(payload, dict):
         return "payload must be a dict"
     if "recipients" not in payload:
@@ -243,7 +298,10 @@ def validate_treasury_payload(payload: dict) -> Optional[str]:
             return "each recipient must be a dict"
         if "address" not in r or "amount" not in r:
             return "each recipient needs address+amount"
-        if not isinstance(r["amount"], int) or r["amount"] <= 0:
+        if not address_is_valid(r["address"]):
+            return "each recipient address must be an address"
+        amount = r["amount"]
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
             return "amount must be a positive int (mukrn)"
     return None
 
@@ -555,6 +613,11 @@ class ProtocolGovernance:
         for prop in self.proposals.values():
             new_phase = self._next_phase(prop, current_level)
             if new_phase is not None and new_phase != prop.phase:
+                # A state written before the values were checked can hold a
+                # proposal that cannot be applied. It is rejected here, at
+                # the last moment, instead of activated.
+                if new_phase == ProtocolPhase.ACTIVATED and validate_protocol_payload(prop.payload) is not None:
+                    new_phase = ProtocolPhase.REJECTED
                 prop.phase = new_phase
                 prop.phase_transitions.append((new_phase.value, current_level))
                 if new_phase == ProtocolPhase.ACTIVATED:
@@ -723,10 +786,13 @@ class TreasuryGovernance:
             new_phase = self._next_phase(prop, current_level)
             if new_phase is None or new_phase == prop.phase:
                 continue
-            # If transitioning to EXECUTED, ensure treasury still has funds.
+            # If transitioning to EXECUTED, ensure the payout can be made
+            # (a state written before the recipients were checked can hold
+            # one that cannot) and that the treasury still has funds.
             if new_phase == TreasuryPhase.EXECUTED:
-                total = prop.total_amount()
-                if self.treasury_balance < total:
+                payable = validate_treasury_payload(prop.payload) is None
+                total = prop.total_amount() if payable else 0
+                if not payable or self.treasury_balance < total:
                     new_phase = TreasuryPhase.REJECTED
                 else:
                     self.treasury_balance -= total

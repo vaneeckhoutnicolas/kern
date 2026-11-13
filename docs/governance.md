@@ -86,7 +86,7 @@ A protocol amendment payload is a small typed dict. Two payload kinds are suppor
 {"params": {"i_max": 0.05, "block_time_seconds": 1.0}}
 ```
 
-Valid parameter names are enumerated in `ALLOWED_PARAMS`. Unknown keys are rejected at validation time.
+Valid parameter names are enumerated in `ALLOWED_PARAMS`. Unknown keys are rejected at validation time, and so is a value outside the type and the range of its name (below).
 
 **Function swap**:
 ```json
@@ -96,6 +96,27 @@ Valid parameter names are enumerated in `ALLOWED_PARAMS`. Unknown keys are rejec
 Used to replace a core protocol function. The v0.5 demonstration: swap `state_root_function` from `"json"` (the v0.1-v0.4 placeholder) to `"trie"` (the v0.4 Merkle trie implementation).
 
 Future versions will support more payload kinds — most importantly, Skald patch payloads (changes to the language itself) and KVM bytecode replacements.
+
+### Values of a protocol payload
+
+Every parameter has a type and a range, checked when the proposal is submitted (`validate_protocol_payload`). A boolean is not an integer, and a text is not a number.
+
+| Name | Value |
+|---|---|
+| `i_min_ppm`, `i_max_ppm`, `target_staking_ratio_ppm`, `treasury_share_ppm`, `proposer_bonus_ppm` | integer, 0 to 1,000,000 |
+| `target_block_time_ms` | integer, 1 to 3,600,000 |
+| `fee_floor_enabled` | `true` or `false` |
+| `fee_floor_base` | integer, 0 to 1,000,000,000,000 |
+| `fee_floor_per_byte` | integer, 0 to 1,000,000,000 |
+| `max_block_bytes` | integer, 131,072 to 8,388,608 |
+| `i_min`, `i_max`, `target_staking_ratio`, `treasury_share`, `proposer_bonus` | number, 0 to 1 |
+| `target_block_time_seconds`, `block_time_seconds` | number, 0.001 to 3,600 |
+
+The first ten names are the parameters of structure version 1, with the same ranges ([`api-stability.md`](api-stability.md), section 9.5). The seven that take a fraction or a number of seconds are those of today's node only; it converts them to the integer names when it reads them. In a swap, `swap` and `to` are texts.
+
+A value is checked a second time when the proposal would be activated: a proposal that a state already holds with a value the node cannot use becomes `REJECTED` at that moment, instead of activated.
+
+Until these checks a proposal was looked at for the names of its parameters only. A block time of zero, or a rate given as a text, was voted and activated like any other, and from the block of its activation no block could be applied.
 
 ### Activation
 
@@ -151,14 +172,16 @@ A treasury payload lists one or more recipients with amounts:
 ```json
 {
   "recipients": [
-    {"address": "kn1grantee_a", "amount": 5_000_000},
-    {"address": "kn1grantee_b", "amount": 2_000_000}
+    {"address": "kn1QzHmgDwWiCHQaVof4mHVK7qgSmGioGond", "amount": 5000000},
+    {"address": "kn1bBmZs2ZFQ9aiwXKshjL1XdC1vQ2WDbQAs", "amount": 2000000}
   ],
   "memo": "Q1 ecosystem grants"
 }
 ```
 
 Batched payouts let related expenses be voted as a single package, reducing governance overhead.
+
+Each `address` is the address of an account or of a contract: 36 characters that carry the address prefix, 20 bytes and their checksum (`kern.crypto.address_is_valid`). Each `amount` is a positive integer, in mukrn; a boolean is not one. Both are checked when the proposal is submitted (`validate_treasury_payload`), and again when it would be executed: a proposal that a state already holds and that cannot be paid becomes `REJECTED` at that moment. Until these checks a recipient could be any value, and a payout to a value that is not a text stopped the chain at the block of its execution.
 
 ## Vote weighting
 
