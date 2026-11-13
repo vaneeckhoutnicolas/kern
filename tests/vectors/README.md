@@ -9,7 +9,7 @@ the same files.
 | `rfc10073/` | Composite ML-DSA, every combination of the standard; Kern uses `id-MLDSA65-Ed25519-SHA512` | IETF, LAMPS working group |
 | `nist-acvp/` | ML-DSA key generation and signature verification (FIPS 204); Kern uses the ML-DSA-65 groups, and for verification the external, pure interface | NIST, ACVP Server |
 | `wycheproof/` | ML-DSA-65 (verification, and signing from seeds) and Ed25519, with many malformed inputs | Project Wycheproof, C2SP |
-| `kern/` | The reference vectors of the signature profile (`docs/hybrid-signatures.md`, section 17): its byte rules, the Ed25519 cases on which implementations disagree, composite signatures exchanged between two programs. And the Go program that recomputes them | This repository |
+| `kern/` | The reference vectors of the signature profile (`docs/hybrid-signatures.md`, section 17): its byte rules, the Ed25519 cases on which implementations disagree, composite signatures exchanged between two programs. The vectors of the schemas of structure version 1 (`docs/api-stability.md`, section 9). And the Go program that recomputes them | This repository |
 
 `SOURCES.json` lists every file of this directory with its origin.
 
@@ -18,6 +18,9 @@ the same files.
 - `tests/test_composite.py` and `tests/test_keys.py` run all of them
   against `kern.composite` and `kern.keys`, and `tests/test_profile_vectors.py`
   recomputes those of `kern/` with the Python references.
+- `tests/test_schema_vectors.py` runs `kern/schemas.json` through
+  `tests/schema_reference.py`, which is section 9 of `docs/api-stability.md`
+  as executable text.
 - `kern/profile_check.go` does the same with the Go standard library alone.
   The continuous integration runs it on every pull request, on the vectors
   of `kern/` and, with `-official`, on the official files.
@@ -45,6 +48,9 @@ vector files of `kern/` had on that day, and `tests/test_vectors.py`
 fails when one of them changes or disappears. Vectors can be added for a
 rule that exists: a new member in a file, or new cases at the end of a
 list.
+
+`kern/schemas.json` is not one of the three: the schemas it holds are a
+draft under review, and the file is rebuilt with them.
 
 ## Licences
 

@@ -109,13 +109,14 @@ def test_every_official_directory_comes_with_its_licence():
 
 def test_the_vectors_built_here_name_the_program_that_builds_them():
     built = {path: entry["generator"] for path, entry in ENTRIES.items() if "generator" in entry}
-    assert set(built) == {f"kern/{name}" for name in FROZEN} | {"kern/freeze.json"}
+    assert set(built) == {f"kern/{name}" for name in FROZEN} | {"kern/freeze.json", "kern/schemas.json"}
     for path, generator in built.items():
         for program in re.findall(r"tests/[\w/.]+\.(?:py|go)", generator):
             assert (ROOT / program).is_file(), program
         assert "bytes" not in ENTRIES[path] and "sha256" not in ENTRIES[path]      # held by their content
     assert built["kern/profile.json"] == "tests/profile_reference.py"
     assert built["kern/ed25519_edge_cases.json"] == "tests/ed25519_reference.py"
+    assert built["kern/schemas.json"] == "tests/schema_vectors.py, with tests/schema_reference.py"
 
 
 # ---------------------------------------------------------------------------
