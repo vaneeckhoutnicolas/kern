@@ -4,20 +4,20 @@
 
 docs/hybrid-signatures.md specifies the release in preparation byte for
 byte: canonical JSON, the hash function, Merkle trees, key derivation,
-signing contexts, addresses, the leaves of the second root of a block, the
-state trie and the state root, the data hashed under every domain, and one
-rule for the verification of Ed25519. Before any of it is implemented in
-the node, the specification is held by vectors that two independent
-implementations reproduce: tests/profile_reference.py and
+signing contexts, text forms, addresses, the leaves of the second root of
+a block, the state trie and the state root, the data hashed under every
+domain, and one rule for the verification of Ed25519. Before any of it is
+implemented in the node, the specification is held by vectors that two
+independent implementations reproduce: tests/profile_reference.py and
 tests/ed25519_reference.py (Python standard library, checked here), and
 tests/vectors/kern/profile_check.go (Go standard library, run by the
 continuous integration on every pull request).
 
 The two programs also exchange composite signatures, kept in
 tests/vectors/kern/composite_signatures.json. The Go program verifies them
-whole. What needs no ML-DSA is checked here: the message both components
-sign and the Ed25519 half, since the node does not depend on an ML-DSA
-library yet.
+whole, and so does tests/test_composite.py with kern.composite. What is
+checked here needs no ML-DSA: the message both components sign and the
+Ed25519 half, with the references alone.
 
 Nothing below touches the node: it still hashes with BLAKE2b and signs
 with Ed25519.
@@ -25,6 +25,7 @@ with Ed25519.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import random
@@ -52,32 +53,30 @@ OTHER = bytes(range(0xC0, 0xE0))
 H = bytes.fromhex
 
 # The three values of each derivation that need ML-DSA. The `cryptography`
-# package computed them when the vectors were built and the Go program
-# computes them with crypto/mldsa; the tests of the implementation will too.
+# package computes them when the vectors are built, and here; the Go program
+# computes them with crypto/mldsa, and tests/test_keys.py with kern.keys.
 NEEDS_MLDSA = {"mldsa65_public_key_sha3_384", "composite_public_key_sha3_384", "address"}
-
-
-def _without_mldsa(vectors: dict) -> dict:
-    out = dict(vectors)
-    out["derivation"] = [{k: v for k, v in d.items() if k not in NEEDS_MLDSA} for d in vectors["derivation"]]
-    return out
 
 
 # ---------------------------------------------------------------------------
 # The file is what the reference computes
 # ---------------------------------------------------------------------------
 
-def test_every_vector_is_recomputed_by_the_reference(monkeypatch):
-    monkeypatch.setattr(ref, "_with_mldsa", lambda *args: {})          # the node has no ML-DSA yet
-    assert _without_mldsa(VECTORS) == json.loads(json.dumps(ref.build_vectors()))
+def test_every_vector_is_recomputed_by_the_reference():
+    assert VECTORS == json.loads(json.dumps(ref.build_vectors()))
     for d in VECTORS["derivation"]:
-        assert NEEDS_MLDSA <= set(d)                                   # present, for the implementation
+        assert NEEDS_MLDSA <= set(d)
 
 
 def test_the_ed25519_cases_are_rebuilt_from_rfc_8032():
     rebuilt = ed.build_cases()
     assert [{k: c[k] for k in ("name", "public_key", "message", "signature", "comment")} for c in CASES] == rebuilt
     assert len(CASES) == 31 == len({c["name"] for c in CASES})
+    # The public keys under rule 2 alone, added to the file after the freeze: an ordinary
+    # key, and that key plus each of the seven points of small order other than the identity.
+    keys = json.loads(ed.CASES.read_text(encoding="utf-8"))["public_keys"]
+    assert [{k: c[k] for k in ("name", "public_key", "comment")} for c in keys] == ed.build_key_cases()
+    assert [c["valid"] for c in keys] == [ed.is_a_key(H(c["public_key"])) for c in keys] == [True] + [False] * 7
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +668,59 @@ def test_what_a_verifier_must_refuse_is_refused_as_far_as_ed25519_tells():
     assert ed.lenient_verify(key[MLDSA_KEY:], representative, signature[MLDSA_SIG:])
     assert not ed.strict_verify(key[MLDSA_KEY:], representative, signature[MLDSA_SIG:])
     assert key[:MLDSA_KEY] == public_key[:MLDSA_KEY]                       # the ML-DSA part is the right one
+
+
+# ---------------------------------------------------------------------------
+# Text forms
+# ---------------------------------------------------------------------------
+
+TEXT_KINDS = {
+    "public_key": ("kpk1.", ref.PUBLIC_KEY_BYTES, 2651, ref.key_text, ref.key_from_text),
+    "signature": ("ksig1.", ref.SIGNATURE_BYTES, 4504, ref.signature_text, ref.signature_from_text),
+}
+BASE64URL = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+
+
+def test_a_key_and_a_signature_have_one_text():
+    forms = VECTORS["text_forms"]
+    assert [e["kind"] for e in forms["accepted"]] == ["public_key"] * 4 + ["signature"] * 4
+    for entry in forms["accepted"]:
+        prefix, size, characters, encode, decode = TEXT_KINDS[entry["kind"]]
+        data = bytes((entry["factor"] * i + entry["offset"]) % 256 for i in range(size))
+        text = entry["text"]
+        assert encode(data) == text and decode(text) == data
+        assert len(text) == characters and text.startswith(prefix) and set(text[len(prefix):]) <= BASE64URL
+    # The last character holds two bits of the last byte, then four unused bits that are
+    # zero: it is A, Q, g or w, and the accepted texts of each kind show the four.
+    for kind in TEXT_KINDS:
+        assert sorted(e["text"][-1] for e in forms["accepted"] if e["kind"] == kind) == list("AQgw")
+    # The first text of each kind is the one of the bytes used elsewhere in the vectors.
+    assert (forms["accepted"][0]["factor"], forms["accepted"][0]["offset"]) == (7, 3)
+    assert (forms["accepted"][4]["factor"], forms["accepted"][4]["offset"]) == (5, 1)
+    for stated in ("`kpk1.`", "`ksig1.`", "(2,651 characters)", "(4,504 characters)", "**One text per value.**"):
+        assert stated in NOTE, stated
+
+
+def test_every_other_spelling_of_a_key_or_a_signature_is_refused():
+    refused = VECTORS["text_forms"]["refused"]
+    assert len(refused) == 40 == len({(e["kind"], e["why"]) for e in refused})
+    first = {kind: next(e["text"] for e in VECTORS["text_forms"]["accepted"] if e["kind"] == kind)
+             for kind in TEXT_KINDS}
+    for entry in refused:
+        assert entry["text"] != first[entry["kind"]]
+        for kind, (_, _, _, _, decode) in TEXT_KINDS.items():     # by the decoder of its kind, and by the other
+            with pytest.raises(ValueError):
+                decode(entry["text"])
+    # What the note names: padding, another alphabet, spaces, a last character whose unused bits are set.
+    reasons = {e["why"] for e in refused if e["kind"] == "public_key"}
+    assert reasons == {e["why"] for e in refused if e["kind"] == "signature"}
+    for named in ("padding added", "the alphabet of standard base64: + and / in place of - and _",
+                  "a space at the end", "the last character with one of its four unused bits set"):
+        assert named in reasons, named
+    # A text that differs from an accepted one in its unused bits only decodes, leniently, to the same bytes.
+    for kind, (prefix, _, _, _, decode) in TEXT_KINDS.items():
+        (spelling,) = [e["text"] for e in refused if e["kind"] == kind and "unused bits" in e["why"]]
+        assert base64.urlsafe_b64decode(spelling[len(prefix):] + "==") == decode(first[kind])
 
 
 # ---------------------------------------------------------------------------

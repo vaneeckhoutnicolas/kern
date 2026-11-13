@@ -281,5 +281,56 @@
    "valid": false,
    "lenient": false
   }
+ ],
+ "public_keys_rule": "Public keys under rule 2 of section 2.5 alone, the check made when a key is recorded: `valid` says whether the 32 bytes are the canonical encoding of a point of the subgroup of prime order, other than the identity. Added after the freeze of the profile, for a rule that exists: the cases above are unchanged.",
+ "public_keys": [
+  {
+   "name": "ordinary key",
+   "public_key": "1a532ac3aab123c61d37c5e916422f8446069dc637a030ba1a5615cc5894616d",
+   "comment": "A point of the subgroup of prime order: the key of the honest cases.",
+   "valid": true
+  },
+  {
+   "name": "ordinary key plus a point of order 2",
+   "public_key": "d3acd53c554edc39e2c83a16e9bdd07bb9f96239c85fcf45e5a9ea33a76b9e92",
+   "comment": "Canonical, on the curve, of order 2 times the group order: not in the subgroup of prime order.",
+   "valid": false
+  },
+  {
+   "name": "ordinary key plus a point of order 4, point 1",
+   "public_key": "b8bd074086377c793e4519880ee48066419410e9e8eba5dfae9c2023c19d7f77",
+   "comment": "Canonical, on the curve, of order 4 times the group order: not in the subgroup of prime order.",
+   "valid": false
+  },
+  {
+   "name": "ordinary key plus a point of order 4, point 2",
+   "public_key": "3542f8bf79c88386c1bae677f11b7f99be6bef1617145a205163dfdc3e628088",
+   "comment": "Canonical, on the curve, of order 4 times the group order: not in the subgroup of prime order.",
+   "valid": false
+  },
+  {
+   "name": "ordinary key plus a point of order 8, point 1",
+   "public_key": "1bad1d43116a7bc3268364dc50420617e512f41f3f6067b2348f4004ae796f60",
+   "comment": "Canonical, on the curve, of order 8 times the group order: not in the subgroup of prime order.",
+   "valid": false
+  },
+  {
+   "name": "ordinary key plus a point of order 8, point 2",
+   "public_key": "760143c53c316f0291cd0e9816e95728ae279e29c4734006eed5545ca9772edf",
+   "comment": "Canonical, on the curve, of order 8 times the group order: not in the subgroup of prime order.",
+   "valid": false
+  },
+  {
+   "name": "ordinary key plus a point of order 8, point 3",
+   "public_key": "77febc3ac3ce90fd6e32f167e916a8d751d861d63b8cbff9112aaba35688d120",
+   "comment": "Canonical, on the curve, of order 8 times the group order: not in the subgroup of prime order.",
+   "valid": false
+  },
+  {
+   "name": "ordinary key plus a point of order 8, point 4",
+   "public_key": "d252e2bcee95843cd97c9b23afbdf9e81aed0be0c09f984dcb70bffb5186909f",
+   "comment": "Canonical, on the curve, of order 8 times the group order: not in the subgroup of prime order.",
+   "valid": false
+  }
  ]
 }

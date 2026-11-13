@@ -57,3 +57,8 @@ jobs:
       - name: Recompute the reference vectors with the Go standard library
         working-directory: tests/vectors/kern
         run: go run profile_check.go profile.json ed25519_edge_cases.json composite_signatures.json
+      # The official files kept whole under tests/vectors (RFC 10073, NIST, Project
+      # Wycheproof), the ones the Python tests run: same files, same verdicts.
+      - name: Run the official vectors with the Go standard library
+        working-directory: tests/vectors/kern
+        run: go run profile_check.go -official ..

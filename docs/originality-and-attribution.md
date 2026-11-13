@@ -18,7 +18,8 @@ Specifically:
 - **No source code is copied from any external project.** Every line of Python in `kern/` was written for Kern.
 - **External public specifications are implemented from spec.** The EVM opcode semantics follow the Ethereum Yellow Paper (a public specification); the BN254 curve uses the public BN128 parameters; gas costs follow public EIP standards (EIP-2200, EIP-197). Implementing a public specification is not copying — it is what every implementor does.
 - **Design influences are noted in code where relevant.** Where Kern's design implements a pattern that is already part of the public state-of-the-art in blockchain design (e.g., delegated Proof-of-Stake, dual-track on-chain governance), the relevant code includes a brief comment noting the pattern (e.g., `# stake delegation (bonded since v1.1-rc Phase D)`), but the implementation itself is fresh Python.
-- **One external library dependency is used:** `py_ecc` (Ethereum Foundation's reference Python BN128 library). This is imported via Python's standard import mechanism. The dependency is declared in `requirements.txt` and `pyproject.toml`. The library's source code is not vendored into this repo.
+- **External libraries are imported, never copied:** `py_ecc` (Ethereum Foundation's reference Python BN128 library), `pynacl`, `aiohttp` and `cryptography`. They are imported via Python's standard import mechanism and declared in `requirements.txt` and `pyproject.toml`. No library's source code is vendored into this repo.
+- **Official test vectors are kept as unchanged copies, and say so.** `tests/vectors` holds test vectors published by the IETF (RFC 10073), NIST and Project Wycheproof. They are data for the tests, not code of Kern: each directory carries its notice or its licence, and `tests/vectors/SOURCES.json` records the repository, the commit and the SHA-256 of every file.
 
 ### Audit trail
 
@@ -159,7 +160,7 @@ When audit cycle 1 begins (see [setup-auditor.md](setup-auditor.md)), the engage
 1. The codebase is original Python (not vendored from another project).
 2. The SPDX headers are consistent and present on all files.
 3. The copyright attribution to Nicolas Van Eeckhout is preserved.
-4. The external dependencies (just `py_ecc`, `pynacl`, `aiohttp`) are used as standard imports, not as vendored copies.
+4. The external dependencies (just `py_ecc`, `pynacl`, `aiohttp`, `cryptography`) are used as standard imports, not as vendored copies.
 5. The design influences cited in comments and documentation are credited but not represented as Kern's own innovation.
 
 The audit report will include a formal attestation of originality, which becomes part of the public Foundation record.

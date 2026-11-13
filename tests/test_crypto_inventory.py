@@ -15,6 +15,11 @@ post-quantum, and any other line that mentions quantum computers has to
 link to the inventory, where that status is stated. The design note on
 hybrid signatures is the one other page allowed to discuss the subject,
 for as long as it says at its top that nothing in it is implemented.
+
+The signature mechanism of that note and the functions of its profile are
+written, in kern/composite.py and kern/keys.py. They count here as what
+they are: code the node does not use. A test fails the day something
+imports them, which is the day the inventory and the status change.
 """
 
 from __future__ import annotations
@@ -134,6 +139,27 @@ def _imports(path: Path) -> set[str]:
     return names
 
 
+def _kern_modules(path: Path) -> set[str]:
+    """The modules of the package `kern` that a file imports, each by its
+    first name: `crypto` for `import kern.crypto`, `from kern.crypto import
+    verify`, `from kern import crypto`, and inside the package for
+    `from .crypto import verify` and `from . import crypto`."""
+    parts = path.relative_to(ROOT).parts
+    depth = len(parts) - 2 if parts[0] == "kern" else None        # kern/x.py: 0, kern/evm/x.py: 1
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            found.update(alias.name.split(".")[1] for alias in node.names
+                         if alias.name.startswith("kern.") )
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module.split(".") if node.module else []
+            if node.level == 0 and module[:1] == ["kern"]:
+                found.update(module[1:2] or [alias.name for alias in node.names])
+            elif depth is not None and node.level == depth + 1:   # relative, and it reaches the top of the package
+                found.update(module[:1] or [alias.name for alias in node.names])
+    return found
+
+
 def _section(text: str, heading: str) -> str:
     """The body of the markdown section whose heading starts with `heading`."""
     level = len(heading) - len(heading.lstrip("#"))
@@ -176,7 +202,12 @@ def test_api_stability_names_only_hash_domains_that_exist():
 
 def test_hash_algorithms_and_unkeyed_uses_are_the_documented_ones():
     calls = _hash_calls()
-    assert {c["algo"] for c in calls} == {"blake2b", "sha256", "sha3_256", "ripemd160"}
+    assert {c["algo"] for c in calls} == {"blake2b", "sha256", "sha3_256", "ripemd160", "sha512", "sha3_384"}
+    # The last two are the functions of the release in preparation. Each is called in one
+    # place, in the two modules that the node does not use (section 1.7 of the inventory).
+    assert {(c["file"], c["function"]) for c in calls if c["algo"] == "sha512"} == {
+        ("kern/composite.py", "message_representative")}
+    assert {(c["file"], c["function"]) for c in calls if c["algo"] == "sha3_384"} == {("kern/keys.py", "H")}
     unkeyed = {(c["file"], c["function"], c["bytes"])
                for c in calls if c["algo"] == "blake2b" and c["key"] is None}
     assert unkeyed == {
@@ -187,7 +218,7 @@ def test_hash_algorithms_and_unkeyed_uses_are_the_documented_ones():
     }
     inventory = _inventory()
     for name in ("BLAKE2b", "SHA-256", "SHA3-256", "RIPEMD-160", "Keccak-256",
-                 "`select_proposer`", "checksum", "0x09"):
+                 "`select_proposer`", "checksum", "0x09", "SHA-512", "SHA3-384"):
         assert name in inventory, name
     # Review of 12 November 2026: collision search by a quantum computer has
     # a generic bound of its own, which the inventory used to wave away.
@@ -220,22 +251,66 @@ def test_only_the_listed_libraries_do_cryptography():
     for path in _sources("kern", "kern_explorer"):
         for module in _imports(path) & watched:
             users.setdefault(module, set()).add(_rel(path))
-    assert set(users) == {"hashlib", "nacl", "py_ecc", "random"}
-    assert users["nacl"] == {"kern/crypto.py", "kern/evm/frames.py"}
+    assert set(users) == {"hashlib", "hmac", "nacl", "py_ecc", "random", "cryptography"}
+    assert users["nacl"] == {"kern/crypto.py", "kern/evm/frames.py", "kern/composite.py"}
     assert users["py_ecc"] == {"kern/evm/bn254.py", "kern/zk_claims.py"}
     assert users["random"] == {"kern/fuzzing.py"}                  # seeded test generators
+    assert users["cryptography"] == {"kern/composite.py"}          # ML-DSA
+    assert users["hmac"] == {"kern/keys.py"}                       # key derivation
+    assert {"kern/composite.py", "kern/keys.py"} <= users["hashlib"]
     inventory = _inventory()
-    for module in ("nacl", "py_ecc", "random"):
+    libraries = _section(inventory, "### 1.5 Libraries")
+    for module in ("nacl", "py_ecc", "random", "cryptography", "hmac"):
         for name in users[module]:
-            assert f"`{name}`" in inventory, name
+            assert f"`{name}`" in libraries, name
+    assert "| `cryptography` (OpenSSL) | ML-DSA-65" in libraries and "| `hmac` (Python standard library) |" in libraries
 
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     declared = {re.split(r"[<>=!~\[ ]", d, maxsplit=1)[0].lower().replace("_", "-")
                 for d in project["dependencies"]}
     known = {"pynacl", "py-ecc", "cryptography", "pycryptodome", "pycryptodomex", "ecdsa",
              "coincurve", "blspy", "liboqs-python", "pqcrypto", "pyopenssl", "blake3"}
-    assert declared & known == {"pynacl", "py-ecc"}
+    assert declared & known == {"pynacl", "py-ecc", "cryptography"}
     assert "PyNaCl" in inventory and "py_ecc" in inventory
+    # requirements.txt, which the image and the audit of dependencies read, declares the same.
+    required = {re.split(r"[<>=!~\[ ]", line, maxsplit=1)[0].lower().replace("_", "-")
+                for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").split()}
+    assert required == declared
+    # What the modules of section 1.7 rely on is never allowed to be older: ML-DSA is in
+    # `cryptography` from version 48, and PyNaCl ships a corrected libsodium from 1.6.2.
+    # The lowest version allowed moves up with the releases; these are its own floors.
+    lowest = {name.lower(): tuple(int(part) for part in version.split("."))
+              for name, version in (re.fullmatch(r"([\w.-]+)>=([\d.]+)", d).groups()
+                                    for d in project["dependencies"])}
+    assert lowest["cryptography"] >= (48,) and lowest["pynacl"] >= (1, 6, 2)
+    assert "from version 48" in inventory and "from version 1.6.2" in inventory and "CVE-2025-69277" in inventory
+
+
+def test_the_node_does_not_use_the_modules_of_the_release_in_preparation():
+    """kern/composite.py and kern/keys.py are in the repository and the
+    chain still signs with Ed25519 and hashes with BLAKE2b: nothing
+    imports them, apart from the second one using the first. The day this
+    fails is the day the formats change, and the inventory with them."""
+    users: dict[str, set[str]] = {}
+    sources = _sources("kern", "kern_explorer", "scripts", "networks", "kern_site")
+    assert len(sources) > 40
+    for path in sources:
+        for module in _kern_modules(path) & {"composite", "keys"}:
+            users.setdefault(module, set()).add(_rel(path))
+        if _rel(path) not in ("kern/composite.py", "kern/keys.py"):      # nor by a name built at run time
+            text = path.read_text(encoding="utf-8")
+            assert "kern.composite" not in text and "kern.keys" not in text, _rel(path)
+    assert users == {"composite": {"kern/keys.py"}}
+    # The helper sees the imports the node really makes, in each of their spellings.
+    assert {"crypto", "transaction"} <= _kern_modules(ROOT / "kern" / "block.py")           # from .crypto import
+    assert "failpoints" in _kern_modules(ROOT / "kern" / "node.py")                         # from . import
+    assert "evm" in _kern_modules(ROOT / "kern" / "fuzzing.py")                             # from kern.evm import
+    assert _kern_modules(ROOT / "kern" / "keys.py") == {"composite"}
+    section = _section(_inventory(), "### 1.7 ")
+    assert "kern/composite.py" in section and "kern/keys.py" in section
+    assert "Nothing in the node, the wallet, the explorer or the scripts imports them" in section
+    assert "Nothing of the plan is in the node." in _inventory().split("\n## ", 1)[0]
+    assert STATUS in _inventory()
 
 
 def test_api_stability_gives_the_real_prefixes_and_lengths():

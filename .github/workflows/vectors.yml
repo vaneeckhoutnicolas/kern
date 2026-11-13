@@ -1,0 +1,30 @@
+name: Vectors
+
+# The official test vectors kept under tests/vectors (RFC 10073, NIST, Project
+# Wycheproof) are unchanged copies taken at a recorded commit. Once a month this
+# compares them with the head of their repositories and fails when one differs,
+# so that a correction or new cases upstream do not go unnoticed. It reads and
+# changes nothing: taking a new file is a reviewed change (tests/vectors/README.md).
+
+on:
+  schedule:
+    - cron: "23 5 3 * *"   # the 3rd of each month, 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upstream:
+    name: official vectors against upstream
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.11"
+      # Standard library only: nothing is installed.
+      - name: Compare the official test vectors with the head of their repositories
+        run: python scripts/check_vectors_upstream.py
