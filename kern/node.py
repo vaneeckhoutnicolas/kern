@@ -692,14 +692,23 @@ class Node:
         # second, CONFLICTING vote from the same validator was dropped here
         # and the equivocation never reached the engine or the network.
         key = (msg.kind.value, msg.level, msg.round, msg.validator, msg.block_hash)
-        if key in self._seen_cons:
+        # A vote from the wire comes here only when the engine wants it
+        # (_on_consensus_msg), so the engine is what recognizes a vote
+        # already held. The set below only spares the engine the votes
+        # this node made or read in a proposal. It never hides a vote
+        # received from a peer: an entry of `commits` whose signature did
+        # not verify is in the set without being in the engine.
+        if not from_wire and key in self._seen_cons:
             return
         self._seen_cons.add(key)
         self._trim(self._seen_cons)
         out = self.bft.on_message(msg)
         if from_wire and self.network:
-            # Re-gossip newly seen consensus messages for mesh propagation
-            # (conflicting votes included, so every node sees the evidence).
+            # Relay it for mesh propagation: the first vote of a validator
+            # for this (kind, level, round), or the first one that conflicts
+            # with it, so every node holds the evidence. The engine wants
+            # nothing more from that validator there, so nothing more of it
+            # is relayed.
             asyncio.create_task(self.network.broadcast_consensus(msg.to_dict()))
         self._submit_evidence()
         await self._emit_consensus(out)
@@ -916,6 +925,14 @@ class Node:
             msg = ConsensusMessage.from_dict(msg_dict)
         except (ValueError, KeyError) as e:
             LOG.warning("rejected consensus message: %s", e)
+            return
+        # The engine is asked first. A vote it cannot use (its signer is not
+        # a validator of the set, its level or its round is outside the
+        # window, or the engine already holds it) is dropped before its
+        # signature is checked, and is never relayed: `verify_signature`
+        # checks a vote against the key the vote itself carries, so a valid
+        # signature says nothing about who may vote.
+        if self.bft is None or not self.bft.wants(msg):
             return
         if not msg.verify_signature():
             return
