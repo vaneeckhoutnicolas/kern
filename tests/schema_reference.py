@@ -9,11 +9,14 @@ document are compared with the tables below, and tests/schema_vectors.py
 builds tests/vectors/kern/schemas.json with it, which the Go program kept
 next to that file checks with tables of its own, written independently.
 
-Chapter 1 of three: what is signed and what travels. Transactions, block
-headers, blocks, consensus messages, certificates, the frames peers
-exchange and the body of an injection request. The state, the key
-registry and the genesis are chapter 2; the objects hashed outside blocks
-are chapter 3.
+Chapters 1 and 2 of three. Chapter 1: what is signed and what travels.
+Transactions, block headers, blocks, consensus messages, certificates, the
+frames peers exchange and the body of an injection request. Chapter 2:
+what is kept. The state and the rules that tie its tables together, the
+account of the state trie, the key registry, the genesis and the block of
+level 0, and three rules that are not forms: what a block charges, in what
+order proposals are decided, and how a request for blocks finds its
+answer. The objects hashed outside blocks are chapter 3.
 
 Nothing here is used by the node, which still writes the formats of
 sections 2.1 to 2.7 of that document. The byte rules all schemas share
@@ -50,6 +53,8 @@ LIMITS = {
     "contract_fields": 256,             # the entries of `initial_storage`, or of the `params` of a call
     "claim_bytes": 16_384,              # the canonical encoding of a claim
     "recipients": 64,                   # the recipients of a treasury proposal
+    "validators": 1_024,                # the validators of a network
+    "guardians": 8,                     # the guardians of its treasury
 }
 
 INT_MAX = 2**63 - 1
@@ -359,20 +364,21 @@ class Map(Type):
     key: Type
     value: Type
     low: int
-    high: int
+    high: int | None                            # None: as many entries as there are things to hold
     json = "object"
 
     def check(self, value, cx, where):
         if not isinstance(value, dict):
             refuse("wrong_type", where, "an object")
-        if not low_high(len(value), self.low, self.high):
+        if len(value) < self.low or (self.high is not None and len(value) > self.high):
             refuse("out_of_range", where, self.cell())
         for key, item in value.items():
             self.key.check(key, cx, _join(where, key))
             self.value.check(item, cx, _join(where, key))
 
     def words(self):
-        return f"map of {self.key.cell()} to {self.value.cell()}, {number(self.low)} to {number(self.high)} entries"
+        count = "any number of" if self.high is None else f"{number(self.low)} to {number(self.high)}"
+        return f"map of {self.key.cell()} to {self.value.cell()}, {count} entries"
 
     def depth(self):
         return 1 + self.value.depth()
@@ -526,9 +532,11 @@ MEMO = Named("memo", FreeText(1, 256))
 VALUE = Named("value", Value())
 CLAIM = Named("claim", Claim())
 FIELDS = Named("fields", Map(NAME, VALUE, 0, LIMITS["contract_fields"]))
+POSITIVE = Named("positive amount", Int(1, INT_MAX, "in mukrn"))
+PERIOD = Named("period", Int(1, ROUND_MAX, "in blocks"))
 
 NAMED_TYPES = [LEVEL, ROUND, NONCE, AMOUNT, GAS, TIME, ADDRESS, HASH, KEY, SIGNATURE, NETWORK, CHAIN, NAME,
-               SCHEMA_NAME, SUBJECT, CODE, MEMO, VALUE, CLAIM, FIELDS]
+               SCHEMA_NAME, SUBJECT, CODE, MEMO, VALUE, CLAIM, FIELDS, POSITIVE, PERIOD]
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +667,12 @@ PARAMS = {                                      # the `params` of the kinds that
         ("proposal_id", HASH, "required"),
         ("vote", Choice(("yes", "no", "abstain")), "required"),
     ]),
+    "release_payment": Obj("release_payment", [
+        ("proposal_id", HASH, "required"),
+    ]),
+    "cancel_payment": Obj("cancel_payment", [
+        ("proposal_id", HASH, "required"),
+    ]),
     "slash_equivocation": Obj("slash_equivocation", [
         ("proposal_id", HASH, "required"),
         ("equivocator", ADDRESS, "required"),
@@ -694,6 +708,8 @@ KINDS: dict[str, dict[str, Type]] = {
     "call": {"recipient": ADDRESS, "amount": AMOUNT, "entry": NAME, "params": FIELDS},
     "governance_propose": {"params": PROPOSAL},
     "governance_vote": {"params": PARAMS["governance_vote"]},
+    "release_payment": {"params": PARAMS["release_payment"]},
+    "cancel_payment": {"params": PARAMS["cancel_payment"]},
     "slash_equivocation": {"params": PARAMS["slash_equivocation"]},
     "slash_consensus_equivocation": {"params": PARAMS["slash_consensus_equivocation"]},
     "delegate_stake": {"amount": Int(1, INT_MAX, "in mukrn"), "params": PARAMS["delegate_stake"]},
@@ -1119,6 +1135,986 @@ def check_answer(request: dict, reply: dict, network_id: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Chapter 2: what is kept (sections 9.12 to 9.16)
+# ---------------------------------------------------------------------------
+# The state, the account of the state trie, the key registry, the genesis.
+# A schema of chapter 1 checks one object that travels. A state does not
+# travel: its schema says what a state of structure version 1 is, and the
+# rules that tie its tables together can all be checked on the state alone.
+
+BALLOT = Choice(("yes", "no", "abstain"))
+BALLOTS = Map(ADDRESS, BALLOT, 0, LIMITS["validators"])
+STILL_HELD = Int(0, ROUND_MAX, "in blocks")       # a period that can be none at all
+
+
+def _tranches_add_up(holding, cx, where):
+    levels = [tranche["level"] for tranche in holding["tranches"]]
+    if any(b <= a for a, b in zip(levels, levels[1:])):
+        refuse("inconsistent", _join(where, "tranches"), "levels that do not grow")
+    if holding["amount"] != sum(tranche["amount"] for tranche in holding["tranches"]):
+        refuse("inconsistent", _join(where, "amount"), "not the sum of the tranches")
+
+
+_TRANCHES = ("`amount` is the sum of the amounts of `tranches`, whose levels grow.", _tranches_add_up)
+
+CONTRACT = Obj("contract", [
+    ("code", CODE, "required"),
+    ("storage", FIELDS, "required"),
+])
+
+KEY_ENTRY = Obj("key entry", [
+    ("from", LEVEL, "required"),
+    ("public_key", KEY, "required"),
+])
+
+VALIDATOR = Obj("validator", [
+    ("address", ADDRESS, "required"),
+    ("stake", POSITIVE, "required"),
+])
+
+TRANCHE = Obj("tranche", [
+    ("level", LEVEL, "required"),
+    ("amount", POSITIVE, "required"),
+])
+
+DELEGATION = Obj("delegation", [
+    ("validator", ADDRESS, "required"),
+    ("amount", POSITIVE, "required"),
+    ("tranches", List(TRANCHE, 1, None), "required"),
+], [_TRANCHES])
+
+UNBONDING = Obj("unbonding delegation", [
+    ("delegator", ADDRESS, "required"),
+    ("validator", ADDRESS, "required"),
+    ("amount", POSITIVE, "required"),
+    ("tranches", List(TRANCHE, 1, None), "required"),
+    ("unbonding_from", LEVEL, "required"),
+    ("release_at", LEVEL, "required"),
+], [_TRANCHES])
+
+
+def _revoked_after_issued(attestation, cx, where):
+    if "revoked_at" in attestation and attestation["revoked_at"] < attestation["issued_at"]:
+        refuse("inconsistent", _join(where, "revoked_at"), "before issued_at")
+
+
+def _slashed_holds_nothing(attestation, cx, where):
+    if attestation["slashed"] and attestation["bond"] != 0:
+        refuse("inconsistent", _join(where, "bond"), "a slashed attestation that holds a bond")
+
+
+ATTESTATION = Obj("attestation", [
+    ("issuer", ADDRESS, "required"),
+    ("schema_id", SCHEMA_NAME, "required"),
+    ("subject", SUBJECT, "required"),
+    ("claim", CLAIM, "required"),
+    ("bond", AMOUNT, "required"),
+    ("issued_at", LEVEL, "required"),
+    ("revoked_at", LEVEL, "optional"),
+    ("slashed", Bool(), "required"),
+], [
+    ("`revoked_at` is not lower than `issued_at`.", _revoked_after_issued),
+    ("An attestation that is slashed holds no bond.", _slashed_holds_nothing),
+])
+
+SLASHED_VOTE = Obj("slashed vote", [
+    ("validator", ADDRESS, "required"),
+    ("kind", Choice(("preendorse", "endorse")), "required"),
+    ("level", LEVEL, "required"),
+    ("round", ROUND, "required"),
+])
+
+DOUBLE_VOTE = Obj("double vote", [
+    ("voter", ADDRESS, "required"),
+    ("phase", Choice(("exploration", "adoption")), "required"),
+    ("level", LEVEL, "required"),
+    ("punished", Bool(), "required"),
+])
+
+PROTOCOL_PHASES = ("submitted", "exploration", "cooldown", "adoption", "activated", "rejected")
+TREASURY_PHASES = ("submitted", "voting", "passed", "executed", "rejected")
+OVER = {"protocol": ("activated", "rejected"), "treasury": ("executed", "rejected")}
+
+
+def _over_or_bonded(track: str) -> Rule:
+    first, second = OVER[track]
+
+    def check(proposal, cx, where):
+        over = proposal["phase"] in OVER[track]
+        if ("ended_at" in proposal) != over:
+            refuse("inconsistent", _join(where, "ended_at"), "present exactly when the proposal is over")
+        if ("bond" in proposal) == over:
+            refuse("inconsistent", _join(where, "bond"), "present exactly when the proposal is not over")
+
+    return (f"`ended_at` is present exactly when `phase` is `{first}` or `{second}`, "
+            "and `bond` exactly when it is not.", check)
+
+
+def _double_votes(proposal, cx, where):
+    seen = set()
+    for i, double in enumerate(proposal["double_votes"]):
+        pair = (double["voter"], double["phase"])
+        if pair in seen:
+            refuse("inconsistent", _join(where, f"double_votes.{i}"), "a second double vote of a voter in a phase")
+        seen.add(pair)
+        if double["voter"] not in proposal[double["phase"] + "_votes"]:
+            refuse("inconsistent", _join(where, f"double_votes.{i}"), "a double vote without a vote")
+
+
+PROTOCOL_PROPOSAL = Obj("protocol proposal", [
+    ("proposal_id", HASH, "required"),
+    ("submitter", ADDRESS, "required"),
+    ("payload", PROTOCOL_PAYLOAD, "required"),
+    ("submitted_at", LEVEL, "required"),
+    ("phase", Choice(PROTOCOL_PHASES), "required"),
+    ("ended_at", LEVEL, "optional"),
+    ("exploration_votes", BALLOTS, "required"),
+    ("adoption_votes", BALLOTS, "required"),
+    ("double_votes", List(DOUBLE_VOTE, 0, 2 * LIMITS["validators"]), "required"),
+    ("bond", AMOUNT, "optional"),
+], [
+    _over_or_bonded("protocol"),
+    ("A voter has one double vote in a phase at most, and a vote in that phase.", _double_votes),
+])
+
+def _released_while_it_waits(proposal, cx, where):
+    if "released_by" in proposal and proposal["phase"] != "passed":
+        refuse("inconsistent", _join(where, "released_by"), "on a proposal that does not wait")
+
+
+TREASURY_PROPOSAL = Obj("treasury proposal", [
+    ("proposal_id", HASH, "required"),
+    ("submitter", ADDRESS, "required"),
+    ("payload", TREASURY_PAYLOAD, "required"),
+    ("submitted_at", LEVEL, "required"),
+    ("phase", Choice(TREASURY_PHASES), "required"),
+    ("ended_at", LEVEL, "optional"),
+    ("votes", BALLOTS, "required"),
+    ("released_by", ADDRESS, "optional"),
+    ("bond", AMOUNT, "optional"),
+], [
+    _over_or_bonded("treasury"),
+    ("`released_by` is present only when `phase` is `passed`.", _released_while_it_waits),
+])
+
+GOVERNANCE = Obj("governance", [
+    ("protocol", List(PROTOCOL_PROPOSAL, 0, None), "required"),
+    ("treasury", List(TREASURY_PROPOSAL, 0, None), "required"),
+])
+
+
+def _bounds_in_order(parameters, cx, where):
+    if parameters["i_min_ppm"] > parameters["i_max_ppm"]:
+        refuse("inconsistent", _join(where, "i_min_ppm"), "above i_max_ppm")
+
+
+# The ten parameters a protocol proposal can change (section 9.5), each one
+# with the range it has there. In the state every one of them has a value.
+STATE_PARAMETERS = Obj("state parameters", [(name, type_, "required") for name, type_, _ in PARAMETERS.fields], [
+    ("`i_min_ppm` is not above `i_max_ppm`.", _bounds_in_order),
+])
+
+
+def _unbonding_covers_an_epoch(constants, cx, where):
+    if constants["delegation_unbonding_blocks"] < constants["epoch_blocks"]:
+        refuse("inconsistent", _join(where, "delegation_unbonding_blocks"), "lower than epoch_blocks")
+
+
+def _others_can_release(constants, cx, where):
+    """Past this delay a payment that waits can be released without the
+    first guardian: the delay ends before the wait does, or with it."""
+    if constants["guardian_delay_blocks"] > constants["treasury_release_blocks"]:
+        refuse("inconsistent", _join(where, "guardian_delay_blocks"), "above treasury_release_blocks")
+
+
+CONSTANTS = Obj("constants", [
+    ("epoch_blocks", PERIOD, "required"),
+    ("delegation_unbonding_blocks", PERIOD, "required"),
+    ("attestation_unbonding_blocks", STILL_HELD, "required"),
+    ("protocol_proposal_blocks", PERIOD, "required"),
+    ("protocol_exploration_blocks", PERIOD, "required"),
+    ("protocol_cooldown_blocks", PERIOD, "required"),
+    ("protocol_adoption_blocks", PERIOD, "required"),
+    ("treasury_proposal_blocks", PERIOD, "required"),
+    ("treasury_vote_blocks", PERIOD, "required"),
+    ("guardian_delay_blocks", PERIOD, "required"),
+    ("treasury_release_blocks", PERIOD, "required"),
+    ("protocol_bond", AMOUNT, "required"),
+    ("treasury_bond", AMOUNT, "required"),
+], [
+    ("`delegation_unbonding_blocks` is not lower than `epoch_blocks`.", _unbonding_covers_an_epoch),
+    ("`guardian_delay_blocks` is not above `treasury_release_blocks`.", _others_can_release),
+])
+
+# The phases a proposal goes through before it is over, and what each one
+# adds to the level at which the one before it ended: `submitted_at` for the
+# first one.
+PHASES = {
+    "protocol": (("submitted", "protocol_proposal_blocks"), ("exploration", "protocol_exploration_blocks"),
+                 ("cooldown", "protocol_cooldown_blocks"), ("adoption", "protocol_adoption_blocks")),
+    "treasury": (("submitted", "treasury_proposal_blocks"), ("voting", "treasury_vote_blocks"),
+                 ("passed", "treasury_release_blocks")),
+}
+
+
+def phase_ends(track: str, proposal: dict, constants: dict) -> dict[str, int]:
+    """The level at which each phase of a proposal ends: the block of that
+    level moves the proposal on."""
+    ends, level = {}, proposal["submitted_at"]
+    for phase, blocks in PHASES[track]:
+        level += constants[blocks]
+        ends[phase] = level
+    return ends
+
+
+def phase_window(track: str, proposal: dict, constants: dict) -> tuple[int, int]:
+    """The level at which the phase of a proposal that is not over started,
+    and the level at which it ends."""
+    start = proposal["submitted_at"]
+    for phase, end in phase_ends(track, proposal, constants).items():
+        if phase == proposal["phase"]:
+            return start, end
+        start = end
+    raise ValueError("a proposal that is over")
+
+
+def ended_in_time(track: str, proposal: dict, constants: dict) -> bool:
+    """Whether a proposal that is over ended at a level at which it could.
+    A protocol proposal ends with a vote. A treasury proposal ends with its
+    vote when the vote rejects it; one that passed is released or cancelled
+    by a guardian in a later block, or is rejected at the end of its wait."""
+    ends = phase_ends(track, proposal, constants)
+    if track == "treasury":
+        first = ends["voting"] + (1 if proposal["phase"] == "executed" else 0)
+        return first <= proposal["ended_at"] <= ends["passed"]
+    if proposal["phase"] == "activated":
+        return proposal["ended_at"] == ends["adoption"]
+    return proposal["ended_at"] in (ends["exploration"], ends["adoption"])
+
+
+# -- the rules of a state ----------------------------------------------------
+
+def _listed(state: dict) -> list[str]:
+    return [validator["address"] for validator in state["validators"]]
+
+
+def _validators_once(state, cx, where):
+    listed = _listed(state)
+    if len(set(listed)) != len(listed):
+        refuse("inconsistent", _join(where, "validators"), "an address twice")
+    if [entry["address"] for entry in state["consensus_set"]] != listed:
+        refuse("inconsistent", _join(where, "consensus_set"), "not the addresses of validators, in their order")
+
+
+def _validators_have_keys(state, cx, where):
+    for i, address in enumerate(_listed(state)):
+        if address not in state["keys"]:
+            refuse("inconsistent", _join(where, f"validators.{i}"), "a validator without a key")
+
+
+def _weights_are_backed(state, cx, where):
+    """A weight is collateral: what the consensus counts for a validator is
+    never more than its own stake and what is delegated to it now. The
+    weights of a state therefore add up to its supply at most."""
+    stakes: dict[str, int] = {}
+    for validator in state["validators"]:
+        stakes.setdefault(validator["address"], validator["stake"])
+    delegated: dict[str, int] = {}
+    for delegation in state["delegations"].values():
+        delegated[delegation["validator"]] = delegated.get(delegation["validator"], 0) + delegation["amount"]
+    for i, entry in enumerate(state["consensus_set"]):
+        address = entry["address"]
+        if address in stakes and entry["stake"] > stakes[address] + delegated.get(address, 0):
+            refuse("inconsistent", _join(where, f"consensus_set.{i}.stake"), "more than the stake and the delegations")
+
+
+def _one_kind(state, cx, where):
+    """An address is an account or a contract, never both: a contract has
+    no key. It has no nonce either, since an address that has sent a
+    transaction has a key."""
+    for address in state["contracts"]:
+        if address in state["keys"]:
+            refuse("inconsistent", _join(where, f"contracts.{address}"), "a contract that has a key")
+
+
+def _treasury_has_no_key(state, cx, where):
+    """Only a payment that was voted and released moves what the treasury
+    holds: nobody signs for its address. It is then no validator, and it
+    has sent nothing."""
+    if state["treasury_address"] in state["keys"]:
+        refuse("inconsistent", _join(where, "treasury_address"), "an address that has a key")
+
+
+def _guardians_once(state, cx, where):
+    if len(set(state["guardians"])) != len(state["guardians"]):
+        refuse("inconsistent", _join(where, "guardians"), "an address twice")
+
+
+def _guardians_only_guard(state, cx, where):
+    """A guardian signs: it is an account, and not the treasury, which has
+    no key. It is no validator either: the key of a validator is on a
+    machine that signs all day, and that of a guardian is not."""
+    listed = set(_listed(state))
+    for i, guardian in enumerate(state["guardians"]):
+        if guardian == state["treasury_address"] or guardian in state["contracts"] or guardian in listed:
+            refuse("inconsistent", _join(where, f"guardians.{i}"), "the treasury, a contract or a validator")
+
+
+def _who_has_a_key(state, cx, where):
+    listed = set(_listed(state))
+    for address in state["nonces"]:
+        if address not in state["keys"]:
+            refuse("inconsistent", _join(where, f"nonces.{address}"), "a nonce without a key")
+    for address in state["keys"]:
+        if address not in state["nonces"] and address not in listed:
+            refuse("inconsistent", _join(where, f"keys.{address}"), "a key without a nonce, and not of a validator")
+
+
+def _levels_of_keys(state, cx, where):
+    for address, entries in state["keys"].items():
+        levels = [entry["from"] for entry in entries]
+        if any(b <= a for a, b in zip(levels, levels[1:])) or levels[-1] > state["level"] + 1:
+            refuse("inconsistent", _join(where, f"keys.{address}"), "levels that do not grow, or one too far ahead")
+
+
+def _first_key(state, cx, where):
+    for address, entries in state["keys"].items():
+        if ref.account_address(cx.network_id, ref.key_from_text(entries[0]["public_key"])) != address:
+            refuse("inconsistent", _join(where, f"keys.{address}.0"), "not the key whose hash is the address")
+
+
+def key_parts(public_key: bytes) -> tuple[bytes, bytes]:
+    """The two parts of a public key: the ML-DSA part, its first 1,952
+    bytes, and the Ed25519 part, its last 32."""
+    return public_key[:ref.MLDSA_PUBLIC_KEY_BYTES], public_key[ref.MLDSA_PUBLIC_KEY_BYTES:]
+
+
+def _keys_once(state, cx, where):
+    recorded: set[bytes] = set()
+    for address, entries in state["keys"].items():
+        parts: tuple[set[bytes], set[bytes]] = (set(), set())
+        for i, entry in enumerate(entries):
+            public_key = ref.key_from_text(entry["public_key"])
+            if public_key in recorded:
+                refuse("inconsistent", _join(where, f"keys.{address}.{i}"), "a key recorded twice")
+            recorded.add(public_key)
+            for had, part in zip(parts, key_parts(public_key)):
+                if part in had:
+                    refuse("inconsistent", _join(where, f"keys.{address}.{i}"), "a part of an earlier key")
+                had.add(part)
+
+
+def held(state: dict) -> int:
+    """Everything that exists in a state, in mukrn: what accounts hold, and
+    what is bonded."""
+    return (sum(state["balances"].values())
+            + sum(validator["stake"] for validator in state["validators"])
+            + sum(delegation["amount"] for delegation in state["delegations"].values())
+            + sum(leaving["amount"] for leaving in state["delegation_unbonding"])
+            + sum(attestation["bond"] for attestation in state["attestations"].values())
+            + sum(proposal.get("bond", 0) for track in PHASES for proposal in state["governance"][track]))
+
+
+def _supply(state, cx, where):
+    if state["total_supply"] != held(state):
+        refuse("inconsistent", _join(where, "total_supply"), f"not the sum of what exists, {number(held(state))}")
+
+
+def _delegations_name_validators(state, cx, where):
+    listed = set(_listed(state))
+    pairs = [(f"delegations.{delegator}", delegator, delegation["validator"])
+             for delegator, delegation in state["delegations"].items()]
+    pairs += [(f"delegation_unbonding.{i}", leaving["delegator"], leaving["validator"])
+              for i, leaving in enumerate(state["delegation_unbonding"])]
+    for there, delegator, validator in pairs:
+        if validator not in listed or validator == delegator:
+            refuse("inconsistent", _join(where, there), "not a validator other than the delegator")
+
+
+def _nothing_ahead(state, cx, where):
+    levels: list[tuple[str, int]] = []
+    for delegator, delegation in state["delegations"].items():
+        levels += [(f"delegations.{delegator}", tranche["level"]) for tranche in delegation["tranches"]]
+    for i, leaving in enumerate(state["delegation_unbonding"]):
+        levels += [(f"delegation_unbonding.{i}", leaving["unbonding_from"])]
+        levels += [(f"delegation_unbonding.{i}", tranche["level"]) for tranche in leaving["tranches"]]
+    for identifier, attestation in state["attestations"].items():
+        levels += [(f"attestations.{identifier}", attestation[name]) for name in ("issued_at", "revoked_at")
+                   if name in attestation]
+    levels += [(f"consensus_slashes.{i}", vote["level"]) for i, vote in enumerate(state["consensus_slashes"])]
+    for track in PHASES:
+        for i, proposal in enumerate(state["governance"][track]):
+            there = f"governance.{track}.{i}"
+            levels += [(there, proposal["ended_at"])] if "ended_at" in proposal else []
+            levels += [(there, double["level"]) for double in proposal.get("double_votes", [])]
+    for there, level in levels:
+        if level > state["level"]:
+            refuse("inconsistent", _join(where, there), "a level above the level of the state")
+
+
+def _unbonding_is_due_later(state, cx, where):
+    period = state["constants"]["delegation_unbonding_blocks"]
+    leaving = state["delegation_unbonding"]
+    for i, entry in enumerate(leaving):
+        if entry["release_at"] != entry["unbonding_from"] + period or entry["release_at"] <= state["level"]:
+            refuse("inconsistent", _join(where, f"delegation_unbonding.{i}.release_at"), "not the level it is due")
+    if any(b["unbonding_from"] < a["unbonding_from"] for a, b in zip(leaving, leaving[1:])):
+        refuse("inconsistent", _join(where, "delegation_unbonding"), "not in the order in which they ended")
+
+
+def _bonds_are_released(state, cx, where):
+    period = state["constants"]["attestation_unbonding_blocks"]
+    for identifier, attestation in state["attestations"].items():
+        if "revoked_at" in attestation and attestation["revoked_at"] + period <= state["level"] \
+                and attestation["bond"] != 0:
+            refuse("inconsistent", _join(where, f"attestations.{identifier}.bond"), "a bond that is overdue")
+
+
+def _slashed_votes(state, cx, where):
+    period = state["constants"]["delegation_unbonding_blocks"]
+    seen = set()
+    for i, vote in enumerate(state["consensus_slashes"]):
+        offence = (vote["validator"], vote["kind"], vote["level"], vote["round"])
+        if offence in seen:
+            refuse("inconsistent", _join(where, f"consensus_slashes.{i}"), "the same vote twice")
+        seen.add(offence)
+        if vote["level"] + period <= state["level"]:
+            refuse("inconsistent", _join(where, f"consensus_slashes.{i}"), "a vote too old to be kept")
+
+
+def _proposals_in_order(state, cx, where):
+    for track in PHASES:
+        proposals = state["governance"][track]
+        identifiers = [proposal["proposal_id"] for proposal in proposals]
+        if len(set(identifiers)) != len(identifiers):
+            refuse("inconsistent", _join(where, f"governance.{track}"), "an identifier twice")
+        if any(b["submitted_at"] < a["submitted_at"] for a, b in zip(proposals, proposals[1:])):
+            refuse("inconsistent", _join(where, f"governance.{track}"), "not in the order of submission")
+
+
+def _bonds_of_proposals(state, cx, where):
+    for track in PHASES:
+        for i, proposal in enumerate(state["governance"][track]):
+            if "bond" in proposal and proposal["bond"] != state["constants"][track + "_bond"]:
+                refuse("inconsistent", _join(where, f"governance.{track}.{i}.bond"), "not the bond of its track")
+
+
+def _phases_are_current(state, cx, where):
+    for track in PHASES:
+        for i, proposal in enumerate(state["governance"][track]):
+            if proposal["phase"] in OVER[track]:
+                continue
+            start, end = phase_window(track, proposal, state["constants"])
+            if not start <= state["level"] < end:
+                refuse("inconsistent", _join(where, f"governance.{track}.{i}.phase"), "not the phase of this level")
+
+
+def _over(state: dict):
+    """The proposals of a state that are over, each with its track and where it stands."""
+    for track in PHASES:
+        for i, proposal in enumerate(state["governance"][track]):
+            if proposal["phase"] in OVER[track] and "ended_at" in proposal:
+                yield track, f"governance.{track}.{i}", proposal
+
+
+def _released(state: dict):
+    """The payments of a state that a guardian other than the first has released."""
+    for i, proposal in enumerate(state["governance"]["treasury"]):
+        if "released_by" in proposal:
+            yield f"governance.treasury.{i}.released_by", proposal
+
+
+def _released_by_another_guardian(state, cx, where):
+    for there, proposal in _released(state):
+        if proposal["released_by"] not in state["guardians"][1:]:
+            refuse("inconsistent", _join(where, there), "not a guardian other than the first")
+
+
+def _released_after_the_delay(state, cx, where):
+    constants = state["constants"]
+    for there, proposal in _released(state):
+        voted = phase_ends("treasury", proposal, constants)["voting"]
+        if voted + constants["guardian_delay_blocks"] > state["level"]:
+            refuse("inconsistent", _join(where, there), "released before the delay had passed")
+
+
+def _ended_in_time(state, cx, where):
+    for track, there, proposal in _over(state):
+        if not ended_in_time(track, proposal, state["constants"]):
+            refuse("inconsistent", _join(where, there + ".ended_at"), "not a level at which it could end")
+
+
+def _proposals_leave(state, cx, where):
+    period = state["constants"]["delegation_unbonding_blocks"]
+    for _track, there, proposal in _over(state):
+        if proposal["ended_at"] + period <= state["level"]:
+            refuse("inconsistent", _join(where, there), "a proposal over for too long")
+
+
+def _voters_are_validators(state, cx, where):
+    """A double vote needs no check of its own: its voter has a vote in
+    the same phase, which the table of the proposal requires."""
+    listed = set(_listed(state))
+    voters: list[tuple[str, str]] = []
+    for i, proposal in enumerate(state["governance"]["protocol"]):
+        there = f"governance.protocol.{i}"
+        voters += [(there, voter) for name in ("exploration_votes", "adoption_votes") for voter in proposal[name]]
+    for i, proposal in enumerate(state["governance"]["treasury"]):
+        voters += [(f"governance.treasury.{i}", voter) for voter in proposal["votes"]]
+    voters += [(f"consensus_slashes.{i}", vote["validator"]) for i, vote in enumerate(state["consensus_slashes"])]
+    for there, voter in voters:
+        if voter not in listed:
+            refuse("inconsistent", _join(where, there), "not a validator")
+
+
+STATE = Obj("state", [
+    ("level", LEVEL, "required"),
+    ("chain_id", CHAIN, "required"),
+    ("state_root_function", Choice(("json", "trie")), "required"),
+    ("total_supply", AMOUNT, "required"),
+    ("treasury_address", ADDRESS, "required"),
+    ("guardians", List(ADDRESS, 3, LIMITS["guardians"]), "required"),
+    ("balances", Map(ADDRESS, POSITIVE, 0, None), "required"),
+    ("nonces", Map(ADDRESS, Int(1, INT_MAX), 0, None), "required"),
+    ("contracts", Map(ADDRESS, CONTRACT, 0, None), "required"),
+    ("keys", Map(ADDRESS, List(KEY_ENTRY, 1, None), 0, None), "required"),
+    ("validators", List(VALIDATOR, 1, LIMITS["validators"]), "required"),
+    ("consensus_set", List(VALIDATOR, 1, LIMITS["validators"]), "required"),
+    ("delegations", Map(ADDRESS, DELEGATION, 0, None), "required"),
+    ("delegation_unbonding", List(UNBONDING, 0, None), "required"),
+    ("attestations", Map(HASH, ATTESTATION, 0, None), "required"),
+    ("consensus_slashes", List(SLASHED_VOTE, 0, None), "required"),
+    ("governance", GOVERNANCE, "required"),
+    ("parameters", STATE_PARAMETERS, "required"),
+    ("constants", CONSTANTS, "required"),
+], [
+    ("`validators` holds an address once, and `consensus_set` holds the same addresses in the same order.",
+     _validators_once),
+    ("The weight of a validator in `consensus_set` is not above its stake plus the amounts delegated to it.",
+     _weights_are_backed),
+    ("Every validator has a key in `keys`.", _validators_have_keys),
+    ("An address of `contracts` is not in `keys`.", _one_kind),
+    ("`treasury_address` is not in `keys`.", _treasury_has_no_key),
+    ("`guardians` holds an address once.", _guardians_once),
+    ("A guardian is not `treasury_address`, an address of `contracts` or a validator.", _guardians_only_guard),
+    ("Every address of `nonces` is in `keys`, and every address of `keys` is in `nonces` or is a validator.",
+     _who_has_a_key),
+    ("In `keys`, the levels `from` of an address grow, and none is above `level` plus 1.", _levels_of_keys),
+    ("The first key of an address is the key whose hash is that address.", _first_key),
+    ("A key stands once in `keys`, and no key of an address has the ML-DSA part or the Ed25519 part of an earlier "
+     "key of that address.", _keys_once),
+    ("`total_supply` is the sum of `balances`, of the stakes of `validators`, of the amounts of `delegations` and of "
+     "`delegation_unbonding`, of the bonds of `attestations` and of the bonds of the proposals of `governance`.",
+     _supply),
+    ("A delegation names a validator other than its delegator, and so does a delegation that is unbonding.",
+     _delegations_name_validators),
+    ("Nothing happened after `level`: the level of a tranche, `unbonding_from`, `issued_at`, `revoked_at`, the level "
+     "of a slashed vote, `ended_at` and the level of a double vote are not above it.", _nothing_ahead),
+    ("A delegation that is unbonding is released `delegation_unbonding_blocks` levels after `unbonding_from`, at a "
+     "level above `level`, and the list is in the order in which the delegations ended.", _unbonding_is_due_later),
+    ("An attestation revoked `attestation_unbonding_blocks` levels before `level`, or earlier, holds no bond.",
+     _bonds_are_released),
+    ("No two slashed votes are of the same validator, kind, level and round, and none is "
+     "`delegation_unbonding_blocks` levels old or more.", _slashed_votes),
+    ("The proposals of a track are in the order of their submission, and no two have the same `proposal_id`.",
+     _proposals_in_order),
+    ("The bond of a proposal is `protocol_bond` or `treasury_bond`, as its track says.", _bonds_of_proposals),
+    ("A proposal that is not over is in the phase of its level: that phase started at `level` or before, and ends "
+     "above it.", _phases_are_current),
+    ("`released_by` is a guardian other than the first.", _released_by_another_guardian),
+    ("When `released_by` is present, the end of `voting` plus `guardian_delay_blocks` is not above `level`.",
+     _released_after_the_delay),
+    ("A protocol proposal that is over ended when a vote did: at the end of `adoption` if it is activated, of "
+     "`exploration` or of `adoption` if it is rejected. A treasury proposal that is over ended at the end of "
+     "`voting` or while it waited: after the end of `voting` if it is executed, and not after the end of `passed`.",
+     _ended_in_time),
+    ("A proposal that is over ended less than `delegation_unbonding_blocks` levels before `level`.",
+     _proposals_leave),
+    ("A vote and a slashed vote are those of a validator.", _voters_are_validators),
+])
+
+
+def _hashes_together(account, cx, where):
+    if ("code_hash" in account) != ("storage_root" in account):
+        refuse("inconsistent", where, "code_hash and storage_root go together")
+
+
+ACCOUNT = Obj("account", [
+    ("balance", AMOUNT, "required"),
+    ("nonce", NONCE, "required"),
+    ("code_hash", HASH, "optional"),
+    ("storage_root", HASH, "optional"),
+], [
+    ("`code_hash` and `storage_root` are present together.", _hashes_together),
+])
+
+
+# -- the genesis --------------------------------------------------------------
+
+EMPTY_AT_FIRST = ("nonces", "contracts", "delegations", "delegation_unbonding", "attestations", "consensus_slashes")
+
+
+def _starts_at_zero(genesis, cx, where):
+    if genesis["state"]["level"] != 0:
+        refuse("inconsistent", _join(where, "state.level"), "not 0")
+
+
+def _nothing_yet(genesis, cx, where):
+    state = genesis["state"]
+    for name in EMPTY_AT_FIRST:
+        if state[name]:
+            refuse("inconsistent", _join(where, f"state.{name}"), "not empty")
+    for track in PHASES:
+        if state["governance"][track]:
+            refuse("inconsistent", _join(where, f"state.governance.{track}"), "not empty")
+
+
+def _keys_of_validators(genesis, cx, where):
+    """Every key of a validator is current from level 0. There is then one
+    only, since the levels of the keys of an address grow."""
+    state = genesis["state"]
+    for address in _listed(state):
+        if any(entry["from"] != 0 for entry in state["keys"].get(address, [])):
+            refuse("inconsistent", _join(where, f"state.keys.{address}"), "not one key, current from level 0")
+
+
+def _snapshot_is_the_set(genesis, cx, where):
+    if genesis["state"]["consensus_set"] != genesis["state"]["validators"]:
+        refuse("inconsistent", _join(where, "state.consensus_set"), "not validators")
+
+
+class Genesis(Obj):
+    """A genesis is read on the network it names: its `network_id` is in
+    the checksum of every address it holds, whatever network the reader
+    had in mind."""
+
+    def check(self, value, cx, where):
+        if isinstance(value, dict) and "network_id" in value:
+            NETWORK.check(value["network_id"], cx, _join(where, "network_id"))
+            cx = Context(bytes.fromhex(value["network_id"]))
+        super().check(value, cx, where)
+
+
+GENESIS = Genesis("genesis", [
+    ("version", Int(1, 1), "required"),
+    ("scheme", Int(1, 1), "required"),
+    ("network_id", NETWORK, "required"),
+    ("timestamp", TIME, "required"),
+    ("state", STATE, "required"),
+], [
+    ("The `level` of `state` is 0.", _starts_at_zero),
+    ("`nonces`, `contracts`, `delegations`, `delegation_unbonding`, `attestations`, `consensus_slashes` and the two "
+     "lists of `governance` are empty.", _nothing_yet),
+    ("Each validator has one key, current from level 0.", _keys_of_validators),
+    ("`consensus_set` is `validators`.", _snapshot_is_the_set),
+])
+
+SCHEMAS.update({"state": STATE, "account": ACCOUNT, "genesis": GENESIS})
+
+CHAPTER_2 = (STATE, CONTRACT, KEY_ENTRY, VALIDATOR, DELEGATION, TRANCHE, UNBONDING, ATTESTATION, SLASHED_VOTE,
+             GOVERNANCE, PROTOCOL_PROPOSAL, DOUBLE_VOTE, TREASURY_PROPOSAL, STATE_PARAMETERS, CONSTANTS, ACCOUNT,
+             GENESIS)
+
+
+def state_root(network_id: bytes, state: dict) -> bytes:
+    """The root of a state, by the function the state names (note, section 4.6)."""
+    return ref.state_root(network_id, state)
+
+
+def accounts(network_id: bytes, state: dict) -> dict[str, dict]:
+    """The accounts of a state, as the state trie holds them: one for each
+    address of `balances`, `nonces` or `contracts`."""
+    addresses = sorted(set().union(*(state[name] for name in ref.ACCOUNT_MAPS)))
+    return {address: ref.account_object(network_id, state, address) for address in addresses}
+
+
+FIRST_PARENT = "0" * 96
+
+
+def first_header(genesis: dict) -> dict:
+    """The nine fields of the block of level 0. Nobody signs it and it does
+    not travel: a node computes it from its genesis."""
+    network_id, state = bytes.fromhex(genesis["network_id"]), genesis["state"]
+    nothing = ref.merkle_root(network_id, []).hex()
+    return {"version": 1, "level": 0, "payload_round": 0, "timestamp": genesis["timestamp"],
+            "parent_hash": FIRST_PARENT, "state_root": state_root(network_id, state).hex(),
+            "txs_root": nothing, "witness_root": nothing, "proposer": state["validators"][0]["address"]}
+
+
+# The same nine fields, as the document describes them.
+FIRST_HEADER = [
+    ("`version`", "1"),
+    ("`level`", "0"),
+    ("`payload_round`", "0"),
+    ("`timestamp`", "the `timestamp` of the genesis"),
+    ("`parent_hash`", "96 zeros"),
+    ("`state_root`", "the root of the first state"),
+    ("`txs_root`", "the root of a tree with no item"),
+    ("`witness_root`", "the same root"),
+    ("`proposer`", "the first address of `validators`"),
+]
+
+
+def first_block_hash(genesis: dict) -> bytes:
+    """The hash of the block of level 0: the parent of the block of level 1."""
+    return ref.H("kern.block", bytes.fromhex(genesis["network_id"]), ref.canonical_json(first_header(genesis)))
+
+
+# -- what a block charges (section 9.16) --------------------------------------
+# A block holds only transactions it charges. The rules below say when it
+# does not: each one makes the block invalid. A schema verifies no signature,
+# so the two rules of the note on signatures and keys are sentences of the
+# document only.
+
+BLOCK_RULES = {
+    "block_too_large": "The sizes of its transactions add up to `max_block_bytes` at most.",
+    "fee_under_floor": "When `fee_floor_enabled` is `true`, the fee of each transaction is at least "
+                       "`fee_floor_base` plus `fee_floor_per_byte` times its size.",
+    "wrong_chain": "The `chain_id` of each transaction is the `chain_id` of the state.",
+    "wrong_nonce": "The `nonce` of each transaction is the nonce of its sender when its turn comes: the number of "
+                   "transactions of that sender applied before it. A sender whose nonce is 2^63 - 1 sends nothing "
+                   "more: its nonce could not go up.",
+    "unpaid_fee": "The sender of each transaction holds its `fee` when its turn comes.",
+    "sent_by_treasury": "No transaction is sent by `treasury_address`.",
+}
+SIGNATURE_RULES = [
+    "The sender of each transaction has a key: the one `keys` holds for it, in which case the transaction carries "
+    "no `public_key`, or the one the transaction carries, whose hash is the sender and which no address has had.",
+    "Every signature verifies: `signature` with the key of the sender, and in a `rotate_key` `second_signature` "
+    "with the new key.",
+]
+
+
+def _moved(table: dict, address: str, by: int) -> None:
+    """A table of amounts after `by` is added to what an address holds. A
+    balance of zero is not written."""
+    now = table.get(address, 0) + by
+    if now:
+        table[address] = now
+    else:
+        table.pop(address, None)
+
+
+def charge(state: dict, proposer: str, transactions: list[dict]) -> dict:
+    """What a block of transfers does to the balances and the nonces of a
+    state, or the rule that makes it invalid. `state` holds `chain_id`,
+    `treasury_address`, `parameters`, `balances` and `nonces`.
+
+    Each transaction pays its fee to the proposer and takes the next nonce
+    of its sender, whatever its operation does next. A transfer whose
+    sender does not hold the amount fails: it stays in the block, and has
+    paid."""
+    parameters = state["parameters"]
+    if sum(transaction_size(tx) for tx in transactions) > parameters["max_block_bytes"]:
+        return {"valid": False, "rule": "block_too_large"}
+    balances, nonces = dict(state["balances"]), dict(state["nonces"])
+    failed = []
+    for i, tx in enumerate(transactions):
+        floor = parameters["fee_floor_base"] + parameters["fee_floor_per_byte"] * transaction_size(tx)
+        if parameters["fee_floor_enabled"] and tx["fee"] < floor:
+            return {"valid": False, "rule": "fee_under_floor", "at": i}
+        if tx["sender"] == state["treasury_address"]:
+            return {"valid": False, "rule": "sent_by_treasury", "at": i}
+        if tx["chain_id"] != state["chain_id"]:
+            return {"valid": False, "rule": "wrong_chain", "at": i}
+        if tx["nonce"] != nonces.get(tx["sender"], 0) or tx["nonce"] == INT_MAX:
+            return {"valid": False, "rule": "wrong_nonce", "at": i}
+        if balances.get(tx["sender"], 0) < tx["fee"]:
+            return {"valid": False, "rule": "unpaid_fee", "at": i}
+        _moved(balances, tx["sender"], -tx["fee"])
+        _moved(balances, proposer, tx["fee"])
+        nonces[tx["sender"]] = tx["nonce"] + 1
+        if balances.get(tx["sender"], 0) < tx["amount"]:
+            failed.append(i)
+            continue
+        _moved(balances, tx["sender"], -tx["amount"])
+        _moved(balances, tx["recipient"], tx["amount"])
+    return {"valid": True, "balances": balances, "nonces": nonces, "failed": failed}
+
+
+# -- deciding proposals (section 9.16) ----------------------------------------
+
+DECIDING_RULES = [
+    "The proposals of the protocol track come first, then those of the treasury track; in each track they are "
+    "taken in the order of the list.",
+    "Each proposal is decided, and everything that follows from the decision is done, before the next one is "
+    "looked at.",
+    "A proposal whose vote does not pass is rejected.",
+    "A protocol proposal whose second vote passes is activated: its `params` replace the parameters of those "
+    "names, and its `swap` sets `state_root_function`. It is rejected instead when its `params` would leave "
+    "`i_min_ppm` above `i_max_ppm`.",
+    "A treasury proposal whose vote passes is not paid: it waits, in the phase `passed`, and its bond stays held.",
+    "A payment that still waits at the end of `passed` is rejected.",
+    "The bond of a proposal that is activated returns to its submitter. Half the bond of a proposal that is "
+    "rejected is burned, rounded down, and `total_supply` is lowered by it; the rest goes to the treasury.",
+]
+
+
+def decide(before: dict, protocol: list[dict], treasury: list[dict]) -> dict:
+    """What the proposals that are decided at a level do, taken in the
+    order of their lists. `before` holds `parameters`,
+    `state_root_function`, what the treasury holds (`treasury`) and the two
+    bonds; a protocol proposal is its `payload` and whether its vote
+    passes; a treasury proposal is the phase that ends, `voting` or
+    `passed`, and when its vote ends whether it passes. Returns the phases
+    the proposals are in afterwards, and what `before` has become, with
+    what was burned. Nothing is paid here: a payment is made by the
+    transaction of a guardian (`guard`)."""
+    parameters = dict(before["parameters"])
+    function, held_by_treasury, burned = before["state_root_function"], before["treasury"], 0
+    phases: dict[str, list[str]] = {"protocol": [], "treasury": []}
+
+    def lose(bond: int) -> None:
+        nonlocal held_by_treasury, burned
+        burned += bond // 2
+        held_by_treasury += bond - bond // 2
+
+    for proposal in protocol:
+        after = {**parameters, **proposal["payload"].get("params", {})}
+        if proposal["passes"] and after["i_min_ppm"] <= after["i_max_ppm"]:
+            parameters = after
+            function = proposal["payload"].get("to", function)
+            phases["protocol"].append("activated")
+        else:
+            lose(before["protocol_bond"])
+            phases["protocol"].append("rejected")
+    for proposal in treasury:
+        if proposal["phase"] == "voting" and proposal["passes"]:
+            phases["treasury"].append("passed")
+        else:
+            lose(before["treasury_bond"])
+            phases["treasury"].append("rejected")
+    return {"protocol": phases["protocol"], "treasury": phases["treasury"], "parameters": parameters,
+            "state_root_function": function, "treasury_holds": held_by_treasury, "burned": burned}
+
+
+# -- what a guardian does (section 9.16) ---------------------------------------
+# A payment that waits is paid or dropped by the transaction of a guardian.
+# An operation that breaks one of these rules fails: it stays in its block,
+# has paid its fee, and changes nothing else.
+
+GUARDIAN_RULES = {
+    "not_a_guardian": "Its sender is a guardian.",
+    "not_waiting": "It names a proposal of the treasury track whose `phase` is `passed`.",
+    "not_the_first": "Only the first guardian cancels.",
+    "too_early": "A guardian other than the first releases a payment in a block whose level is the end of `voting` "
+                 "plus `guardian_delay_blocks`, or higher.",
+    "released_twice": "A guardian other than the first releases a payment once.",
+    "unfunded": "A release that pays finds the sum of the amounts of the payment in the treasury. Otherwise it "
+                "fails, and the payment goes on waiting.",
+}
+
+
+def guard(before: dict, operations: list[dict]) -> dict:
+    """What the transactions of guardians in a block do to the payments
+    that wait. `before` holds the level of the block (`level`), the
+    `guardians`, what the treasury holds (`treasury`), `treasury_bond`,
+    `guardian_delay_blocks`, and the treasury proposals by identifier
+    (`payments`): each one is its `phase` as the block finds it, the level
+    at which its vote ended (`voted`), the sum of its amounts (`total`),
+    the part of that sum whose recipient is the treasury itself
+    (`to_itself`) and, where there is one, `released_by`. An operation is
+    its `sender`, its `kind` and the `proposal_id` it names.
+
+    Returns what each operation did, `paid`, `recorded` or `cancelled`, or
+    the rule that makes it fail; then what the treasury holds, what was
+    burned, and each payment as the operations leave it."""
+    guardians = before["guardians"]
+    held_by_treasury, burned = before["treasury"], 0
+    payments = {identifier: dict(payment) for identifier, payment in before["payments"].items()}
+    did: list[str] = []
+    for operation in operations:
+        sender, payment = operation["sender"], payments.get(operation["proposal_id"])
+        if sender not in guardians:
+            did.append("not_a_guardian")
+            continue
+        if payment is None or payment["phase"] != "passed":
+            did.append("not_waiting")
+            continue
+        first = sender == guardians[0]
+        if operation["kind"] == "cancel_payment":
+            if not first:
+                did.append("not_the_first")
+                continue
+            burned += before["treasury_bond"] // 2
+            held_by_treasury += before["treasury_bond"] - before["treasury_bond"] // 2
+            payment["phase"] = "rejected"
+            payment.pop("released_by", None)
+            did.append("cancelled")
+            continue
+        if not first:
+            if before["level"] < payment["voted"] + before["guardian_delay_blocks"]:
+                did.append("too_early")
+                continue
+            if payment.get("released_by") == sender:
+                did.append("released_twice")
+                continue
+            if "released_by" not in payment:
+                payment["released_by"] = sender
+                did.append("recorded")
+                continue
+        if payment["total"] > held_by_treasury:
+            did.append("unfunded")
+            continue
+        held_by_treasury -= payment["total"] - payment["to_itself"]
+        payment["phase"] = "executed"
+        payment.pop("released_by", None)
+        did.append("paid")
+    return {"did": did, "treasury_holds": held_by_treasury, "burned": burned,
+            "payments": {identifier: {name: payment[name] for name in ("phase", "released_by") if name in payment}
+                         for identifier, payment in payments.items()}}
+
+
+# -- one request for blocks at a time (section 9.8) ---------------------------
+
+ASKING_RULES = [
+    "A node has one `get_blocks` waiting on a connection at most: it sends no other before the answer comes.",
+    "A `blocks` frame is the answer to the request that waits. A node that receives one while none waits refuses "
+    "it, as it refuses an answer that breaks one of the two rules it can check.",
+    "A node answers the requests of a connection in the order it receives them.",
+    "A node that reads four bytes that announce more than a frame can hold closes the connection: it reads no "
+    "further, so it cannot tell where the next frame would start.",
+]
+
+
+def exchange(steps: list[dict]) -> list[str]:
+    """What happens on a connection, as the node that asks sees it. A step
+    is a request the node sends (`ask`: the first and the last level), a
+    `blocks` frame it receives (`blocks`: the levels of its blocks), or the
+    four bytes it reads before a frame (`prefix`, in hexadecimal). Each
+    step is `accepted` or `refused`; after four bytes that announce too
+    much the connection is `closed`, and so is every step that follows."""
+    verdicts: list[str] = []
+    waiting: tuple[int, int] | None = None
+    closed = False
+    for step in steps:
+        if closed:
+            verdicts.append("closed")
+        elif "ask" in step:
+            verdicts.append("refused" if waiting else "accepted")
+            waiting = waiting or (step["ask"][0], step["ask"][1])
+        elif "blocks" in step:
+            answer_to = waiting and answer_verdict(waiting[0], waiting[1], step["blocks"])
+            verdicts.append("accepted" if answer_to == "accepted" else "refused")
+            if answer_to == "accepted":
+                waiting = None
+        else:
+            try:
+                announced(bytes.fromhex(step["prefix"]))
+                verdicts.append("accepted")
+            except Refused:
+                verdicts.append("refused")
+                closed = True
+    return verdicts
+
+
+def serve(held: Mapping[int, int], requests: list[tuple[int, int]]) -> list[list[int]]:
+    """What a node sends on a connection on which it received these
+    requests: one answer for each, in the order it received them."""
+    return [answer(held, first, last) for first, last in requests]
+
+
+# ---------------------------------------------------------------------------
 # Reception
 # ---------------------------------------------------------------------------
 
@@ -1201,7 +2197,7 @@ def tables() -> dict[str, list[tuple[str, ...]]]:
     common = TRANSACTION.variants["transfer"]
     kind_fields = {name for fields in KINDS.values() for name in fields}
     out["Fields of every transaction"] = [
-        (f"`{name}`", "one of the thirteen kinds below" if name == "kind" else type_.cell(),
+        (f"`{name}`", "one of the fifteen kinds below" if name == "kind" else type_.cell(),
          "signed" if name not in WITNESS_FIELDS else "witness", presence)
         for name, type_, presence in common.fields if name not in kind_fields
     ] + [("`second_signature`", SIGNATURE.cell(), "witness", "required in `rotate_key`, absent elsewhere")]
@@ -1221,7 +2217,20 @@ def tables() -> dict[str, list[tuple[str, ...]]]:
         out[obj.name[0].upper() + obj.name[1:]] = obj.rows()
     for kind, frame in FRAMES.items():
         out[f"Frame `{kind}`"] = [row for row in frame.rows() if row[0] != "`kind`"]
+    for obj in CHAPTER_2:
+        out[heading(obj)] = obj.rows()
+    out["Block of level 0"] = list(FIRST_HEADER)
+    out["Ends of phases"] = [
+        (track, f"`{phase}`",
+         (f"the end of `{PHASES[track][i - 1][0]}`" if i else "`submitted_at`") + f" plus `{blocks}`")
+        for track in PHASES for i, (phase, blocks) in enumerate(PHASES[track])]
     return out
+
+
+def heading(obj: Obj) -> str:
+    """The heading a table stands under in the document: the name of its
+    object, with a capital."""
+    return obj.name[0].upper() + obj.name[1:]
 
 
 def depths() -> list[tuple[str, str]]:
@@ -1230,6 +2239,7 @@ def depths() -> list[tuple[str, str]]:
     rows += [(name, SCHEMAS[name].depth()) for name in ("vote", "propose message", "certificate", "header", "block",
                                                          "final block")]
     rows += [(f"frame `{kind}`", frame.depth()) for kind, frame in FRAMES.items()]
+    rows += [(name, SCHEMAS[name].depth()) for name in ("state", "genesis")]
     return [(name if name.startswith("`") or name.startswith("frame") else f"`{name}`", str(depth))
             for name, depth in rows]
 
@@ -1244,5 +2254,12 @@ def rules() -> dict[str, list[str]]:
         if frame.rules:
             out[f"Frame `{kind}`"] = [sentence for sentence, _ in frame.rules]
     out["Answering `get_blocks`"] = [sentence for sentence, _ in ANSWER_RULES] + ANSWERING_RULES
+    out["One request at a time"] = list(ASKING_RULES)
+    for obj in CHAPTER_2:
+        if obj.rules:
+            out[heading(obj)] = [sentence for sentence, _ in obj.rules]
+    out["What a block charges"] = list(BLOCK_RULES.values()) + SIGNATURE_RULES
+    out["Deciding proposals"] = list(DECIDING_RULES)
+    out["What a guardian does"] = list(GUARDIAN_RULES.values())
     return out
 

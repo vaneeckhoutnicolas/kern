@@ -6,10 +6,14 @@ kern.transaction
 
 Transaction types in Kern.
 
-Three operation kinds are supported in the reference implementation:
+Twelve operation kinds are supported (`OpKind`). Three move value and run
+contracts:
 1. TRANSFER  — move native KRN tokens from sender to recipient.
-2. ORIGINATE — deploy a Skald contract; storage initialized from `params`.
+2. ORIGINATE — deploy a Skald contract; storage initialized from `initial_storage`.
 3. CALL      — invoke an entry point of an originated contract.
+
+The nine others are the operations of governance, delegation, attestation
+and slashing, which kern.chain applies.
 
 Each transaction carries a nonce (per-sender, monotonically increasing),
 a fee paid to the baker, and a gas limit. The transaction body is signed

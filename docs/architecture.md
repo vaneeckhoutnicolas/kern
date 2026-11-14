@@ -40,7 +40,7 @@ This document describes how the reference Kern node is organized. The code is in
 ## Modules
 
 - **`crypto.py`** — Ed25519 keys, blake2b-256 hashing, base58check encoding, `kn1`/`kpk` address and key prefixes. All hashing in Kern is domain-separated via blake2b keys (`kern.block`, `kern.tx`, `kern.addr`, `kern.state`, `kern.merkle`).
-- **`transaction.py`** — The `Transaction` dataclass, the three operation kinds (`TRANSFER`, `ORIGINATE`, `CALL`), signing and verification, and the helpers `make_transfer`, `make_origination`, `make_call`.
+- **`transaction.py`** — The `Transaction` dataclass, the twelve operation kinds (`OpKind`: `TRANSFER`, `ORIGINATE`, `CALL`, and nine operations of governance, delegation, attestation and slashing), signing and verification, and the helpers `make_transfer`, `make_origination`, `make_call`.
 - **`block.py`** — `BlockHeader`, `Block`, and the merkle root over transaction hashes.
 - **`chain.py`** — The state machine. Defines the canonical state layout (balances, nonces, contracts, validators), the per-transaction application rules, block validation, and the `Chain` in-memory wrapper.
 - **`consensus.py`** — Stake-weighted proposer selection, block proposal (with mempool draining), and the `BakerConfig`.
