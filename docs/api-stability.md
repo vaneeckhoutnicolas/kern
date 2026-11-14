@@ -954,7 +954,7 @@ With one request waiting at most, the answer to a request is the next `blocks` f
 | The treasury address | Optional | Required; it has no key, and no transaction is sent by it | Only a payment that was voted and released moves what the treasury holds |
 | A treasury proposal whose vote passes | Is paid by the block in which its vote ends | Waits, in the phase `passed`, until a guardian releases it; it is rejected at the end of its wait | A payment needs a vote and a guardian |
 | Guardians of the treasury | None | `guardians`: 3 to 8 accounts, fixed by the genesis | They release a payment or cancel it, and can do nothing else |
-| What a guardian sends | Nothing | `release_payment` and `cancel_payment`: fifteen kinds of transactions | A guardian acts by a transaction, in a block |
+| What a guardian sends | Nothing | `release_payment` and `cancel_payment`, two of the fifteen kinds of transactions | A guardian acts by a transaction, in a block |
 | How long a payment waits | It does not wait | `guardian_delay_blocks` and `treasury_release_blocks`, constants of the network | The first guardian has a time to itself, and a wait has an end |
 | Genesis | Settings from which the node builds its first state | The first state itself, with the network, the moment, the version and the scheme | Two clients read the same first state |
 | The account of the state trie | `code_hash` and `storage_root` are `null` when there is no contract | Absent | Note, 4.3 |
@@ -1023,7 +1023,7 @@ The rules are what the steps of section 9.16 keep and rely on: an implementation
 Three things hold for the whole state:
 
 - **No default.** Every field is required, and every parameter has a value. A state leaves no value to the client that reads it.
-- **Nothing derived, no history.** The state holds what the next block needs. An index that can be computed from another table is not part of it, and neither is the record of what a proposal went through: that history is in the blocks.
+- **No derived index, no separate history.** The state holds what the next block needs. An index that can be computed from another table is not part of it, and neither is the record of what a proposal went through: that history is in the blocks.
 - **No zero written.** An address that holds nothing is not in `balances`, and an address that has sent nothing is not in `nonces`. Two states that hold the same things are the same object, whatever led to them.
 
 Section 9.3 bounds every list and every map of an object that travels. A state is bounded where a transaction is (the code and the fields of a contract, a claim) and where the number of validators bounds it (the votes on a proposal). Its tables by address and its lists of proposals grow with the network, and the tables below say `any number`.
@@ -1082,7 +1082,7 @@ The rules on `contracts`, `nonces` and `keys` are those of the note for addresse
 
 `total_supply` is not a counter kept beside the tables: it is what they add up to. What a block mints enters a balance, what it burns leaves one, and a stake, a delegation or a bond is an amount that left a balance and has not come back. Every amount of a state is therefore a part of its supply, and the supply never passes 2^63 - 1 (section 9.16).
 
-**The treasury.** `treasury_address` holds what the protocol sets aside: its share of each reward, and the half of a lost bond that is not burned. It has no key, and no transaction is sent by it (section 9.16). One thing moves what it holds: a treasury proposal that the validators voted and that a guardian released. It is therefore never a validator, and whoever must sign to spend funds of its own, a foundation for instance, holds another address. It can be the address of a contract, which has no key either, and anyone can send funds to it.
+**The treasury.** `treasury_address` holds what the protocol sets aside: its share of each reward, and the half of a lost bond that is not burned. It has no key, and no transaction is sent by it (section 9.16). One thing moves what it holds: a treasury proposal that the validators voted and that a guardian released. It is therefore never a validator, and whoever must sign to spend funds of its own, a foundation for instance, holds another address. It can be the address of a contract, which has no key either, and anyone can send funds to it. Being a contract opens no other way out: the execution of a contract takes nothing from what `treasury_address` holds, whatever its code says.
 
 **The guardians.** `guardians` lists three to eight accounts, fixed by the genesis like the validators: no kind of transaction adds one or removes one, and a guardian changes its key with a `rotate_key`, like any account. The first of the list is the first guardian. A guardian does one thing: it releases a payment that the validators voted, or, for the first one, cancels it (section 9.16). It holds nothing of the treasury, pays nothing that was not voted, and names no recipient. A guardian signs, so it is neither the treasury nor a contract; and it is not a validator, whose key stays on a machine that signs at every block.
 
@@ -1296,6 +1296,8 @@ The sharing of a reward, the weights and the thresholds of a vote and the rates 
 
 With the function `trie`, the three tables keyed by address leave the object that is hashed, and one hash stands for them: `accounts_root`, the root of the state trie (note, section 4.6). Every other field of the state is hashed as it is, with both functions: the key registry, the validators, the proposals, the parameters and the constants are under the root whichever function computes it.
 
+That trie is the one the note defines. The page [merkle-trie.md](merkle-trie.md) describes the trie of the devnet, which has keys of 256 bits, another hash function and `null` members in its accounts: it is not a reference for structure version 1.
+
 The trie holds one account for each address that is in `balances`, in `nonces` or in `contracts`:
 
 #### Account
@@ -1437,7 +1439,7 @@ Decisions are settled one at a time: the half of a bond that the treasury keeps 
 
 #### What a guardian does
 
-A treasury proposal whose vote passed is a payment that waits. Two kinds of transactions act on it, a `release_payment` and a `cancel_payment`, each of which names it by its `proposal_id` (section 9.5). The first guardian releases a payment alone, from the block that follows the end of its vote. Two other guardians release it together, once `guardian_delay_blocks` levels have passed since the end of that vote: the release of the first of them is recorded in `released_by`, and the release of a second one makes the payment. The first guardian, and no other, cancels a payment that waits.
+A treasury proposal whose vote passed is a payment that waits. Two kinds of transactions act on it, a `release_payment` and a `cancel_payment`, each of which names it by its `proposal_id` (section 9.5). The first guardian releases a payment alone, from the block that follows the end of its vote. Two other guardians release it together, once `guardian_delay_blocks` levels have passed since the end of that vote: the release of the first of them is recorded in `released_by`, and the release of a second one makes the payment. That second guardian is not the one recorded in `released_by`: a guardian other than the first never makes a payment alone. The first guardian, and no other, cancels a payment that waits.
 
 A payment that is made is executed in the transaction that releases it: each recipient is paid, the treasury itself when it is one of them, its bond returns to its submitter, and `ended_at` is the level of the block. A payment that is cancelled is rejected in the transaction that cancels it, and its bond goes where the bond of a rejected proposal goes. Such a transaction is charged like any other, and its operation fails, changing nothing else, unless all of the following hold:
 
@@ -1450,7 +1452,7 @@ A payment that is made is executed in the transaction that releases it: each rec
 
 A payment needs both a vote and a guardian. Until a guardian releases it, a payment that the validators voted moves nothing, and at the end of `passed` it is rejected like a proposal whose vote failed. A guardian, for its part, releases what was voted, to the recipients and for the amounts of the proposal: it cannot name another payment, and without a vote that passed its transaction fails. Until `guardian_delay_blocks` levels have passed since the end of the vote, the first guardian alone can release, and it has the whole wait in which to cancel. Past that delay two others can release without it, so that a payment does not hang on one key.
 
-The block of the level at which a vote ends applies its transactions before it decides that vote (step 2, then step 6): for them the proposal is still in its vote, and the first block in which a guardian can act is the next one. In the block of the level at which the wait ends, a payment can still be released: the transactions come before the decision that would reject it. A release that would pay more than the treasury holds fails, and can be sent again later in the wait. The vectors hold transactions of guardians in one block, with what each one does or the rule that makes it fail, and what they leave; several come twice, in one order and in the other. An operation that breaks several rules fails all the same, and leaves the same state whichever rule is named: the vectors name the first one, in the order of the list.
+The block of the level at which a vote ends applies its transactions before it decides that vote (step 2, then step 6): for them the proposal is still in its vote, and the first block in which a guardian can act is the next one. In the block of the level at which the wait ends, a payment can still be released: the transactions come before the decision that would reject it. A release that would pay more than the treasury holds fails, and can be sent again later in the wait. The sum it must find is that of every amount of the payment, what the treasury pays to itself included: that part is counted too, and comes back to the treasury when the payment is made. The vectors hold transactions of guardians in one block, with what each one does or the rule that makes it fail, and what they leave; several come twice, in one order and in the other. An operation that breaks several rules fails all the same, and leaves the same state whichever rule is named: the vectors name the first one, in the order of the list.
 
 ---
 

@@ -751,6 +751,7 @@ def test_the_document_names_every_kind_every_frame_and_every_limit():
     # What the node writes today is named where it changes, so that a reader of sections 2.1 to 2.7 finds it.
     differences = PARTS["9.9 What changes from the formats of the devnet"]
     assert len(_table(differences)) == 49
+    assert "`release_payment` and `cancel_payment`, two of the fifteen kinds of transactions" in differences
     for gone in ("`commits`", "`endorsements`", "`cert_round`", "`null`", "`valid_round`", "`_current_level`",
                  "`issuance_params`", "`fee_params`", "`withdrawn`", "`equivocations`"):
         assert gone in differences
@@ -1272,6 +1273,8 @@ def test_a_payment_needs_a_vote_and_a_guardian(read):
     assert listed == list(sch.GUARDIAN_RULES.values()) == sch.rules()["What a guardian does"] and len(listed) == 6
     for sentence in ("A payment needs both a vote and a guardian.", "it cannot name another payment",
                      "The first guardian, and no other, cancels a payment that waits.",
+                     "That second guardian is not the one recorded in `released_by`",
+                     "what the treasury pays to itself included",
                      "the first block in which a guardian can act is the next one"):
         assert sentence in part, sentence
 
@@ -1383,8 +1386,11 @@ def test_the_document_says_what_is_kept_and_what_a_block_does():
         "9.14 The key registry", "9.15 The genesis and the block of level 0", "9.16 What a block does to the state"]
     state = PARTS["9.12 The state"]
     assert [line.split("**")[1] for line in state.splitlines() if line.startswith("- **")] == \
-        ["No default.", "Nothing derived, no history.", "No zero written."]
+        ["No default.", "No derived index, no separate history.", "No zero written."]
     assert "They do not say that a state can be reached" in state
+    assert "the execution of a contract takes nothing from what `treasury_address` holds" in PARTS["State"]
+    accounts = PARTS["9.13 Accounts and the state trie"]
+    assert "[merkle-trie.md](merkle-trie.md) describes the trie of the devnet" in accounts
     steps = PARTS["9.16 What a block does to the state"]
     assert re.findall(r"^(\d)\. ", steps, flags=re.M) == list("12345678")
     assert "**The ends of the ranges.**" in steps and "No network reaches these numbers." in steps
