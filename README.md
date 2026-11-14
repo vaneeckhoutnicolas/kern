@@ -84,7 +84,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1604 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1617 tests passing.**
 
 ```
 kern/
@@ -92,7 +92,7 @@ kern/
 │   ├── crypto.py               # Ed25519, blake2b-256, base58check
 │   ├── composite.py            # Composite ML-DSA signatures (RFC 10073); not used by the node yet
 │   ├── keys.py                 # Signature profile: hash, encoding, key derivation, addresses; not used by the node yet
-│   ├── transaction.py          # 11 OpKinds incl. v1.1-rc attestations
+│   ├── transaction.py          # 12 OpKinds incl. v1.1-rc attestations
 │   ├── block.py                # BlockHeader, Block, merkle root
 │   ├── chain.py                # State machine + governance tick + delegation
 │   ├── consensus.py            # propose_block governance-aware
@@ -139,7 +139,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 1604 tests, none skipped
+├── tests/                      # 1617 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -200,7 +200,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 1604 passed in about 3 minutes (the multi-process consensus tests start real nodes)
+# 1617 passed in about 3 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### A multi-node devnet in one command (Docker)

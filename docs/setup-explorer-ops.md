@@ -225,7 +225,7 @@ Blockscout is an open-source Ethereum explorer. Forking and adapting for Kern re
 
 1. Implementing a Kern-flavored "ETH RPC" shim that translates Blockscout's expected RPC calls to Kern's
 2. Adapting the address format (Kern uses `kn1...` not `0x...`)
-3. Adapting transaction kinds (Kern has 8 OpKinds; Blockscout assumes Ethereum)
+3. Adapting transaction kinds (Kern has 12 OpKinds; Blockscout assumes Ethereum)
 4. Replacing Solidity decompilation with Skald rendering
 
 Realistic estimate: 6-12 weeks of engineering for an MVP.
