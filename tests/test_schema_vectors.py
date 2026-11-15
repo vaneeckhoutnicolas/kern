@@ -24,8 +24,10 @@ sections 2.1 to 2.7 of that document.
 from __future__ import annotations
 
 import collections
+import fractions
 import hashlib
 import json
+import math
 import random
 import re
 import sys
@@ -91,7 +93,7 @@ def test_the_file_is_what_its_builder_writes():
 
 
 def test_every_accepted_object_is_accepted_and_is_the_object_the_file_pins(read):
-    assert len(read["accepted"]) == 100
+    assert len(read["accepted"]) == 106
     for record, value in read["accepted"]:
         assert sch.verdict(record["schema"], value, NETWORK) == "accepted", record["name"]
         encoding = ref.canonical_json(value)
@@ -316,7 +318,7 @@ def test_one_change_away_from_an_accepted_object_is_refused(read):
             answer = sch.verdict(record["schema"], changed, NETWORK)
             assert (answer == "accepted") == (expected == "accepted"), (record["name"], change, path, answer)
             count += 1
-    assert count == 2782
+    assert count == 2773
     optional = {(record["name"], path) for record, _ in read["accepted"] if "mutations" in record
                 for path in record["mutations"]["optional"]}
     revoked = [f"attestations.{pair * 48}.revoked_at" for pair in ("a2", "a4")]
@@ -720,7 +722,7 @@ def test_every_table_of_the_document_is_the_table_of_the_reference():
 
 def test_every_rule_of_the_reference_is_a_sentence_of_the_document():
     rules = sch.rules()
-    assert sum(len(sentences) for sentences in rules.values()) == 87
+    assert sum(len(sentences) for sentences in rules.values()) == 125
     for name, sentences in rules.items():
         listed = [line[2:] for line in PARTS[name].splitlines() if line.startswith("- ")]
         assert listed[:len(sentences)] == sentences, name
@@ -750,7 +752,7 @@ def test_the_document_names_every_kind_every_frame_and_every_limit():
         assert f"| `{name}` | {value:,} |" in PARTS["Limits"]
     # What the node writes today is named where it changes, so that a reader of sections 2.1 to 2.7 finds it.
     differences = PARTS["9.9 What changes from the formats of the devnet"]
-    assert len(_table(differences)) == 49
+    assert len(_table(differences)) == 53
     assert "`release_payment` and `cancel_payment`, two of the fifteen kinds of transactions" in differences
     for gone in ("`commits`", "`endorsements`", "`cert_round`", "`null`", "`valid_round`", "`_current_level`",
                  "`issuance_params`", "`fee_params`", "`withdrawn`", "`equivocations`"):
@@ -766,6 +768,11 @@ def test_the_document_and_the_ci_name_the_command_that_runs_the_go_program():
     assert f"run: {command}" in workflow
     program = (sv.FILE.parent / "profile_check.go").read_text(encoding="utf-8")
     assert 'os.Args[1] == "-schemas"' in program and "go run profile_check.go -schemas schemas.json" in program
+    # The release guide says what the command prints: one line for each chapter of vectors.
+    printed = re.findall(r'fmt\.Printf\("([a-z ]+): [^"]*, as the Python reference\\n"', program.split("func checkSchemas(")[1])
+    assert printed == ["schemas", "what is kept", "the arithmetic of a block"]
+    guide = (ROOT / "docs" / "release-tagging.md").read_text(encoding="utf-8")
+    assert f"(cd tests/vectors/kern && {command})\n# Expected: three lines, each ending with \"as the Python reference\"\n" in guide
     # The Go program has the limits of the reference, written out on its side.
     for name, value in sch.LIMITS.items():
         assert re.search(rf"=\s*{value}\b", program), name
@@ -788,7 +795,7 @@ def test_the_root_of_a_state_is_the_one_of_the_note(read):
     the state is hashed as it is; with `trie` the three tables keyed by
     address leave the object, and one hash stands for them."""
     states = _kept(read, "state")
-    assert len(states) == 14
+    assert len(states) == 20
     for name, state in states.items():
         record = by_name(name)
         assert record["accounts_root"] == ref.accounts_root(NETWORK, state).hex(), name
@@ -1383,7 +1390,8 @@ def test_the_document_says_what_is_kept_and_what_a_block_does():
     """The parts of chapter 2 that no table holds."""
     assert [name for name in PARTS if name.startswith("9.1") and name[3].isdigit()] == [
         "9.10 Another signature scheme, later", "9.11 Vectors", "9.12 The state", "9.13 Accounts and the state trie",
-        "9.14 The key registry", "9.15 The genesis and the block of level 0", "9.16 What a block does to the state"]
+        "9.14 The key registry", "9.15 The genesis and the block of level 0", "9.16 What a block does to the state",
+        "9.17 The arithmetic of a block", "9.18 A whole block"]
     state = PARTS["9.12 The state"]
     assert [line.split("**")[1] for line in state.splitlines() if line.startswith("- **")] == \
         ["No default.", "No derived index, no separate history.", "No zero written."]
@@ -1426,3 +1434,408 @@ def test_the_document_says_what_is_kept_and_what_a_block_does():
     # Structure version 1 adds `rotate_key` and the two kinds a guardian of the treasury sends.
     assert len(OpKind) == 12 and len(sch.KINDS) == 15
     assert set(sch.KINDS) - {kind.value for kind in OpKind} == {"rotate_key", "release_payment", "cancel_payment"}
+
+
+# ---------------------------------------------------------------------------
+# Chapter 2: the arithmetic of a block, and a whole block
+# ---------------------------------------------------------------------------
+
+def _bullets(name: str) -> list[str]:
+    return [line[2:] for line in PARTS[name].splitlines() if line.startswith("- ")]
+
+
+def _floor(fraction: fractions.Fraction) -> int:
+    return fraction.numerator // fraction.denominator
+
+
+def test_the_reward_of_a_block_and_who_receives_it():
+    """The reward on parts of states, computed a second time with exact
+    fractions: every division of the document is rounded down in its turn,
+    and every mukrn that is minted reaches an address."""
+    assert len(FILE["rewards"]) == 26
+    million, top = 1_000_000, sch.INT_MAX
+    ranges = {name: type_ for name, type_, _ in sch.STATE_PARAMETERS.fields}
+    seen: collections.Counter = collections.Counter()
+    for record in FILE["rewards"]:
+        before, then, proposer = record["before"], record["then"], record["proposer"]
+        assert sch.reward(before, proposer) == then, record["why"]
+        parameters, supply = before["parameters"], before["total_supply"]
+        assert set(parameters) == set(sv.REWARD_PARAMETERS) and parameters["i_min_ppm"] <= parameters["i_max_ppm"]
+        assert all(ranges[name].low <= value <= ranges[name].high for name, value in parameters.items())
+        stakes = {validator["address"]: validator["stake"] for validator in before["validators"]}
+        bonded = {delegator: delegation["amount"] for delegator, delegation in before["delegations"].items()
+                  if delegation["validator"] == proposer}
+        staked = sum(stakes.values()) + sum(delegation["amount"] for delegation in before["delegations"].values())
+        assert then["staked"] == staked <= supply <= top
+        # The rate, written a second time.
+        low, high, target = (parameters[name] for name in ("i_min_ppm", "i_max_ppm", "target_staking_ratio_ppm"))
+        ratio = _floor(fractions.Fraction(staked * million, supply))
+        rate = low
+        if ratio < target:
+            d = million - _floor(fractions.Fraction(ratio * million, target))
+            c = _floor(fractions.Fraction(d * d * (3 * million - 2 * d), million ** 2))
+            rate = low + _floor(fractions.Fraction((high - low) * c, million))
+            assert 1 <= d <= million and low <= rate <= high
+        assert then["rate"] == rate
+        # The reward, and the end of the range of a supply.
+        blocks = _floor(fractions.Fraction(31_557_600_000, parameters["target_block_time_ms"]))
+        full = _floor(fractions.Fraction(supply * rate, million * blocks))
+        assert then["reward"] == min(full, top - supply) and then["total_supply"] == supply + then["reward"] <= top
+        # Who receives it: the treasury, the delegators of the proposer, and the proposer for the rest.
+        to_treasury = _floor(fractions.Fraction(then["reward"] * parameters["treasury_share_ppm"], million))
+        received = then["reward"] - to_treasury
+        backing = stakes[proposer] + sum(bonded.values())
+        credits: collections.Counter = collections.Counter({"treasury": to_treasury})
+        for delegator, amount in bonded.items():
+            credits[delegator] += _floor(fractions.Fraction((received - received // 10) * amount, backing))
+        credits[proposer] += received - sum(credits[delegator] for delegator in bonded)
+        assert then["credits"] == {address: amount for address, amount in credits.items() if amount}
+        assert sum(then["credits"].values()) == then["reward"] and before["treasury_address"] == "treasury"
+        seen.update(name for name, held in (
+            ("lowest rate", rate == low and ratio >= target), ("highest rate", rate == high and high > low),
+            ("between", low < rate < high), ("capped", full > top - supply), ("nothing", then["reward"] == 0),
+            ("delegators", bool(bonded)), ("ratio beyond 64 bits", staked * million >= 2**64),
+            ("reward beyond 64 bits", supply * rate >= 2**64),
+            ("share beyond 64 bits", any((received - received // 10) * amount >= 2**64 for amount in bonded.values())),
+            ("a share of nothing", any(delegator not in then["credits"] for delegator in bonded)),
+            ("staked elsewhere", any(d["validator"] != proposer for d in before["delegations"].values())),
+        ) if held)
+        seen.update(f"{name} at {value}" for name, value in parameters.items()
+                    if value in (ranges[name].low, ranges[name].high))
+    for name in ("lowest rate", "highest rate", "between", "capped", "nothing", "delegators", "ratio beyond 64 bits",
+                 "reward beyond 64 bits", "share beyond 64 bits", "a share of nothing", "staked elsewhere"):
+        assert seen[name], name
+    # Each of the five parameters stands at both ends of its range in some vector.
+    for name in sv.REWARD_PARAMETERS:
+        assert seen[f"{name} at {ranges[name].low}"] and seen[f"{name} at {ranges[name].high}"], name
+    whys = {record["why"]: record for record in FILE["rewards"]}
+    hour = whys["both rates at 1,000,000 and a block an hour: 8,766 blocks a year share the supply"]
+    almost = next(record for record in FILE["rewards"] if record["why"].startswith("a block of 3,599,999 milliseconds"))
+    # The blocks of a year are rounded down first: an exact quotient would give another reward.
+    assert almost["then"]["reward"] == hour["then"]["reward"] == 100_000_000_000_000 // 8766
+    exact = fractions.Fraction(100_000_000_000_000 * 3_599_999, 31_557_600_000)
+    assert _floor(exact) != almost["then"]["reward"]
+    capped = next(record for record in FILE["rewards"] if record["why"].startswith("a supply 100 mukrn under"))
+    assert capped["then"]["reward"] == 100 and capped["then"]["credits"] == {"treasury": 5, "d1": 11, "p": 84}
+    # The document: the two conventions, the seven sentences of the reward and the three of its sharing.
+    assert _bullets("9.17 The arithmetic of a block") == sch.ARITHMETIC_RULES and len(sch.ARITHMETIC_RULES) == 2
+    assert _bullets("The reward of a block") == sch.REWARD_RULES and len(sch.REWARD_RULES) == 7
+    assert _bullets("The share of the delegators") == sch.SHARING_RULES and len(sch.SHARING_RULES) == 3
+    assert (sch.MILLION, sch.YEAR_MS) == (1_000_000, 31_557_600 * 1000)
+    for sentence in ("The proposer is the only validator a block rewards.",
+                     "The bound comes first and the sharing second",
+                     "the number of its blocks is rounded down before anything is divided by it",
+                     "it has no place in structure version 1 (section 9.5)"):
+        assert sentence in PARTS["The reward of a block"], sentence
+    assert "none of them is a reference for structure version 1" in PARTS["9.17 The arithmetic of a block"]
+    assert "| `proposer_bonus_ppm` |" not in PARTS["Parameters"] + PARTS["State parameters"]
+    assert "neither is `proposer_bonus_ppm`" in PARTS["Parameters"]
+    assert len(sch.PARAMETERS.fields) == len(sch.STATE_PARAMETERS.fields) == 9
+    # The page and the module of the node of today, which name the parameters of structure version 1, leave it out.
+    governance = (ROOT / "docs" / "governance.md").read_text(encoding="utf-8")
+    assert "The first ten names are the parameters of structure version 1" not in governance
+    assert "without `proposer_bonus_ppm`, are the nine parameters of structure version 1" in governance
+    module = (ROOT / "kern" / "governance.py").read_text(encoding="utf-8")
+    assert "# The integer names and the switch are the parameters of structure version 1" not in module
+    assert "# The integer names but `proposer_bonus_ppm`, and the switch, are the\n# parameters of structure" in module
+
+
+def test_whether_a_vote_passes():
+    """Votes on both tracks: the weights of a snapshot, the quorum and the
+    majority, compared as fractions."""
+    assert len(FILE["tallies"]) == 21
+    seen: collections.Counter = collections.Counter()
+    for record in FILE["tallies"]:
+        snapshot, ballots, track, then = record["consensus_set"], record["ballots"], record["track"], record["then"]
+        assert sch.tally(snapshot, ballots, track) == then, record["why"]
+        sch.BALLOTS.check({}, sch.Context(NETWORK), "")
+        assert set(ballots) <= {entry["address"] for entry in snapshot} and track in sch.PHASES
+        assert set(ballots.values()) <= {"yes", "no", "abstain"}
+        weights = {entry["address"]: entry["stake"] for entry in snapshot}
+        if track == "treasury":
+            weights = {address: math.isqrt(weight) for address, weight in weights.items()}
+            assert all(root * root <= entry["stake"] < (root + 1) ** 2
+                       for entry, root in zip(snapshot, weights.values()))
+        yes = sum(weights[voter] for voter, ballot in ballots.items() if ballot == "yes")
+        no = sum(weights[voter] for voter, ballot in ballots.items() if ballot == "no")
+        assert (then["yes"], then["no"], then["total"]) == (yes, no, sum(weights.values()))
+        assert then["quorum"] == (fractions.Fraction(yes + no, then["total"]) >= fractions.Fraction(1, 4))
+        share = fractions.Fraction(yes, yes + no) if yes + no else fractions.Fraction(0)
+        needed = share >= fractions.Fraction(4, 5) if track == "protocol" else share > fractions.Fraction(1, 2)
+        assert then["passes"] == (then["quorum"] and needed)
+        seen.update(name for name, held in (
+            (track, True), (f"{track} passes", then["passes"]), (f"{track} fails", not then["passes"]),
+            (f"{track} without a quorum", not then["quorum"]),
+            (f"{track} with a quorum and no majority", then["quorum"] and not then["passes"]),
+            (f"{track} at the quorum", 4 * (yes + no) == then["total"]),
+            ("exactly four fifths", track == "protocol" and yes and 5 * yes == 4 * (yes + no)),
+            ("a tie", track == "treasury" and yes and yes == no), ("an abstention", "abstain" in ballots.values()),
+            ("beyond 64 bits", 5 * yes >= 2**64), ("nobody", not ballots),
+        ) if held)
+    for name in ("protocol passes", "protocol fails", "protocol without a quorum", "protocol at the quorum",
+                 "protocol with a quorum and no majority", "treasury passes", "treasury fails",
+                 "treasury without a quorum", "treasury at the quorum", "treasury with a quorum and no majority",
+                 "exactly four fifths", "a tie", "an abstention", "beyond 64 bits", "nobody"):
+        assert seen[name], name
+    # The same weights and the same votes on the two tracks: the square root makes the other outcome.
+    by_track: dict[str, dict] = collections.defaultdict(dict)
+    for record in FILE["tallies"]:
+        by_track[json.dumps([record["consensus_set"], record["ballots"]], sort_keys=True)][record["track"]] = record
+    both = [pair for pair in by_track.values() if len(pair) == 2]
+    assert len(both) == 1 and both[0]["treasury"]["then"]["passes"] and not both[0]["protocol"]["then"]["passes"]
+    # The square root of integers: one less than a square, a number with a fraction gives the root of the square.
+    assert math.isqrt(sch.INT_MAX) == 3_037_000_499 and math.isqrt(2**62 - 1) == 2**31 - 1 != int((2**62 - 1) ** 0.5)
+    stakes = [entry["stake"] for record in FILE["tallies"] for entry in record["consensus_set"]]
+    assert sch.INT_MAX in stakes and 2**62 - 1 in stakes
+    assert _bullets("Whether a vote passes") == sch.VOTING_RULES and len(sch.VOTING_RULES) == 5
+    for sentence in ("The weights are those of the snapshot (section 9.12)", "a tie fails",
+                     "counts its votes before it takes the snapshot again (steps 6 and 8)",
+                     "3,037,000,499 for 2^63 - 1"):
+        assert sentence in PARTS["Whether a vote passes"], sentence
+
+
+def _bonded(tables: dict) -> int:
+    """What the tables of a slash hold, in mukrn."""
+    return (sum(validator["stake"] for validator in tables["validators"])
+            + sum(delegation["amount"] for delegation in tables["delegations"].values())
+            + sum(leaving["amount"] for leaving in tables["delegation_unbonding"])
+            + sum(attestation["bond"] for attestation in tables["attestations"].values()))
+
+
+def test_what_a_slash_takes_and_when_a_report_fails():
+    """Reports of offences in one block, on the tables a slash reads: what
+    each one takes or the rule that makes it fail, and where every mukrn
+    that is taken goes."""
+    assert len(FILE["slashes"]) == 54 and FILE["slash_rules"] == sch.SLASH_RULES
+    kinds = ("slash_equivocation", "slash_consensus_equivocation", "slash_attestation_equivocation")
+    did: collections.Counter = collections.Counter()
+    for record in FILE["slashes"]:
+        before, operations, then = record["before"], record["operations"], record["then"]
+        assert sch.slash(before, operations) == then, record["why"]
+        assert len(then["did"]) == len(operations) and all(operation["kind"] in kinds for operation in operations)
+        assert set(then) == {"did", "credits", "burned"} | set(sch.SLASHED_TABLES)
+        did.update((operation["kind"], outcome) for operation, outcome in zip(operations, then["did"]))
+        # What leaves the tables is burned or received, to the mukrn; nothing of it reaches a treasury.
+        assert _bonded(before) - _bonded(then) == then["burned"] + sum(then["credits"].values()), record["why"]
+        assert 0 not in then["credits"].values() and "treasury" not in then["credits"]
+        if "slashed" not in then["did"]:
+            assert {name: then[name] for name in sch.SLASHED_TABLES} == {name: before[name]
+                                                                         for name in sch.SLASHED_TABLES}
+            assert (then["credits"], then["burned"]) == ({}, 0)
+        # A stake and a tranche are 1 at least afterwards, an amount is the sum of its tranches, a weight never
+        # goes up and is never above what backs it, and a slashed attestation holds nothing.
+        assert all(validator["stake"] >= 1 for validator in then["validators"])
+        for holding in list(then["delegations"].values()) + then["delegation_unbonding"]:
+            assert holding["amount"] == sum(tranche["amount"] for tranche in holding["tranches"])
+            assert all(tranche["amount"] >= 1 for tranche in holding["tranches"])
+        for old, new, validator in zip(before["consensus_set"], then["consensus_set"], then["validators"]):
+            backing = validator["stake"] + sum(delegation["amount"] for delegation in then["delegations"].values()
+                                               if delegation["validator"] == validator["address"])
+            assert new["stake"] <= old["stake"] and (new["stake"] <= backing or new["stake"] == old["stake"])
+        assert all(attestation["bond"] == 0 for attestation in then["attestations"].values() if attestation["slashed"])
+        assert len(then["consensus_slashes"]) - len(before["consensus_slashes"]) == sum(
+            1 for operation, outcome in zip(operations, then["did"])
+            if operation["kind"] == "slash_consensus_equivocation" and outcome == "slashed")
+    # Every kind of report slashes in some vector, and every rule makes one fail.
+    assert all(did[(kind, "slashed")] for kind in kinds)
+    assert {outcome for _, outcome in did} == set(sch.SLASH_RULES) | {"slashed"}
+    assert did[("slash_equivocation", "nothing_to_take")] and did[("slash_consensus_equivocation", "nothing_to_take")]
+    assert did[("slash_attestation_equivocation", "nothing_to_take")]
+    # A rule is of the kind of report its sentence names, and the last one is of all three.
+    of_kind = {"no_double_vote": kinds[0], "not_an_offence": kinds[1], "not_a_validator": kinds[1], "not_yet": kinds[1],
+               "too_old": kinds[1], "slashed_already": kinds[1], "not_two": kinds[2], "no_contradiction": kinds[2],
+               "slashed_before": kinds[2], "not_at_once": kinds[2]}
+    assert list(sch.SLASH_RULES) == list(of_kind) + ["nothing_to_take"]
+    assert all(of_kind.get(outcome, kind) == kind for kind, outcome in did if outcome != "slashed")
+    whys = {record["why"]: record for record in FILE["slashes"]}
+    several = next(record for record in FILE["slashes"] if record["why"].startswith("an operation that breaks several"))
+    votes = several["operations"][0]["params"]
+    assert votes["msg_a"]["level"] + several["before"]["delegation_unbonding_blocks"] < several["before"]["level"]
+    assert several["then"]["did"] == ["not_a_validator"]
+    early = whys["and these two are of an address that is not a validator, and of the level after the block"]
+    assert early["operations"][0]["params"]["msg_a"]["level"] == early["before"]["level"] + 1
+    assert early["then"]["did"] == ["not_a_validator"]
+    # Of two double votes of one validator on one proposal, one report punishes the first of the list, and it alone.
+    single = next(record for record in FILE["slashes"] if "one in each phase, and one report" in record["why"])
+    marks = [double["punished"] for double in single["then"]["protocol"][1]["double_votes"]]
+    assert len(single["operations"]) == 1 and marks == [False, True, False]
+    assert single["then"]["delegations"] == single["before"]["delegations"] and single["then"]["burned"] == 270
+    # A slashed vote is kept with its round: the same validator, kind and level at another round is another offence.
+    rounds = next(record for record in FILE["slashes"] if record["why"].startswith("the vote that is kept already"))
+    reported = rounds["operations"][0]["params"]["msg_a"]
+    kept = {name: reported[name] for name in ("validator", "kind", "level")}
+    assert rounds["before"]["consensus_slashes"] == [{**kept, "round": 0}] and reported["round"] == 1
+    assert rounds["then"]["did"] == ["slashed"]
+    assert rounds["then"]["consensus_slashes"] == [{**kept, "round": 0}, {**kept, "round": 1}]
+    last = whys["two votes that are `delegation_unbonding_blocks` levels old: the last block in which they can be "
+                "reported"]
+    assert last["operations"][0]["params"]["msg_a"]["level"] + 300 == last["before"]["level"] == 1000
+    assert whys["two votes one level older: too old"]["then"]["did"] == ["too_old"]
+    values = whys["claims that differ only as `true` differs from 1: two values of JSON, and two claims"]
+    claims = [attestation["claim"] for attestation in values["before"]["attestations"].values()]
+    assert claims[0] == claims[1] and ref.canonical_json(claims[0]) != ref.canonical_json(claims[1])
+    assert values["then"]["did"] == ["slashed"]
+    assert _bullets("What a slash takes") == sch.SLASHING_RULES and len(sch.SLASHING_RULES) == 8
+    assert _bullets("Reporting an offence") == list(sch.SLASH_RULES.values()) and len(sch.SLASH_RULES) == 11
+    for sentence in ("30 parts in 100, rounded down, never take the whole", "one offence is punished once",
+                     "Each tranche is rounded on its own."):
+        assert sentence in PARTS["What a slash takes"], sentence
+    for sentence in ("the vectors name the first one, in the order of the list",
+                     "the test of that rule comes with the implementation",
+                     "nothing is marked, and the offence can be reported again"):
+        assert sentence in PARTS["Reporting an offence"], sentence
+
+
+def test_a_whole_block_leads_to_a_state_that_keeps_every_rule(read):
+    """Whole blocks on whole states, read as a second program reads them:
+    the state a block leads to is the first state with what the vector
+    removes and puts in place, it keeps every rule of section 9.12, and its
+    root is in the header of the block."""
+    assert len(FILE["transitions"]) == 18 and FILE["whole_block_rules"] == sch.WHOLE_BLOCK_RULES
+    vectors, objects = sv.Vectors(NETWORK), dict(read["objects"])
+    invalid: collections.Counter = collections.Counter()
+    kinds: set[str] = set()
+    for record in FILE["transitions"]:
+        state, block = objects[record["from"]], vectors.expand(record["block"])
+        assert sch.verdict("state", state, NETWORK) == "accepted" == sch.verdict("block", block, NETWORK), record["why"]
+        header = block["header"]
+        assert header["proposer"] in [validator["address"] for validator in state["validators"]]
+        result = sch.apply(NETWORK, state, block)
+        if "rule" in record:
+            assert "then" not in record and "name" not in record            # an invalid block leads to no state
+            assert result == {"valid": False, **{name: record[name] for name in ("rule", "at") if name in record}}
+            assert record["rule"] in {**sch.WHOLE_BLOCK_RULES, **sch.BLOCK_RULES}
+            invalid[record["rule"]] += 1
+            continue
+        then = record["then"]
+        after = vectors.edited(state, then["remove"], then["set"])
+        assert result["valid"] and result["failed"] == then["failed"], record["why"]
+        assert ref.canonical_json(result["state"]) == ref.canonical_json(after), record["why"]
+        assert sv.pin(ref.canonical_json(after)) == {"bytes": then["bytes"], "pin": then["pin"]}
+        assert sv.difference(state, after) == (then["remove"], then["set"])
+        # The state the block leads to keeps every rule of section 9.12, the sum of its supply among them, and
+        # its root, by the function it names, is the one of the header.
+        assert sch.verdict("state", after, NETWORK) == "accepted", record["why"]
+        assert sch.state_root(NETWORK, after).hex() == then["state_root"] == header["state_root"]
+        assert after["level"] == header["level"] == state["level"] + 1 and after["total_supply"] == sch.held(after)
+        kinds |= {tx["kind"] for tx in block["transactions"]}
+        assert all(tx["sender"] in state["keys"] and "public_key" not in tx for tx in block["transactions"])
+        # What is fixed by the genesis does not move.
+        for name in ("chain_id", "treasury_address", "guardians", "keys", "contracts", "constants"):
+            assert after[name] == state[name], name
+        assert [v["address"] for v in after["validators"]] == [v["address"] for v in state["validators"]]
+        if "name" in record:
+            assert record["name"] not in objects
+            objects[record["name"]] = after
+    assert kinds == set(sch.WHOLE_BLOCK_KINDS)
+    assert invalid == {"wrong_level": 2, "wrong_state_root": 2, "wrong_nonce": 1, "block_too_large": 1}
+    assert set(sch.WHOLE_BLOCK_RULES) <= set(invalid)
+    whys = {record["why"][:60]: record for record in FILE["transitions"]}
+    # The change of the function: the root of the header is that of the new function, and the root of the old
+    # one makes the same block invalid.
+    changed = whys["the block of level 400 activates the change: the state it le"]
+    before, after = objects["state_swap"], objects["after_swap"]
+    assert (before["state_root_function"], after["state_root_function"]) == ("json", "trie")
+    old_root = sch.state_root(NETWORK, {**after, "state_root_function": "json"}).hex()
+    assert changed["then"]["state_root"] == ref.state_root(NETWORK, after).hex() != old_root
+    twin = whys["the same block with the root that the function of the state "]
+    assert twin["rule"] == "wrong_state_root" and vectors.expand(twin["block"])["header"]["state_root"] == old_root
+    assert {name: value for name, value in twin["block"]["header"].items() if name != "state_root"} == \
+        {name: value for name, value in changed["block"]["header"].items() if name != "state_root"}
+    # The block in which every step has something to do.
+    due, after = objects["state_due"], objects["after_due"]
+    busy = next(record for record in FILE["transitions"] if record.get("name") == "after_due")
+    assert busy["then"]["failed"] == [1] and due["level"] + 1 == 1200 == 10 * due["constants"]["epoch_blocks"]
+    # A transfer of all that its sender holds succeeds, and the sender leaves `balances`.
+    emptied = vectors.expand(busy["block"])["transactions"][2]
+    assert (emptied["kind"], emptied["fee"], emptied["amount"]) == ("transfer", 0, due["balances"][emptied["sender"]])
+    assert f"balances.{emptied['sender']}" in busy["then"]["remove"] and emptied["sender"] not in after["balances"]
+    assert sum(a["bond"] for a in due["attestations"].values()) - sum(a["bond"] for a in after["attestations"].values()) == 250
+    assert len(due["delegation_unbonding"]) - len(after["delegation_unbonding"]) == 1
+    for track, left in (("protocol", 1), ("treasury", 1)):
+        assert len(due["governance"][track]) - len(after["governance"][track]) == left
+    assert len(due["consensus_slashes"]) - len(after["consensus_slashes"]) == 1
+    assert after["parameters"] != due["parameters"] and after["consensus_set"] != due["consensus_set"]
+    # A first vote that the weights of the moment would have passed, and the snapshot rejects.
+    rejected = next(p for p in due["governance"]["protocol"] if p["proposal_id"] == "b3" * 48)
+    assert next(p for p in after["governance"]["protocol"] if p["proposal_id"] == "b3" * 48)["phase"] == "rejected"
+    of_the_moment = [{"address": v["address"], "stake": v["stake"] + sch._delegated(due, v["address"])}
+                     for v in due["validators"]]
+    assert sch.tally(of_the_moment, rejected["exploration_votes"], "protocol")["passes"]
+    assert not sch.tally(due["consensus_set"], rejected["exploration_votes"], "protocol")["passes"]
+    # A first vote that passes with exactly four fifths by the snapshot, and that neither the stakes alone nor
+    # the weights of the moment would pass.
+    rests = next(p for p in due["governance"]["protocol"] if p["proposal_id"] == "b1" * 48)
+    assert next(p for p in after["governance"]["protocol"] if p["proposal_id"] == "b1" * 48)["phase"] == "cooldown"
+    exact = sch.tally(due["consensus_set"], rests["exploration_votes"], "protocol")
+    assert exact["passes"] and 5 * exact["yes"] == 4 * (exact["yes"] + exact["no"])
+    assert not sch.tally(due["validators"], rests["exploration_votes"], "protocol")["passes"]
+    assert not sch.tally(of_the_moment, rests["exploration_votes"], "protocol")["passes"]
+    # A second vote that fails where the first one passed: the proposal is rejected, and what it proposed is
+    # not taken.
+    twice = next(p for p in due["governance"]["protocol"] if p["proposal_id"] == "b7" * 48)
+    assert twice["phase"] == "adoption" and twice["payload"] == {"params": {"target_block_time_ms": 2000}}
+    assert sch.tally(due["consensus_set"], twice["exploration_votes"], "protocol")["passes"]
+    assert not sch.tally(due["consensus_set"], twice["adoption_votes"], "protocol")["passes"]
+    assert next(p for p in after["governance"]["protocol"] if p["proposal_id"] == "b7" * 48)["phase"] == "rejected"
+    assert after["parameters"]["target_block_time_ms"] == due["parameters"]["target_block_time_ms"] == 1000
+    # A treasury vote that passes by the square roots, where the weights themselves would tie.
+    passed = next(p for p in due["governance"]["treasury"] if p["proposal_id"] == "c1" * 48)
+    assert sch.tally(due["consensus_set"], passed["votes"], "treasury")["passes"]
+    whole = sch.tally(due["consensus_set"], passed["votes"], "protocol")
+    assert whole["yes"] == whole["no"]
+    # Guardians in a whole block: the delay of a guardian other than the first runs from the end of the vote, and
+    # a payment is funded or not when its release comes, in the order of the block.
+    guarded = next(record for record in FILE["transitions"] if record["from"] == "state_release")
+    waiting, sent = objects["state_release"], vectors.expand(guarded["block"])["transactions"]
+    released = vectors.edited(waiting, guarded["then"]["remove"], guarded["then"]["set"])
+    assert guarded["then"]["failed"] == [0, 2] and [tx["kind"] for tx in sent[:3]] == ["release_payment"] * 3
+    hasty, funded, unfunded = sent[:3]
+    assert hasty["params"] == funded["params"] and funded["sender"] == waiting["guardians"][0]
+    assert hasty["sender"] in waiting["guardians"][1:]
+    payment = next(p for p in waiting["governance"]["treasury"] if p["proposal_id"] == hasty["params"]["proposal_id"])
+    voted = sch.phase_ends("treasury", payment, waiting["constants"])
+    assert voted["voting"] == waiting["level"] < voted["voting"] + waiting["constants"]["guardian_delay_blocks"]
+    assert voted["submitted"] + waiting["constants"]["guardian_delay_blocks"] <= waiting["level"]
+    treasury = waiting["treasury_address"]
+    large = next(p for p in waiting["governance"]["treasury"] if p["proposal_id"] == unfunded["params"]["proposal_id"])
+    assert [r["amount"] for r in large["payload"]["recipients"]] == [waiting["balances"][treasury]]
+    still = next(p for p in released["governance"]["treasury"] if p["proposal_id"] == large["proposal_id"])
+    assert still == large and released["balances"][treasury] > waiting["balances"][treasury]
+    # The supply at the end of its range: the reward is what is left under it when it is counted, after what the
+    # transactions of the block burned and before what its decisions burn.
+    assert objects["after_top"]["total_supply"] == sch.INT_MAX == objects["state_top"]["total_supply"] + 100
+    tight = whys["the block of level 1,001 on that state, in which the first g"]
+    cancelled = vectors.edited(objects["state_tight"], tight["then"]["remove"], tight["then"]["set"])
+    assert objects["state_tight"]["total_supply"] == sch.INT_MAX - 100
+    assert objects["state_tight"]["constants"]["treasury_bond"] == 10_000_001
+    assert cancelled["total_supply"] == sch.INT_MAX - 5_000_000
+    # What these vectors do not hold is refused loudly, so that no vector passes for a reason it does not give.
+    full = objects["state_full"]
+    header = {"level": full["level"] + 1, "proposer": full["validators"][0]["address"]}
+    sender = next(address for address in full["nonces"] if full["balances"].get(address, 0) >= 1000)
+    keyless = next(address for address in full["balances"]
+                   if address not in full["keys"] and address != full["treasury_address"])
+    paid = {"sender": sender, "nonce": full["nonces"][sender], "fee": 1000, "chain_id": full["chain_id"],
+            "gas_limit": 10000, "signature": "s"}
+    for tx in ({"kind": "governance_vote", **paid, "params": {}},
+               {"kind": "transfer", **paid, "recipient": sender, "amount": 0, "public_key": "x"},
+               {"kind": "transfer", **paid, "sender": keyless, "nonce": 0, "recipient": sender, "amount": 0}):
+        with pytest.raises(ValueError, match="do not hold"):
+            sch.transition(full, {"header": header, "transactions": [tx]})
+    with pytest.raises(ValueError, match="is a validator"):
+        sch.transition(full, {"header": {**header, "proposer": keyless}, "transactions": []})
+    assert _bullets("9.18 A whole block") == list(sch.WHOLE_BLOCK_RULES.values()) and len(sch.WHOLE_BLOCK_RULES) == 2
+    for sentence in ("the root of its header is computed by the new function",
+                     "what a block mints and what it burns is in that sum, and nowhere else",
+                     "sent by accounts whose key the state holds", "Their proposer is a validator."):
+        assert sentence in PARTS["9.18 A whole block"], sentence
+    # The pages that describe the node of today say where the rules of structure version 1 are.
+    for page in ("adaptive-issuance.md", "governance.md", "staking.md", "attestations.md"):
+        text = (ROOT / "docs" / page).read_text(encoding="utf-8")
+        assert "section 9.17 of [`api-stability.md`](api-stability.md)" in text.split("\n---\n")[0], page
+        assert f"[{page}]({page})" in PARTS["9.17 The arithmetic of a block"], page
+    for part in ("9.12 The state", "Validator", "Constants", "9.16 What a block does to the state",
+                 "Deciding proposals"):
+        assert "staking.md" not in PARTS[part] and "governance.md" not in PARTS[part], part
+        assert "adaptive-issuance.md" not in PARTS[part], part

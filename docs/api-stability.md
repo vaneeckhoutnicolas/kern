@@ -372,7 +372,7 @@ Structure version 1 is not version 1.0 of the software. It is the value of the f
 Three chapters, reviewed one after the other:
 
 1. **What is signed and what travels** (sections 9.2 to 9.11): transactions, consensus messages, certificates, block headers, blocks, the frames peers exchange, the body of an injection request.
-2. **What is kept** (sections 9.12 to 9.16): the state, the account of the state trie, the key registry, the genesis and the block of level 0, and what a block does to the state.
+2. **What is kept** (sections 9.12 to 9.18): the state, the account of the state trie, the key registry, the genesis and the block of level 0, what a block does to the state, the arithmetic of a block, and a whole block.
 3. The objects hashed outside blocks: rollup batches, forced inclusion requests, states of the Mini-EVM, verifier keys.
 
 Structure version 1 migrates nothing. No network beyond the devnet exists, and a network of structure version 1 starts from a genesis of its own (section 9.15): how a state written in the formats of today would be carried over is not defined.
@@ -608,7 +608,6 @@ The identifier of the proposal is `H("kern.gov.id", ...)` of the canonical JSON 
 | `target_staking_ratio_ppm` | integer, 0 to 1,000,000 | optional | The staking ratio the issuance aims at |
 | `target_block_time_ms` | integer, 1 to 3,600,000 | optional | The time between two blocks that the issuance per block assumes, in milliseconds |
 | `treasury_share_ppm` | integer, 0 to 1,000,000 | optional | The share of the issuance that goes to the treasury |
-| `proposer_bonus_ppm` | integer, 0 to 1,000,000 | optional | The share of the rest that goes to the proposer |
 | `fee_floor_enabled` | `true` or `false` | optional | Whether the fee floor applies |
 | `fee_floor_base` | integer, 0 to 1,000,000,000,000 | optional | The fixed part of the fee floor, in mukrn |
 | `fee_floor_per_byte` | integer, 0 to 1,000,000,000 | optional | Its part per byte of the size of the transaction, in mukrn |
@@ -618,7 +617,7 @@ The identifier of the proposal is `H("kern.gov.id", ...)` of the canonical JSON 
 
 The schema checks each value against its own range. What ties two parameters together, such as an `i_min_ppm` that is not above `i_max_ppm`, is a rule of the state: chapter 2 says which combinations a network refuses, and when (section 9.12).
 
-Every parameter is an integer or a boolean. The names that take a fraction today (`i_max` and six others) are not parameters of structure version 1. The smallest block holds the largest transaction, and the largest one fits in a frame with its certificate.
+Every parameter is an integer or a boolean. The names that take a fraction today (`i_max` and six others) are not parameters of structure version 1, and neither is `proposer_bonus_ppm`: the proposer of a block receives all that the treasury does not (section 9.17). The smallest block holds the largest transaction, and the largest one fits in a frame with its certificate.
 
 #### Treasury payload
 
@@ -924,7 +923,7 @@ With one request waiting at most, the answer to a request is the next `blocks` f
 | Initial storage | Any JSON, or `null` | A map of names to values, which can be empty | The same |
 | What a contract takes and holds | Any JSON | An integer of 64 bits, a boolean or a text | The four types of Skald |
 | The size of a transaction | What is signed | The whole transaction, witness included | Note, 7 |
-| Parameters of a protocol proposal | Seventeen names, seven of them with a fraction | Ten names, each an integer or a boolean with its range | Note, 4.3: no number with a fraction |
+| Parameters of a protocol proposal | Seventeen names, seven of them with a fraction | Nine names, each an integer or a boolean with its range | Note, 4.3: no number with a fraction |
 | `salt` of a proposal | Optional, 0 when absent | Required | No default |
 | `undelegate_stake` | Empty `params` | No `params` | No placeholder |
 | Amount of a delegation | Checked when applied | 1 at least, in the schema | A delegation of nothing is not one |
@@ -940,7 +939,7 @@ With one request waiting at most, the answer to a request is the next `blocks` f
 | Nesting | 64 for a frame and 32 for a transaction, limits of the node | The same numbers, rules of the structure version | One verdict in every client |
 | The level of a state | `_current_level`, a field the node adds | `level`, a field of the schema | A state says of which level it is |
 | A value the genesis does not give | A default, written in the code | Every parameter and every constant has a value in the state | A state leaves nothing to the client that reads it |
-| Parameters | `issuance_params` and `fee_params`, each optional | `parameters`: the ten names of a proposal, all required | One table for what a proposal changes |
+| Parameters | `issuance_params` and `fee_params`, each optional | `parameters`: the nine names of a proposal, all required | One table for what a proposal changes |
 | Periods, phases and bonds | Three optional fields of the state; for governance, numbers of the code written with each proposal | `constants`, fixed by the genesis | A network chooses them, and a state says them |
 | Validators | Addresses, keys and stakes, any number of them, a stake of 0 allowed | Addresses and stakes, 1 to 1,024, a stake of 1 at least | Note, 6.1: keys are in the registry |
 | A balance or a nonce of 0 | Written once the address has appeared | Not written | One state, one object |
@@ -964,6 +963,10 @@ With one request waiting at most, the answer to a request is the next `blocks` f
 | `max_block_bytes` | Applies when the fee floor is on | Applies to every block | The size of a block does not depend on its fees |
 | Several proposals decided at one level | Judged one after the other, and settled afterwards | Each one settled before the next is judged | One order for everything a decision moves |
 | Requests for blocks on a connection | Nothing says how many may wait | One at a time | An answer names no request |
+| The bonus of the proposer | `proposer_bonus_ppm`, a parameter | Gone: the proposer receives all that the treasury does not | A block does not say who signed the one before it |
+| The commission of a validator | `commission_rates`, a table of the state | A tenth, a rule of the structure version | The state has no table that no transaction writes |
+| The weights of a vote | The stake and the delegations of the moment | The weights of `consensus_set` | One weight for the consensus and for a vote |
+| The numbers of a reward, of a vote and of a slash | Integers of Python, which have no bound | Integers that no client cuts to 64 bits | `total_supply` times a rate passes 2^64 |
 
 ### 9.10 Another signature scheme, later
 
@@ -994,12 +997,16 @@ What it does not hold, and cannot without new rules: `rotate_key` takes a key of
 
 For chapter 2 it holds:
 
-- **states**, accepted: a first state and a state in which every table holds something, each under both functions, a state with 1,024 validators, one with eight guardians, one with payments in every phase a guardian can leave them in, and the lowest and the highest values a state can hold, among them the last level there is and a supply of 2^63 - 1. Each one comes with its state root and the root of its accounts, and one of them with its accounts;
+- **states**, accepted: a first state and a state in which every table holds something, each under both functions, a state with 1,024 validators, one with eight guardians, one with payments in every phase a guardian can leave them in, one in which something is due at the next level for every step of a block, and the lowest and the highest values a state can hold, among them the last level there is and a supply of 2^63 - 1. Each one comes with its state root and the root of its accounts, and one of them with its accounts;
 - **states**, refused: a form that is not the one of its table, and, for every rule of sections 9.12 to 9.15, at least one state that breaks that rule and no other. Each of those names the sentence it breaks (`breaks`), and the builder checks that the reference accepts it without that sentence;
 - **accounts**, and **genesis** files with the nine fields of their block of level 0 and its hash; a genesis as a text, read like any text and without a bound on its length; refused: a genesis without its moment, under another network, with 1,025 validators, with crossed rates, with a supply that is not the sum of what it gives, with a first state that is not one;
 - **what a block charges** (`charges`): a part of a state, a proposer and a block of transfers, with what the block leaves, or the rule that makes it invalid (`block_rules`) and the transaction that breaks it;
 - **decisions** (`decisions`): proposals that are decided at one level, each with the outcome of its vote or the end of its wait, and what they do. Several come twice, in one order and in the other;
 - **payments** (`payments`): transactions of guardians in one block, on payments that wait, with what each one does or the rule that makes it fail (`guardian_rules`), and what they leave;
+- **rewards** (`rewards`): a part of a state and a proposer, with what is staked, the rate, the reward and what each address receives; among them numbers that pass 2^64 on the way, and a supply at the end of its range;
+- **votes** (`tallies`): the weights of a snapshot and the votes of a track, with the weights of the yes and of the no, the quorum and the outcome;
+- **reports of offences** (`slashes`): the tables a slash reads and the reports of one block, with what each one does or the rule that makes it fail (`slash_rules`), what each address receives, what is burned and the tables afterwards;
+- **whole blocks** (`transitions`): a state, a block, and the state the block leads to, with its root; or the rule that makes the block invalid, one of `whole_block_rules` or of `block_rules`;
 - **exchanges** (`exchanges`, `served`): what happens on a connection as the node that asks for blocks sees it, step by step, and what a node sends when two requests reach it.
 
 Keys and signatures are written by rule in the file and are not real ones: no signature in these vectors verifies, since a schema verifies none. The signatures of the profile have vectors of their own (note, section 17).
@@ -1049,7 +1056,7 @@ Section 9.3 bounds every list and every map of an object that travels. A state i
 | `attestations` | map of `hash` to `attestation`, any number of entries | required | The attestations, by identifier |
 | `consensus_slashes` | list of any number of `slashed vote` | required | The votes of the consensus already punished, so that none is punished twice |
 | `governance` | `governance` | required | The proposals of the two tracks |
-| `parameters` | `state parameters` | required | The ten parameters a protocol proposal can change |
+| `parameters` | `state parameters` | required | The nine parameters a protocol proposal can change |
 | `constants` | `constants` | required | What the genesis fixes for the life of the network |
 
 - `validators` holds an address once, and `consensus_set` holds the same addresses in the same order.
@@ -1106,7 +1113,7 @@ A contract keeps its code and a value for each field it declares. The values are
 
 No kind of transaction adds a validator or removes one: the validators of a network are those of its first state, 1,024 at most (section 9.3). The bound of 1,024 signatures of a certificate goes with it.
 
-The stake of a validator is its own. It is 1 mukrn at least, and it goes down only when the validator is slashed: a slash takes a share of it, rounded down, and never the whole ([staking.md](staking.md)). `consensus_set` gives each validator the weight the consensus counts for it during the epoch: its stake and what was delegated to it when the snapshot was taken. A slash or the end of a delegation lowers that weight at once, and nothing raises it before the next snapshot. A weight is therefore never more than what backs it at that moment, and the weights of a state add up to `total_supply` at most. Both lists are in the order of the genesis, which is the order the draw of the proposer follows (note, section 4.1).
+The stake of a validator is its own. It is 1 mukrn at least, and it goes down only when the validator is slashed: a slash takes a share of it, rounded down, and never the whole (section 9.17). `consensus_set` gives each validator the weight the consensus counts for it during the epoch: its stake and what was delegated to it when the snapshot was taken. A slash or the end of a delegation lowers that weight at once, and nothing raises it before the next snapshot. A weight is therefore never more than what backs it at that moment, and the weights of a state add up to `total_supply` at most. Both lists are in the order of the genesis, which is the order the draw of the proposer follows (note, section 4.1).
 
 #### Delegation
 
@@ -1253,7 +1260,6 @@ The block of the level at which a phase ends moves the proposal on. A proposal t
 | `target_staking_ratio_ppm` | integer, 0 to 1,000,000 | required | The staking ratio the issuance aims at |
 | `target_block_time_ms` | integer, 1 to 3,600,000 | required | The time between two blocks that the issuance per block assumes, in milliseconds |
 | `treasury_share_ppm` | integer, 0 to 1,000,000 | required | The share of the issuance that goes to the treasury |
-| `proposer_bonus_ppm` | integer, 0 to 1,000,000 | required | The share of the rest that goes to the proposer |
 | `fee_floor_enabled` | `true` or `false` | required | Whether the fee floor applies |
 | `fee_floor_base` | integer, 0 to 1,000,000,000,000 | required | The fixed part of the fee floor, in mukrn |
 | `fee_floor_per_byte` | integer, 0 to 1,000,000,000 | required | Its part per byte of the size of the transaction, in mukrn |
@@ -1261,7 +1267,7 @@ The block of the level at which a phase ends moves the proposal on. A proposal t
 
 - `i_min_ppm` is not above `i_max_ppm`.
 
-These are the ten parameters of section 9.5, each in the range it has there. A protocol proposal that is activated replaces the values it names. The two rates of issuance are tied: a state never holds a lowest rate above the highest. This is the rule that section 9.5 announced, and a network applies it at three moments. A genesis whose rates are crossed is refused. A `governance_propose` whose `params` hold both rates, crossed, fails when it is applied. A proposal that holds one of them is judged when it would be activated, on the parameters of that moment (section 9.16).
+These are the nine parameters of section 9.5, each in the range it has there. A protocol proposal that is activated replaces the values it names. The two rates of issuance are tied: a state never holds a lowest rate above the highest. This is the rule that section 9.5 announced, and a network applies it at three moments. A genesis whose rates are crossed is refused. A `governance_propose` whose `params` hold both rates, crossed, fails when it is applied. A proposal that holds one of them is judged when it would be activated, on the parameters of that moment (section 9.16).
 
 #### Constants
 
@@ -1288,9 +1294,9 @@ A network fixes these numbers at its genesis and never changes them: no proposal
 
 `guardian_delay_blocks` is how long after a vote only the first guardian can release a payment, and `treasury_release_blocks` the whole wait of that payment. The first is not above the second: past the delay the other guardians can release, in the last block of the wait at the latest.
 
-`delegation_unbonding_blocks` is the period the others lean on: a delegation that has ended stays held that long, an offence can be reported that long, and a proposal that is over stays in the state that long. It is never shorter than an epoch ([staking.md](staking.md)).
+`delegation_unbonding_blocks` is the period the others lean on: a delegation that has ended stays held that long, an offence can be reported that long, and a proposal that is over stays in the state that long. It is never shorter than an epoch.
 
-The sharing of a reward, the weights and the thresholds of a vote and the rates of a slash are not in the state. They are rules, written in [adaptive-issuance.md](adaptive-issuance.md), [governance.md](governance.md) and [staking.md](staking.md). This chapter states the order in which a block applies them and the form of what they read and write, not their arithmetic.
+The sharing of a reward, the weights and the thresholds of a vote and the rates of a slash are not in the state. They are rules of the structure version, written in section 9.17: no proposal changes them. Section 9.16 states the order in which a block applies them.
 
 ### 9.13 Accounts and the state trie
 
@@ -1393,7 +1399,7 @@ The steps of a block, in this order:
 
 1. `level` becomes the level of the block. Its transactions see that level.
 2. The transactions are applied, in the order of the block.
-3. The reward of the block is minted and shared ([adaptive-issuance.md](adaptive-issuance.md)).
+3. The reward of the block is minted and shared (section 9.17).
 4. The bonds of the attestations revoked `attestation_unbonding_blocks` levels earlier return to their issuers.
 5. The delegations whose `release_at` is the level of the block return to their delegators.
 6. The proposals whose phase ends at this level move on, as said below.
@@ -1433,7 +1439,7 @@ The block of level `n` moves on every proposal whose phase ends at `n`. A propos
 - A payment that still waits at the end of `passed` is rejected.
 - The bond of a proposal that is activated returns to its submitter. Half the bond of a proposal that is rejected is burned, rounded down, and `total_supply` is lowered by it; the rest goes to the treasury.
 
-Whether a vote passes is a rule of [governance.md](governance.md): the weights, the quorum and the majorities are not restated here. The vectors give each proposal the outcome of its vote and hold what follows. Several come twice, in one order and in the other, and give two results.
+Whether a vote passes is said in section 9.17, with the weights, the quorum and the majorities. The vectors of this part give each proposal the outcome of its vote and hold what follows, and those of section 9.18 count the votes of whole states. Several come twice, in one order and in the other, and give two results.
 
 Decisions are settled one at a time: the half of a bond that the treasury keeps is there before the next proposal is looked at. No decision pays anything: a payment is made by a guardian.
 
@@ -1453,6 +1459,103 @@ A payment that is made is executed in the transaction that releases it: each rec
 A payment needs both a vote and a guardian. Until a guardian releases it, a payment that the validators voted moves nothing, and at the end of `passed` it is rejected like a proposal whose vote failed. A guardian, for its part, releases what was voted, to the recipients and for the amounts of the proposal: it cannot name another payment, and without a vote that passed its transaction fails. Until `guardian_delay_blocks` levels have passed since the end of the vote, the first guardian alone can release, and it has the whole wait in which to cancel. Past that delay two others can release without it, so that a payment does not hang on one key.
 
 The block of the level at which a vote ends applies its transactions before it decides that vote (step 2, then step 6): for them the proposal is still in its vote, and the first block in which a guardian can act is the next one. In the block of the level at which the wait ends, a payment can still be released: the transactions come before the decision that would reject it. A release that would pay more than the treasury holds fails, and can be sent again later in the wait. The sum it must find is that of every amount of the payment, what the treasury pays to itself included: that part is counted too, and comes back to the treasury when the payment is made. The vectors hold transactions of guardians in one block, with what each one does or the rule that makes it fail, and what they leave; several come twice, in one order and in the other. An operation that breaks several rules fails all the same, and leaves the same state whichever rule is named: the vectors name the first one, in the order of the list.
+
+### 9.17 The arithmetic of a block
+
+Three things in the steps of section 9.16 are computed: the reward of a block and who receives it, whether a vote passes, and what a slash takes. This section writes each of them as formulas on integers, so that two clients find the same numbers to the last mukrn. The pages [adaptive-issuance.md](adaptive-issuance.md), [governance.md](governance.md), [staking.md](staking.md) and [attestations.md](attestations.md) are about the node of today, whose state has other tables: none of them is a reference for structure version 1.
+
+- Every number is an integer, and no result on the way is cut to 64 bits.
+- In a formula `*` is a product and `/` a division rounded down. Products and divisions are done from left to right, before sums and differences: `a * b / c` is the product of `a` and `b`, divided by `c`.
+
+A client that keeps its amounts in 64 bits computes these formulas in wider integers: on a network of 100 million KRN, what is staked times 1,000,000 passes 2^63 before a tenth of the supply is staked, and the vectors hold supplies near 2^63 - 1. The rates of this section, a tenth for a commission, 30 parts in 100 for a slash, a quarter for a quorum, are not parameters: no proposal changes them.
+
+#### The reward of a block
+
+Step 3 of a block mints its reward, on the state as its transactions left it. The block of level 0 mints nothing: it is computed from the genesis.
+
+- What is staked is the sum of the stakes of `validators` and of the amounts of `delegations`.
+- `ratio` is `staked * 1000000 / total_supply`.
+- The rate is `i_min_ppm` when `ratio` is `target_staking_ratio_ppm` or more.
+- Otherwise `d` is `1000000 - ratio * 1000000 / target_staking_ratio_ppm`, `c` is `d * d * (3000000 - 2 * d) / 1000000000000`, and the rate is `i_min_ppm + (i_max_ppm - i_min_ppm) * c / 1000000`.
+- The reward is `total_supply * rate / (1000000 * (31557600000 / target_block_time_ms))`, or what is left under 2^63 - 1 where it would take `total_supply` beyond that bound.
+- The treasury receives `reward * treasury_share_ppm / 1000000`, and the proposer of the block the rest.
+- `total_supply` goes up by the reward.
+
+A delegation that is unbonding is not staked, and neither is a bond. The rate is a number of parts per million a year: it goes from `i_max_ppm`, when nothing is staked, down to `i_min_ppm` at the target, along a curve that is flat at both ends, and stays there above the target. A year is 31,557,600,000 milliseconds, 365.25 days, and the number of its blocks is rounded down before anything is divided by it. The bound comes first and the sharing second: what the treasury and the proposer share is what the block mints, never the reward it would have minted. Nothing is lost to rounding, since the proposer receives what the treasury does not, and a reward of 0 writes nothing.
+
+The proposer is the only validator a block rewards. A block does not say who signed the block before it: its certificate is not under its hash (section 9.7), so nothing in a state tells a validator that endorses from one that is absent, and the proposer alone is known to have done its part. The node of today has a parameter `proposer_bonus_ppm`, the share of a proposer among several rewarded validators: it has no place in structure version 1 (section 9.5). The fees of the transactions of a block go to its proposer too, and are not shared (section 9.16).
+
+#### The share of the delegators
+
+What the proposer receives of a reward, `received`, is shared with the addresses that have a delegation to it at that moment.
+
+- The proposer keeps a commission, `received / 10`, of what it receives.
+- Each address that has a delegation to the proposer receives `(received - commission) * amount / backing`: `amount` is the amount of its delegation, and `backing` the stake of the proposer plus the amounts of all the delegations to it.
+- The proposer keeps what those addresses do not receive.
+
+A share enters the balance of its address, like what the proposer keeps: nothing is added to a stake or to a delegation. A share of 0 writes nothing. A delegation that is unbonding receives nothing, and a delegation is counted here from the block that bonds it, whatever its validator weighs in `consensus_set`. The commission is the same for every validator: the node of today keeps a rate for each one in a table of its state, and the state of structure version 1 has no such table.
+
+#### Whether a vote passes
+
+Step 6 of a block counts a vote at the level at which it ends, with the weights the state holds at that step.
+
+- The weight of a validator is its weight in `consensus_set` on the protocol track, and the square root of that weight, rounded down, on the treasury track.
+- `yes` is the sum of the weights of the validators whose vote is `yes`, `no` that of those whose vote is `no`, and `total` that of all the validators. An `abstain` adds to neither.
+- A vote reaches its quorum when `4 * (yes + no)` is `total` or more.
+- A vote of the protocol track passes when it reaches its quorum and `5 * yes` is `4 * (yes + no)` or more.
+- A vote of the treasury track passes when it reaches its quorum and `2 * yes` is more than `yes + no`.
+
+The weights are those of the snapshot (section 9.12): the consensus and a vote count a validator for the same weight. What is delegated to a validator after the snapshot weighs in no vote before the next one, and a slash or the end of a delegation lowers a weight at once. The block of a level that is a multiple of `epoch_blocks` counts its votes before it takes the snapshot again (steps 6 and 8). Both votes of a protocol proposal are counted this way, each when it ends, and the vote of a validator that voted two ways is its first one (section 9.12).
+
+The quorum is a quarter of all the weights, voted `yes` or `no`. An abstention is recorded, and counts neither for the quorum nor for the majority; a vote in which nobody says `yes` or `no` fails. The protocol track asks for four fifths of what was voted, and the treasury track for more than half: a tie fails. Nothing is divided, so nothing is rounded: the comparisons are those of the products above. The square root is that of integers, the largest integer whose square is not above the weight: 3,037,000,499 for 2^63 - 1.
+
+#### What a slash takes
+
+Three kinds of transactions report an offence (section 9.5). Each one is charged like any other transaction, and its operation slashes, or fails and changes nothing else.
+
+- A `slash_equivocation` slashes its `equivocator` for an offence of the level of its double vote, the first one of `double_votes` that is not punished, and marks that double vote `punished`.
+- A `slash_consensus_equivocation` slashes the validator of its two votes for an offence of their level, and adds the slashed vote to `consensus_slashes`.
+- A slash of a validator for an offence of level `L` takes `stake * 30 / 100` from its stake: a tenth of that, rounded down, goes to the sender of the transaction, and the rest is burned.
+- It takes `amount * 30 / 100` from every tranche bonded at level `L` or before, in each delegation to that validator, and in each delegation to it that is unbonding and ended at level `L` or after. What it takes from a tranche is burned, and the `amount` of the delegation goes down by it.
+- The weight of that validator in `consensus_set` becomes its stake plus the amounts of the delegations to it, when that is lower.
+- A `slash_attestation_equivocation` takes `bond * 30 / 100` from the larger of the bonds of its two attestations: a tenth of that, rounded down, goes to the sender of the transaction, and the rest is burned.
+- What is left of the two bonds returns to their issuer: both bonds become 0, and both attestations become `slashed`.
+- `total_supply` goes down by what is burned, and nothing of a slash goes to the treasury.
+
+A stake is 1 mukrn at least after a slash, and so is a tranche: 30 parts in 100, rounded down, never take the whole. Each tranche is rounded on its own. A validator that is slashed again loses 30 parts in 100 of what the slash before left, and one offence is punished once: the double vote is marked, and the slashed vote is kept. A tranche bonded after the offence did not back it and is not touched, and neither is a delegation that ended before it. What the sender receives enters its balance, whoever it is: the validator that is slashed, or the issuer of the two attestations. Both attestations stay in the state, slashed (section 9.12).
+
+#### Reporting an offence
+
+The operation of such a transaction fails, and changes nothing else, unless all of the following hold:
+
+- A `slash_equivocation` names a proposal of the protocol track on which its `equivocator` has a double vote that is not punished.
+- The two votes of a `slash_consensus_equivocation` are of one validator, of one kind, of one level and of one round, and for two blocks.
+- Their validator is a validator of the state.
+- Their level is not above the level of the block.
+- Their level plus `delegation_unbonding_blocks` is not below the level of the block.
+- No slashed vote of the state is of that validator, kind, level and round.
+- A `slash_attestation_equivocation` names two attestations of the state, and not one of them twice.
+- They are of one issuer, under one `schema_id` and about one `subject`, and their claims differ: their canonical JSON is not the same.
+- Neither of them is slashed.
+- Neither was revoked before the other was issued.
+- The slash takes something: 1 mukrn at least, from a stake, a tranche or a bond.
+
+The first rule is that of a `slash_equivocation`, the five after it are those of a `slash_consensus_equivocation`, the four after them those of a `slash_attestation_equivocation`, and the last one is that of all three. An operation that breaks several rules fails all the same: the vectors name the first one, in the order of the list. The two votes of a `slash_consensus_equivocation` are signed, each with the key the registry held for their validator at their level (note, section 6.1): a schema verifies no signature, and the test of that rule comes with the implementation.
+
+Two votes of level `L` are reported in the block of level `L` plus `delegation_unbonding_blocks` at the latest, which is the block that takes their slashed vote out of the state (section 9.16). Two claims differ when their canonical JSON does: `true` and 1 are two claims, and the same members written in another order are one. An attestation revoked at the very level at which the other was issued stood at that level, and the two are a contradiction. A slash that would take nothing fails: nothing is marked, and the offence can be reported again.
+
+### 9.18 A whole block
+
+The vectors of the sections before hold each rule on a part of a state. Those of this section apply whole blocks to whole states: the eight steps of section 9.16 in their order, on a state of section 9.12, with the arithmetic of section 9.17. A block is valid only if the rules of section 9.16 hold and both of the following do:
+
+- The `level` of its header is the `level` of the state plus 1.
+- The `state_root` of its header is the root of the state the block leads to, computed by the function that state names.
+
+The state a block leads to keeps every rule of section 9.12, the one that ties `total_supply` to its tables among them: what a block mints and what it burns is in that sum, and nowhere else. When a block activates a proposal that changes `state_root_function`, the root of its header is computed by the new function: a header commits to the state as the eight steps leave it, and that state names its function.
+
+Each vector gives a state, a block, and the state the block leads to: the members that leave the state and the values put in place, the root of that state, and the pin of its encoding; or the rule that makes the block invalid. The vectors hold an empty block on a first state; the block of a level at which every step has something to do, and the block after it, whose reward reads the parameters the first one activated; a block that changes the function of the state root, and the same block under the root of the old function, which is invalid; reports of offences in the block of a proposer they slash; transactions of guardians; a supply 100 mukrn under the end of its range, on a first state and in a block that burns before it mints; and blocks that are invalid.
+
+The blocks of these vectors hold transfers, the transactions of guardians and the reports of offences, sent by accounts whose key the state holds. The other kinds of transactions, and the first transaction of an account, which records its key, come with their implementation. Like every vector of this section they verify no signature, and they do not check what the consensus checks of a block: its parent, its moment, and that its proposer is the one the draw names. Their proposer is a validator.
 
 ---
 

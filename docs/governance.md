@@ -1,5 +1,7 @@
 # On-chain Governance
 
+> **Structure version 1.** What a block of structure version 1 computes, the reward of a block and who receives it, whether a vote passes and what a slash takes, is written in section 9.17 of [`api-stability.md`](api-stability.md), with its vectors. This page is about the node of today, and is not a reference for structure version 1.
+
 This document describes Kern's on-chain governance system, implemented in [`kern/governance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/governance.py). Two parallel tracks — protocol amendments and treasury allocations — let the chain evolve and fund ecosystem work without hard forks or off-chain coordination.
 
 The token economy document ([`tokenomics.md`](tokenomics.md) §7) describes the *intent* of governance. This document describes the *implementation*.
@@ -112,7 +114,7 @@ Every parameter has a type and a range, checked when the proposal is submitted (
 | `i_min`, `i_max`, `target_staking_ratio`, `treasury_share`, `proposer_bonus` | number, 0 to 1 |
 | `target_block_time_seconds`, `block_time_seconds` | number, 0.001 to 3,600 |
 
-The first ten names are the parameters of structure version 1, with the same ranges ([`api-stability.md`](api-stability.md), section 9.5). The seven that take a fraction or a number of seconds are those of today's node only; it converts them to the integer names when it reads them. In a swap, `swap` and `to` are texts.
+The first ten names, without `proposer_bonus_ppm`, are the nine parameters of structure version 1, with the same ranges ([`api-stability.md`](api-stability.md), section 9.5): there the proposer of a block receives all that the treasury does not (section 9.17). The seven that take a fraction or a number of seconds are those of today's node only; it converts them to the integer names when it reads them. In a swap, `swap` and `to` are texts.
 
 A value is checked a second time when the proposal would be activated: a proposal that a state already holds with a value the node cannot use becomes `REJECTED` at that moment, instead of activated.
 

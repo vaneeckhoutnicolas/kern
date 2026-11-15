@@ -27,6 +27,8 @@ signature profile, which this file imports and does not change.
 
 from __future__ import annotations
 
+import copy
+import math
 import re
 import sys
 from dataclasses import dataclass
@@ -600,7 +602,6 @@ PARAMETERS = Obj("parameters", [
     ("target_staking_ratio_ppm", PPM, "optional"),
     ("target_block_time_ms", Int(1, 3_600_000), "optional"),
     ("treasury_share_ppm", PPM, "optional"),
-    ("proposer_bonus_ppm", PPM, "optional"),
     ("fee_floor_enabled", Bool(), "optional"),
     ("fee_floor_base", Int(0, 10**12), "optional"),
     ("fee_floor_per_byte", Int(0, 10**9), "optional"),
@@ -1308,7 +1309,7 @@ def _bounds_in_order(parameters, cx, where):
         refuse("inconsistent", _join(where, "i_min_ppm"), "above i_max_ppm")
 
 
-# The ten parameters a protocol proposal can change (section 9.5), each one
+# The nine parameters a protocol proposal can change (section 9.5), each one
 # with the range it has there. In the state every one of them has a value.
 STATE_PARAMETERS = Obj("state parameters", [(name, type_, "required") for name, type_, _ in PARAMETERS.fields], [
     ("`i_min_ppm` is not above `i_max_ppm`.", _bounds_in_order),
@@ -1895,6 +1896,32 @@ def _moved(table: dict, address: str, by: int) -> None:
         table.pop(address, None)
 
 
+def _too_large(parameters: dict, transactions: list[dict]) -> bool:
+    return sum(transaction_size(tx) for tx in transactions) > parameters["max_block_bytes"]
+
+
+def _charged(state: dict, balances: dict, nonces: dict, proposer: str, tx: dict) -> str | None:
+    """Charges one transaction when its turn comes: the rule that it
+    breaks, which makes its block invalid, or nothing once its fee has
+    moved to the proposer and its sender has taken its next nonce."""
+    parameters = state["parameters"]
+    floor = parameters["fee_floor_base"] + parameters["fee_floor_per_byte"] * transaction_size(tx)
+    if parameters["fee_floor_enabled"] and tx["fee"] < floor:
+        return "fee_under_floor"
+    if tx["sender"] == state["treasury_address"]:
+        return "sent_by_treasury"
+    if tx["chain_id"] != state["chain_id"]:
+        return "wrong_chain"
+    if tx["nonce"] != nonces.get(tx["sender"], 0) or tx["nonce"] == INT_MAX:
+        return "wrong_nonce"
+    if balances.get(tx["sender"], 0) < tx["fee"]:
+        return "unpaid_fee"
+    _moved(balances, tx["sender"], -tx["fee"])
+    _moved(balances, proposer, tx["fee"])
+    nonces[tx["sender"]] = tx["nonce"] + 1
+    return None
+
+
 def charge(state: dict, proposer: str, transactions: list[dict]) -> dict:
     """What a block of transfers does to the balances and the nonces of a
     state, or the rule that makes it invalid. `state` holds `chain_id`,
@@ -1904,26 +1931,14 @@ def charge(state: dict, proposer: str, transactions: list[dict]) -> dict:
     of its sender, whatever its operation does next. A transfer whose
     sender does not hold the amount fails: it stays in the block, and has
     paid."""
-    parameters = state["parameters"]
-    if sum(transaction_size(tx) for tx in transactions) > parameters["max_block_bytes"]:
+    if _too_large(state["parameters"], transactions):
         return {"valid": False, "rule": "block_too_large"}
     balances, nonces = dict(state["balances"]), dict(state["nonces"])
     failed = []
     for i, tx in enumerate(transactions):
-        floor = parameters["fee_floor_base"] + parameters["fee_floor_per_byte"] * transaction_size(tx)
-        if parameters["fee_floor_enabled"] and tx["fee"] < floor:
-            return {"valid": False, "rule": "fee_under_floor", "at": i}
-        if tx["sender"] == state["treasury_address"]:
-            return {"valid": False, "rule": "sent_by_treasury", "at": i}
-        if tx["chain_id"] != state["chain_id"]:
-            return {"valid": False, "rule": "wrong_chain", "at": i}
-        if tx["nonce"] != nonces.get(tx["sender"], 0) or tx["nonce"] == INT_MAX:
-            return {"valid": False, "rule": "wrong_nonce", "at": i}
-        if balances.get(tx["sender"], 0) < tx["fee"]:
-            return {"valid": False, "rule": "unpaid_fee", "at": i}
-        _moved(balances, tx["sender"], -tx["fee"])
-        _moved(balances, proposer, tx["fee"])
-        nonces[tx["sender"]] = tx["nonce"] + 1
+        rule = _charged(state, balances, nonces, proposer, tx)
+        if rule is not None:
+            return {"valid": False, "rule": rule, "at": i}
         if balances.get(tx["sender"], 0) < tx["amount"]:
             failed.append(i)
             continue
@@ -2063,6 +2078,445 @@ def guard(before: dict, operations: list[dict]) -> dict:
     return {"did": did, "treasury_holds": held_by_treasury, "burned": burned,
             "payments": {identifier: {name: payment[name] for name in ("phase", "released_by") if name in payment}
                          for identifier, payment in payments.items()}}
+
+
+# -- the arithmetic of a block (section 9.17) ---------------------------------
+# What chapter 2 left to three pages: the reward of a block and who receives
+# it, whether a vote passes, and what a slash takes. Python cuts no integer,
+# and a second client must not either.
+
+MILLION = 1_000_000
+YEAR_MS = 31_557_600_000                           # the milliseconds of a year of 365.25 days
+
+ARITHMETIC_RULES = [
+    "Every number is an integer, and no result on the way is cut to 64 bits.",
+    "In a formula `*` is a product and `/` a division rounded down. Products and divisions are done from left to "
+    "right, before sums and differences: `a * b / c` is the product of `a` and `b`, divided by `c`.",
+]
+REWARD_RULES = [
+    "What is staked is the sum of the stakes of `validators` and of the amounts of `delegations`.",
+    "`ratio` is `staked * 1000000 / total_supply`.",
+    "The rate is `i_min_ppm` when `ratio` is `target_staking_ratio_ppm` or more.",
+    "Otherwise `d` is `1000000 - ratio * 1000000 / target_staking_ratio_ppm`, `c` is "
+    "`d * d * (3000000 - 2 * d) / 1000000000000`, and the rate is `i_min_ppm + (i_max_ppm - i_min_ppm) * c / 1000000`.",
+    "The reward is `total_supply * rate / (1000000 * (31557600000 / target_block_time_ms))`, or what is left under "
+    "2^63 - 1 where it would take `total_supply` beyond that bound.",
+    "The treasury receives `reward * treasury_share_ppm / 1000000`, and the proposer of the block the rest.",
+    "`total_supply` goes up by the reward.",
+]
+SHARING_RULES = [
+    "The proposer keeps a commission, `received / 10`, of what it receives.",
+    "Each address that has a delegation to the proposer receives `(received - commission) * amount / backing`: "
+    "`amount` is the amount of its delegation, and `backing` the stake of the proposer plus the amounts of all the "
+    "delegations to it.",
+    "The proposer keeps what those addresses do not receive.",
+]
+
+
+def _delegated(state: dict, validator: str) -> int:
+    """The amounts of the delegations to a validator, those that are unbonding left out."""
+    return sum(delegation["amount"] for delegation in state["delegations"].values()
+               if delegation["validator"] == validator)
+
+
+def reward(before: dict, proposer: str) -> dict:
+    """The reward of a block and who receives it. `before` holds
+    `total_supply`, `treasury_address`, `parameters`, `validators` and
+    `delegations` as the transactions of the block left them. Returns what
+    is staked, the rate, the reward, what each address receives (`credits`)
+    and `total_supply` afterwards."""
+    parameters, supply = before["parameters"], before["total_supply"]
+    staked = (sum(validator["stake"] for validator in before["validators"])
+              + sum(delegation["amount"] for delegation in before["delegations"].values()))
+    ratio, target = staked * MILLION // supply, parameters["target_staking_ratio_ppm"]
+    rate = parameters["i_min_ppm"]
+    if ratio < target:
+        d = MILLION - ratio * MILLION // target
+        c = d * d * (3 * MILLION - 2 * d) // MILLION**2
+        rate += (parameters["i_max_ppm"] - parameters["i_min_ppm"]) * c // MILLION
+    minted = min(supply * rate // (MILLION * (YEAR_MS // parameters["target_block_time_ms"])), INT_MAX - supply)
+    to_treasury = minted * parameters["treasury_share_ppm"] // MILLION
+    received = minted - to_treasury
+    credits: dict[str, int] = {}
+    _moved(credits, before["treasury_address"], to_treasury)
+    backing = _delegated(before, proposer) + next(validator["stake"] for validator in before["validators"]
+                                                  if validator["address"] == proposer)
+    kept = received
+    for delegator, delegation in before["delegations"].items():
+        if delegation["validator"] == proposer:
+            share = (received - received // 10) * delegation["amount"] // backing
+            _moved(credits, delegator, share)
+            kept -= share
+    _moved(credits, proposer, kept)
+    return {"staked": staked, "rate": rate, "reward": minted, "credits": credits, "total_supply": supply + minted}
+
+
+VOTING_RULES = [
+    "The weight of a validator is its weight in `consensus_set` on the protocol track, and the square root of that "
+    "weight, rounded down, on the treasury track.",
+    "`yes` is the sum of the weights of the validators whose vote is `yes`, `no` that of those whose vote is `no`, "
+    "and `total` that of all the validators. An `abstain` adds to neither.",
+    "A vote reaches its quorum when `4 * (yes + no)` is `total` or more.",
+    "A vote of the protocol track passes when it reaches its quorum and `5 * yes` is `4 * (yes + no)` or more.",
+    "A vote of the treasury track passes when it reaches its quorum and `2 * yes` is more than `yes + no`.",
+]
+
+
+def tally(consensus_set: list[dict], ballots: dict, track: str) -> dict:
+    """Whether a vote passes: the weights of its `yes` and of its `no`,
+    that of all the validators, whether it reaches its quorum and whether
+    it passes. `ballots` gives the vote of each validator that voted."""
+    weights = {entry["address"]: entry["stake"] if track == "protocol" else math.isqrt(entry["stake"])
+               for entry in consensus_set}
+    yes = sum(weights[voter] for voter, ballot in ballots.items() if ballot == "yes")
+    no = sum(weights[voter] for voter, ballot in ballots.items() if ballot == "no")
+    total = sum(weights.values())
+    quorum = 4 * (yes + no) >= total
+    majority = 5 * yes >= 4 * (yes + no) if track == "protocol" else 2 * yes > yes + no
+    return {"yes": yes, "no": no, "total": total, "quorum": quorum, "passes": quorum and majority}
+
+
+SLASHING_RULES = [
+    "A `slash_equivocation` slashes its `equivocator` for an offence of the level of its double vote, the first one "
+    "of `double_votes` that is not punished, and marks that double vote `punished`.",
+    "A `slash_consensus_equivocation` slashes the validator of its two votes for an offence of their level, and adds "
+    "the slashed vote to `consensus_slashes`.",
+    "A slash of a validator for an offence of level `L` takes `stake * 30 / 100` from its stake: a tenth of that, "
+    "rounded down, goes to the sender of the transaction, and the rest is burned.",
+    "It takes `amount * 30 / 100` from every tranche bonded at level `L` or before, in each delegation to that "
+    "validator, and in each delegation to it that is unbonding and ended at level `L` or after. What it takes from a "
+    "tranche is burned, and the `amount` of the delegation goes down by it.",
+    "The weight of that validator in `consensus_set` becomes its stake plus the amounts of the delegations to it, "
+    "when that is lower.",
+    "A `slash_attestation_equivocation` takes `bond * 30 / 100` from the larger of the bonds of its two "
+    "attestations: a tenth of that, rounded down, goes to the sender of the transaction, and the rest is burned.",
+    "What is left of the two bonds returns to their issuer: both bonds become 0, and both attestations become "
+    "`slashed`.",
+    "`total_supply` goes down by what is burned, and nothing of a slash goes to the treasury.",
+]
+SLASH_RULES = {
+    "no_double_vote": "A `slash_equivocation` names a proposal of the protocol track on which its `equivocator` has "
+                      "a double vote that is not punished.",
+    "not_an_offence": "The two votes of a `slash_consensus_equivocation` are of one validator, of one kind, of one "
+                      "level and of one round, and for two blocks.",
+    "not_a_validator": "Their validator is a validator of the state.",
+    "not_yet": "Their level is not above the level of the block.",
+    "too_old": "Their level plus `delegation_unbonding_blocks` is not below the level of the block.",
+    "slashed_already": "No slashed vote of the state is of that validator, kind, level and round.",
+    "not_two": "A `slash_attestation_equivocation` names two attestations of the state, and not one of them twice.",
+    "no_contradiction": "They are of one issuer, under one `schema_id` and about one `subject`, and their claims "
+                        "differ: their canonical JSON is not the same.",
+    "slashed_before": "Neither of them is slashed.",
+    "not_at_once": "Neither was revoked before the other was issued.",
+    "nothing_to_take": "The slash takes something: 1 mukrn at least, from a stake, a tranche or a bond.",
+}
+SLASHED_TABLES = ("validators", "consensus_set", "delegations", "delegation_unbonding", "attestations",
+                  "consensus_slashes", "protocol")
+
+
+def _slashed(tables: dict, offender: str, offence: int) -> tuple[int, int] | None:
+    """Slashes a validator for an offence of a level: what goes to the
+    sender of the transaction and what is burned, or nothing when the slash
+    would take nothing, in which case nothing has changed."""
+    validator = next(entry for entry in tables["validators"] if entry["address"] == offender)
+    taken = validator["stake"] * 30 // 100
+    exposed = [holding for holding in tables["delegations"].values() if holding["validator"] == offender]
+    exposed += [holding for holding in tables["delegation_unbonding"]
+                if holding["validator"] == offender and holding["unbonding_from"] >= offence]
+    cuts = [(holding, tranche, tranche["amount"] * 30 // 100)
+            for holding in exposed for tranche in holding["tranches"] if tranche["level"] <= offence]
+    if taken == 0 and all(cut == 0 for _, _, cut in cuts):
+        return None
+    validator["stake"] -= taken
+    burned = taken - taken // 10
+    for holding, tranche, cut in cuts:
+        tranche["amount"] -= cut
+        holding["amount"] -= cut
+        burned += cut
+    weight = next(entry for entry in tables["consensus_set"] if entry["address"] == offender)
+    weight["stake"] = min(weight["stake"], validator["stake"] + _delegated(tables, offender))
+    return taken // 10, burned
+
+
+def _reported(tables: dict, protocol: list[dict], level: int, period: int,
+              operation: dict) -> str | tuple[dict[str, int], int]:
+    """What the report of an offence does to the tables of a state, in the
+    block of a level: the rule that makes it fail, the first one broken in
+    the order of the document, or what each address receives and what is
+    burned. An operation is its `sender`, its `kind` and its `params`."""
+    sender, kind, params = operation["sender"], operation["kind"], operation["params"]
+    credits: dict[str, int] = {}
+    if kind == "slash_attestation_equivocation":
+        named = [params["attestation_id_1"], params["attestation_id_2"]]
+        if named[0] == named[1] or any(identifier not in tables["attestations"] for identifier in named):
+            return "not_two"
+        one, two = (tables["attestations"][identifier] for identifier in named)
+        if any(one[name] != two[name] for name in ("issuer", "schema_id", "subject")) \
+                or ref.canonical_json(one["claim"]) == ref.canonical_json(two["claim"]):
+            return "no_contradiction"
+        if one["slashed"] or two["slashed"]:
+            return "slashed_before"
+        if any("revoked_at" in first and first["revoked_at"] < second["issued_at"]
+               for first, second in ((one, two), (two, one))):
+            return "not_at_once"
+        taken = max(one["bond"], two["bond"]) * 30 // 100
+        if taken == 0:
+            return "nothing_to_take"
+        _moved(credits, one["issuer"], one["bond"] + two["bond"] - taken)
+        _moved(credits, sender, taken // 10)
+        for attestation in (one, two):
+            attestation.update(bond=0, slashed=True)
+        return credits, taken - taken // 10
+    if kind == "slash_equivocation":
+        doubles = [double for proposal in protocol if proposal["proposal_id"] == params["proposal_id"]
+                   for double in proposal["double_votes"]
+                   if double["voter"] == params["equivocator"] and not double["punished"]]
+        if not doubles:
+            return "no_double_vote"
+        offender, offence = params["equivocator"], doubles[0]["level"]
+    else:
+        one, two = params["msg_a"], params["msg_b"]
+        if any(one[name] != two[name] for name in ("validator", "kind", "level", "round")) \
+                or one["block_hash"] == two["block_hash"]:
+            return "not_an_offence"
+        offender, offence = one["validator"], one["level"]
+        vote = {"validator": offender, "kind": one["kind"], "level": offence, "round": one["round"]}
+        if all(entry["address"] != offender for entry in tables["validators"]):
+            return "not_a_validator"
+        if offence > level:
+            return "not_yet"
+        if offence + period < level:
+            return "too_old"
+        if vote in tables["consensus_slashes"]:
+            return "slashed_already"
+    outcome = _slashed(tables, offender, offence)
+    if outcome is None:
+        return "nothing_to_take"
+    if kind == "slash_equivocation":
+        doubles[0]["punished"] = True
+    else:
+        tables["consensus_slashes"].append(vote)
+    _moved(credits, sender, outcome[0])
+    return credits, outcome[1]
+
+
+def slash(before: dict, operations: list[dict]) -> dict:
+    """What the reports of offences in a block do. `before` holds the level
+    of the block (`level`), `delegation_unbonding_blocks`, and the tables a
+    slash reads and writes: `validators`, `consensus_set`, `delegations`,
+    `delegation_unbonding`, `attestations`, `consensus_slashes` and, under
+    `protocol`, the proposals of the protocol track, each with its
+    `proposal_id` and its `double_votes`. An operation is its `sender`, its
+    `kind` and its `params`.
+
+    Returns what each operation did, `slashed` or the rule that makes it
+    fail; then what each address receives (`credits`), what was burned, and
+    the tables as the operations leave them."""
+    tables = copy.deepcopy({name: before[name] for name in SLASHED_TABLES})
+    credits: dict[str, int] = {}
+    burned, did = 0, []
+    for operation in operations:
+        outcome = _reported(tables, tables["protocol"], before["level"], before["delegation_unbonding_blocks"],
+                            operation)
+        if isinstance(outcome, str):
+            did.append(outcome)
+            continue
+        for address, amount in outcome[0].items():
+            _moved(credits, address, amount)
+        burned += outcome[1]
+        did.append("slashed")
+    return {"did": did, "credits": credits, "burned": burned, **tables}
+
+
+# -- a whole block (section 9.18) ----------------------------------------------
+# The eight steps of section 9.16 on a whole state. The engines above do the
+# work: this one puts them in order, on one state, and the rules of a state
+# (section 9.12) judge what it leaves.
+
+WHOLE_BLOCK_RULES = {
+    "wrong_level": "The `level` of its header is the `level` of the state plus 1.",
+    "wrong_state_root": "The `state_root` of its header is the root of the state the block leads to, computed by "
+                        "the function that state names.",
+}
+WHOLE_BLOCK_KINDS = ("transfer", "release_payment", "cancel_payment", "slash_equivocation",
+                     "slash_consensus_equivocation", "slash_attestation_equivocation")
+
+
+def _lost(state: dict, bond: int) -> None:
+    """A bond that is lost: half of it is burned, rounded down, and the rest goes to the treasury."""
+    state["total_supply"] -= bond // 2
+    _moved(state["balances"], state["treasury_address"], bond - bond // 2)
+
+
+def _guarded(state: dict, tx: dict) -> bool:
+    """The transaction of a guardian on a whole state: what `guard` says of
+    it, done. Whether the operation succeeded."""
+    constants, balances, treasury = state["constants"], state["balances"], state["treasury_address"]
+    named = [proposal for proposal in state["governance"]["treasury"]
+             if proposal["proposal_id"] == tx["params"]["proposal_id"]]
+    payments = {}
+    for proposal in named:
+        recipients = proposal["payload"]["recipients"]
+        payments[proposal["proposal_id"]] = {
+            "phase": proposal["phase"], "voted": phase_ends("treasury", proposal, constants)["voting"],
+            "total": sum(recipient["amount"] for recipient in recipients),
+            "to_itself": sum(recipient["amount"] for recipient in recipients if recipient["address"] == treasury),
+            **({"released_by": proposal["released_by"]} if "released_by" in proposal else {})}
+    before = {"level": state["level"], "guardians": state["guardians"], "treasury": balances.get(treasury, 0),
+              "treasury_bond": constants["treasury_bond"], "guardian_delay_blocks": constants["guardian_delay_blocks"],
+              "payments": payments}
+    operation = {"sender": tx["sender"], "kind": tx["kind"], "proposal_id": tx["params"]["proposal_id"]}
+    did = guard(before, [operation])["did"][0]
+    if did == "recorded":
+        named[0]["released_by"] = tx["sender"]
+        return True
+    if did not in ("paid", "cancelled"):
+        return False
+    proposal = named[0]
+    bond = proposal.pop("bond")
+    proposal.pop("released_by", None)
+    proposal["ended_at"] = state["level"]
+    if did == "cancelled":
+        proposal["phase"] = "rejected"
+        _lost(state, bond)
+        return True
+    proposal["phase"] = "executed"
+    for recipient in proposal["payload"]["recipients"]:
+        _moved(balances, treasury, -recipient["amount"])
+        _moved(balances, recipient["address"], recipient["amount"])
+    _moved(balances, proposal["submitter"], bond)
+    return True
+
+
+def _operated(state: dict, tx: dict) -> bool:
+    """The operation of a transaction that has paid, on a whole state:
+    whether it succeeded. One that fails changes nothing else."""
+    balances = state["balances"]
+    if tx["kind"] == "transfer":
+        if balances.get(tx["sender"], 0) < tx["amount"]:
+            return False
+        _moved(balances, tx["sender"], -tx["amount"])
+        _moved(balances, tx["recipient"], tx["amount"])
+        return True
+    if tx["kind"] in ("release_payment", "cancel_payment"):
+        return _guarded(state, tx)
+    outcome = _reported(state, state["governance"]["protocol"], state["level"],
+                        state["constants"]["delegation_unbonding_blocks"], tx)
+    if isinstance(outcome, str):
+        return False
+    for address, amount in outcome[0].items():
+        _moved(balances, address, amount)
+    state["total_supply"] -= outcome[1]
+    return True
+
+
+def _moved_on(state: dict) -> None:
+    """Step 6: every proposal whose phase ends at the level of the state
+    moves on. A vote is counted with the weights the state holds then, and
+    the proposals it decides are settled by `decide`, in their order."""
+    level, constants, balances = state["level"], state["constants"], state["balances"]
+    next_phase = {"submitted": {"protocol": "exploration", "treasury": "voting"}, "cooldown": {"protocol": "adoption"}}
+    decided: dict[str, list[tuple[dict, dict]]] = {"protocol": [], "treasury": []}
+    for track in PHASES:
+        for proposal in state["governance"][track]:
+            phase = proposal["phase"]
+            if phase in OVER[track] or phase_window(track, proposal, constants)[1] != level:
+                continue
+            if phase in next_phase:
+                proposal["phase"] = next_phase[phase][track]
+            elif phase == "passed":
+                decided[track].append((proposal, {"phase": "passed"}))
+            else:
+                votes = proposal["votes"] if track == "treasury" else proposal[phase + "_votes"]
+                passes = tally(state["consensus_set"], votes, track)["passes"]
+                if phase == "exploration" and passes:
+                    proposal["phase"] = "cooldown"
+                else:
+                    decided[track].append((proposal, {"phase": phase, "payload": proposal["payload"],
+                                                      "passes": passes}))
+    held = balances.get(state["treasury_address"], 0)
+    result = decide({"parameters": state["parameters"], "state_root_function": state["state_root_function"],
+                     "treasury": held, "protocol_bond": constants["protocol_bond"],
+                     "treasury_bond": constants["treasury_bond"]},
+                    [entry for _, entry in decided["protocol"]], [entry for _, entry in decided["treasury"]])
+    state["parameters"], state["state_root_function"] = result["parameters"], result["state_root_function"]
+    _moved(balances, state["treasury_address"], result["treasury_holds"] - held)
+    state["total_supply"] -= result["burned"]
+    for track in PHASES:
+        for (proposal, _), phase in zip(decided[track], result[track]):
+            proposal["phase"] = phase
+            if phase == "passed":
+                continue
+            bond = proposal.pop("bond")
+            proposal.pop("released_by", None)
+            proposal["ended_at"] = level
+            if phase == "activated":
+                _moved(balances, proposal["submitter"], bond)
+
+
+def transition(state: dict, block: dict) -> dict:
+    """What a block does to a whole state, by the eight steps of section
+    9.16: the state it leads to and the positions of the transactions whose
+    operation failed, or the rule that makes the block invalid. The root of
+    that state is not looked at here: `apply` does.
+
+    The blocks of these vectors hold transfers, the transactions of
+    guardians and the reports of offences, sent by accounts whose key the
+    state holds, and their proposer is a validator: no signature is
+    verified, and neither is the draw of the proposer."""
+    header, transactions = block["header"], block["transactions"]
+    level, proposer = header["level"], header["proposer"]
+    if level != state["level"] + 1:
+        return {"valid": False, "rule": "wrong_level"}
+    if _too_large(state["parameters"], transactions):
+        return {"valid": False, "rule": "block_too_large"}
+    if proposer not in _listed(state):
+        raise ValueError("the proposer of a whole block of these vectors is a validator")
+    new = copy.deepcopy(state)
+    balances, constants = new["balances"], new["constants"]
+    new["level"] = level                                                                 # step 1
+    failed = []
+    for i, tx in enumerate(transactions):                                                # step 2
+        rule = _charged(new, balances, new["nonces"], proposer, tx)
+        if rule is not None:
+            return {"valid": False, "rule": rule, "at": i}
+        if tx["kind"] not in WHOLE_BLOCK_KINDS or "public_key" in tx or tx["sender"] not in new["keys"]:
+            raise ValueError("a transaction that the whole blocks of these vectors do not hold")
+        if not _operated(new, tx):
+            failed.append(i)
+    minted = reward(new, proposer)                                                       # step 3
+    for address, amount in minted["credits"].items():
+        _moved(balances, address, amount)
+    new["total_supply"] = minted["total_supply"]
+    for attestation in new["attestations"].values():                                     # step 4
+        if "revoked_at" in attestation \
+                and attestation["revoked_at"] + constants["attestation_unbonding_blocks"] == level:
+            _moved(balances, attestation["issuer"], attestation["bond"])
+            attestation["bond"] = 0
+    for leaving in new["delegation_unbonding"]:                                          # step 5
+        if leaving["release_at"] == level:
+            _moved(balances, leaving["delegator"], leaving["amount"])
+    new["delegation_unbonding"] = [leaving for leaving in new["delegation_unbonding"] if leaving["release_at"] != level]
+    _moved_on(new)                                                                       # step 6
+    period = constants["delegation_unbonding_blocks"]                                    # step 7
+    for track in PHASES:
+        new["governance"][track] = [proposal for proposal in new["governance"][track]
+                                    if "ended_at" not in proposal or proposal["ended_at"] + period != level]
+    new["consensus_slashes"] = [vote for vote in new["consensus_slashes"] if vote["level"] + period != level]
+    if level % constants["epoch_blocks"] == 0:                                           # step 8
+        new["consensus_set"] = [{"address": validator["address"],
+                                 "stake": validator["stake"] + _delegated(new, validator["address"])}
+                                for validator in new["validators"]]
+    return {"valid": True, "state": new, "failed": failed}
+
+
+def apply(network_id: bytes, state: dict, block: dict) -> dict:
+    """A whole block on a whole state: what `transition` gives, when the
+    header of the block commits to the state it leads to."""
+    result = transition(state, block)
+    if result["valid"] and block["header"]["state_root"] != state_root(network_id, result["state"]).hex():
+        return {"valid": False, "rule": "wrong_state_root"}
+    return result
 
 
 # -- one request for blocks at a time (section 9.8) ---------------------------
@@ -2261,5 +2715,12 @@ def rules() -> dict[str, list[str]]:
     out["What a block charges"] = list(BLOCK_RULES.values()) + SIGNATURE_RULES
     out["Deciding proposals"] = list(DECIDING_RULES)
     out["What a guardian does"] = list(GUARDIAN_RULES.values())
+    out["9.17 The arithmetic of a block"] = list(ARITHMETIC_RULES)
+    out["The reward of a block"] = list(REWARD_RULES)
+    out["The share of the delegators"] = list(SHARING_RULES)
+    out["Whether a vote passes"] = list(VOTING_RULES)
+    out["What a slash takes"] = list(SLASHING_RULES)
+    out["Reporting an offence"] = list(SLASH_RULES.values())
+    out["9.18 A whole block"] = list(WHOLE_BLOCK_RULES.values())
     return out
 

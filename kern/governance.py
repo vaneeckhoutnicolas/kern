@@ -193,9 +193,9 @@ KNOWN_PROTOCOL_PAYLOAD_KEYS = {"params", "swap", "to"}
 # range, checked when the proposal is submitted and again when it would be
 # activated.
 #
-# The integer names and the switch are the parameters of structure version 1
-# (docs/api-stability.md, section 9), with the ranges written there. A
-# boolean is not an integer.
+# The integer names but `proposer_bonus_ppm`, and the switch, are the
+# parameters of structure version 1 (docs/api-stability.md, section 9), with
+# the ranges written there. A boolean is not an integer.
 INTEGER_PARAM_RANGES: Dict[str, Tuple[int, int]] = {
     # Issuance, in parts per million.
     "i_min_ppm": (0, 1_000_000),
