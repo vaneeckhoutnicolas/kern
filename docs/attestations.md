@@ -1,5 +1,7 @@
 # Slashable Attestations
 
+> **Structure version 1.** What a block of structure version 1 computes, the reward of a block and who receives it, whether a vote passes and what a slash takes, is written in section 9.17 of [`api-stability.md`](api-stability.md), with its vectors. This page is about the node of today, and is not a reference for structure version 1.
+
 This document specifies Kern's **slashable attestation primitive** introduced in v1.1-rc.
 
 The primitive generalizes the equivocation-detection-and-punishment pattern (already used for governance equivocation in v1.0-rc) to any signed claim about the world. An *attestation* is a signed claim by an issuer about a subject under a schema. If the issuer later signs a CONTRADICTORY claim about the same (schema_id, subject) pair, anyone can submit slashing evidence to punish the issuer and earn a whistleblower reward.
