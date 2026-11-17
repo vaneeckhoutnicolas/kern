@@ -345,7 +345,10 @@ class RollupState:
         Preconditions: the bisection has narrowed the dispute to one step;
         `code` is the batch program (program_hash(code) == tx_data_hash);
         `pre_state` is the VM state both parties agreed on at step `lo`
-        (its commitment must equal that agreed commitment).
+        (its commitment must equal that agreed commitment). A `pre_state`
+        beyond the limits of the Mini-EVM is not a state of the machine:
+        it is turned away before it is hashed, and the challenge stays
+        open for the state both parties agreed on.
 
         single_step_verify then executes one instruction. If the result
         matches the sequencer's commitment at step `hi`, the sequencer
@@ -357,6 +360,7 @@ class RollupState:
         The former resolve_challenge_for_challenger reverted a batch on the
         word of "an external verifier" without executing anything."""
         from .evm.bisection import single_step_verify
+        from .evm.vm import beyond_limits
         bis = self.bisections.get(batch_index)
         if bis is None or batch_index not in self.active_challenges:
             return False, "no active challenge"
@@ -369,6 +373,9 @@ class RollupState:
         if agreed is None or agreed != bis.revealed_chal.get(bis.lo):
             return False, "no agreed commitment at the start of the disputed step"
         try:
+            beyond = beyond_limits(pre_state)  # lengths only: nothing is hashed yet
+            if beyond:
+                return False, f"pre_state is not a state of the Mini-EVM: its {beyond} is beyond the limit"
             if pre_state.commitment_hex() != agreed:
                 return False, "pre_state does not match the agreed commitment"
         except AttributeError:

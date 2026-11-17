@@ -134,6 +134,44 @@ class VmState:
 
 
 # ---------------------------------------------------------------------------
+# The limits of a state
+# ---------------------------------------------------------------------------
+
+# A state of the machine holds no more than this. An instruction that would
+# take it further halts instead, and a state that is already beyond is not a
+# state of the machine: nothing copies it, hashes it or runs it.
+MAX_STACK_WORDS = 1_024
+MAX_MEMORY_BYTES = 1_048_576  # the output is a copy of a range of the memory
+MAX_STORAGE_SLOTS = 16_384
+MAX_CALLDATA_BYTES = 1_048_576
+
+
+def beyond_limits(state: "VmState") -> Optional[str]:
+    """Name what `state` holds beyond the limits of the machine, or None.
+
+    Only lengths are read, so that a state far too large is turned away
+    before anything copies it or hashes it. `original_storage` is copied
+    by every step like the storage, and counts with it."""
+    if len(state.stack) > MAX_STACK_WORDS:
+        return "stack"
+    if len(state.memory) > MAX_MEMORY_BYTES:
+        return "memory"
+    if len(state.output) > MAX_MEMORY_BYTES:
+        return "output"
+    if max(len(state.storage), len(state.original_storage)) > MAX_STORAGE_SLOTS:
+        return "storage"
+    if len(state.context.calldata) > MAX_CALLDATA_BYTES:
+        return "calldata"
+    return None
+
+
+def _require_state(state: "VmState") -> None:
+    beyond = beyond_limits(state)
+    if beyond:
+        raise ValueError(f"not a state of the Mini-EVM: its {beyond} is beyond the limit")
+
+
+# ---------------------------------------------------------------------------
 # Step executor
 # ---------------------------------------------------------------------------
 
@@ -161,6 +199,20 @@ def _expand_memory(mem: bytearray, end: int) -> None:
         # round up to multiple of 32
         new_size = ((end + 31) // 32) * 32
         mem.extend(b"\x00" * (new_size - len(mem)))
+
+
+class _MemoryLimit(Exception):
+    """An instruction reached for memory beyond the limit of the machine.
+    Raised before anything is reserved; `step` turns it into a halted
+    state, and it never leaves this module."""
+
+
+def _reach_memory(mem: bytearray, end: int) -> None:
+    """Make the memory reach `end`, within the limit of the machine: the
+    one way an instruction extends the memory."""
+    if end > MAX_MEMORY_BYTES:
+        raise _MemoryLimit(end)
+    _expand_memory(mem, end)
 
 
 def _peek_stack(stack: List[int], n: int) -> List[int]:
@@ -256,6 +308,10 @@ def _dynamic_extra_cost(op: int, state: "VmState", code: bytes) -> int:
         return max(0, dg.sstore_cost(current, new_val, original) - static)
 
     if op in (Op.LOG0, Op.LOG1, Op.LOG2, Op.LOG3, Op.LOG4):
+        # `step` does not execute the LOG family: events are not modelled,
+        # and a LOG halts as an unknown opcode without extending the memory.
+        # This is what that halted step is charged, and what a LOG pays
+        # from the day the machine runs it.
         n_topics = op - Op.LOG0
         vals = _peek_stack(state.stack, 2 + n_topics)
         if len(vals) < 2:
@@ -268,12 +324,47 @@ def _dynamic_extra_cost(op: int, state: "VmState", code: bytes) -> int:
     return 0
 
 
+def _halted_at_limit(state: VmState, code: bytes, what: str, detail: str = "") -> VmState:
+    """The state after an instruction that would take `state` beyond a
+    limit: the machine halts, reverted, and nothing else changes."""
+    s = state.clone()
+    s.halted = True
+    s.reverted = True
+    s.last_error = f"{what} limit at pc={s.pc}, op={opcode_name(_peek_op(code, s.pc))}{detail}"
+    return s
+
+
 def step(state: VmState, code: bytes) -> VmState:
     """Execute exactly one EVM instruction. Returns the post-step state.
 
     Pure function: does not mutate the input state. Always advances PC
     (or sets halted=True). Out-of-gas, bad jumps, stack underflow, and
-    unknown opcodes all halt with `reverted=True`."""
+    unknown opcodes all halt with `reverted=True`.
+
+    So does an instruction that would take the stack, the memory or the
+    storage beyond the limits of the machine. Like a step that cannot
+    pay, it leaves the gas, the stack, the memory and the storage as they
+    were, and it halts before any memory is reserved. The gas is looked
+    at first: an instruction that can neither pay nor fit halts for want
+    of gas.
+
+    A `state` that is already beyond the limits is not a state of the
+    machine: `ValueError`, before anything copies it."""
+    _require_state(state)
+    try:
+        s = _step(state, code)
+    except _MemoryLimit as reached:
+        return _halted_at_limit(state, code, "memory", f" (needs {reached.args[0]} bytes)")
+    beyond = beyond_limits(s)
+    if beyond:
+        # The stack and the storage grow by one word or one slot at most:
+        # the step is set aside once it is known to go too far.
+        return _halted_at_limit(state, code, beyond)
+    return s
+
+
+def _step(state: VmState, code: bytes) -> VmState:
+    """The instruction itself: `step`, less the limits of the state."""
     s = state.clone()
 
     if s.halted:
@@ -301,14 +392,14 @@ def step(state: VmState, code: bytes) -> VmState:
 
         if op == Op.RETURN:
             offset, length = _pop(s.stack, 2)
-            _expand_memory(s.memory, offset + length)
+            _reach_memory(s.memory, offset + length)
             s.output = bytes(s.memory[offset:offset + length])
             s.halted = True
             return s
 
         if op == Op.REVERT:
             offset, length = _pop(s.stack, 2)
-            _expand_memory(s.memory, offset + length)
+            _reach_memory(s.memory, offset + length)
             s.output = bytes(s.memory[offset:offset + length])
             s.halted = True
             s.reverted = True
@@ -365,12 +456,12 @@ def step(state: VmState, code: bytes) -> VmState:
             _pop(s.stack, 1)
         elif op == Op.MLOAD:
             (offset,) = _pop(s.stack, 1)
-            _expand_memory(s.memory, offset + 32)
+            _reach_memory(s.memory, offset + 32)
             word = int.from_bytes(s.memory[offset:offset + 32], "big")
             _push(s.stack, word)
         elif op == Op.MSTORE:
             offset, value = _pop(s.stack, 2)
-            _expand_memory(s.memory, offset + 32)
+            _reach_memory(s.memory, offset + 32)
             s.memory[offset:offset + 32] = value.to_bytes(32, "big")
         elif op == Op.PC:
             _push(s.stack, s.pc)
@@ -468,7 +559,7 @@ def step(state: VmState, code: bytes) -> VmState:
         # ----- hashing (v0.4) ---------------------------------------------
         elif op == Op.SHA3:
             offset, length = _pop(s.stack, 2)
-            _expand_memory(s.memory, offset + length)
+            _reach_memory(s.memory, offset + length)
             data = bytes(s.memory[offset:offset + length])
             digest = hashlib.sha3_256(data).digest()
             _push(s.stack, int.from_bytes(digest, "big"))
@@ -510,7 +601,7 @@ def step(state: VmState, code: bytes) -> VmState:
                 s.storage[key] = value & _WORD_MASK
         elif op == Op.MSTORE8:
             offset, value = _pop(s.stack, 2)
-            _expand_memory(s.memory, offset + 1)
+            _reach_memory(s.memory, offset + 1)
             s.memory[offset] = value & 0xff
         elif op == Op.GAS:
             _push(s.stack, s.gas)
@@ -573,13 +664,17 @@ def execute(
 
     Returns the full trace. Each entry in `states` represents the VM
     AFTER one more instruction has been executed; `states[0]` is the
-    initial state (before any instruction)."""
+    initial state (before any instruction).
+
+    `ValueError` when the calldata or the initial storage is beyond the
+    limits of the machine: nothing is hashed and nothing runs."""
     initial = VmState(
         gas=gas,
         storage=dict(initial_storage or {}),
         original_storage=dict(initial_storage or {}),  # v1.0-rc: SSTORE pricing baseline
         context=context or ExecContext(),
     )
+    _require_state(initial)
     states: List[VmState] = [initial]
     commitments: List[bytes] = [initial.commitment()]
 

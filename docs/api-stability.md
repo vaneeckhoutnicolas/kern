@@ -165,7 +165,13 @@ The opcodes implemented by [`kern/evm/vm.py`](https://github.com/vaneeckhoutnico
 
 The Yellow-Paper-equivalent gas costs in [`kern/evm/dynamic_gas.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/dynamic_gas.py).
 
-Every instruction that makes the machine extend its memory pays for the extension before it runs: MLOAD, MSTORE, MSTORE8, SHA3, RETURN and REVERT. A step that cannot pay fails for want of gas and leaves the memory as it was (`tests/test_evm_return_gas.py`). An empty range pays for the way to its start, which Ethereum does not charge.
+Every instruction that makes the machine extend its memory pays for the extension before it runs: MLOAD, MSTORE, MSTORE8, SHA3, RETURN and REVERT. An empty range pays for the way to its start. That is a rule of this machine: Ethereum charges nothing for an empty range.
+
+A step that cannot pay halts for want of gas, reverted, and changes nothing else: the gas, the stack, the program counter, the memory and the storage are what they were. That is a rule of this machine too: in Ethereum a call that runs out of gas loses all of it.
+
+The gas does not bound a state: a gas of 64 bits pays for more memory than a host holds. A state of the machine holds at most 1,024 words of stack, 1,048,576 bytes of memory and as many of output, 16,384 slots of storage and 1,048,576 bytes of calldata. An instruction that would take the stack, the memory or the storage beyond its limit halts as a step that cannot pay does, before any memory is reserved, and the gas is looked at first. A state that is already beyond a limit is not a state of the machine: `step`, `execute` and `single_step_verify` refuse it before anything copies it, and `RollupState.resolve_challenge` turns it away before it is hashed, so the challenge stays open for the state both parties agreed on.
+
+`tests/test_evm_return_gas.py` holds the price, and `tests/test_evm_limits.py` the limits and what a halted step leaves.
 
 **Stable**: constants can be tuned via protocol amendment based on operational data, but the *shape* of the pricing (memory expansion quadratic, SSTORE 3-case, etc.) is frozen.
 
