@@ -84,7 +84,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1621 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 1669 tests passing.**
 
 ```
 kern/
@@ -139,7 +139,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 1621 tests, none skipped
+├── tests/                      # 1669 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -159,7 +159,7 @@ kern/
 | Bootstrap baker | 1 000 000 | 1% | Genesis validator stake (bonded at genesis) |
 | **Total** | **100 000 000** | **100%** | |
 
-> **Allocation notes (reconcile before genesis).** This table now matches the executable [`genesis.json`](genesis.json), which is the source of truth. Two items still need a decision before the genesis ceremony: (1) the Foundation pool (14M) currently shares an address with the on-chain **treasury** — for clean accounting and audit these should be **separate addresses**; (2) the **Bootstrap baker** holds the only genesis validator stake (1M) and is therefore a single point of control at launch — the validator-onboarding plan in [`docs/setup-validator.md`](docs/setup-validator.md) should bring independent validators in as early as possible. Earlier drafts described a flat 70/10/15/3/2 split; the 1M baker line was carved out of the Foundation share, which is why Foundation reads 14% here.
+> **Allocation notes (reconcile before genesis).** This table now matches the executable [`genesis.json`](genesis.json), which is the source of truth. The on-chain **treasury** is not one of these pools: it has an address of its own, for which nobody has a key, holds nothing at genesis and fills from its share of each block reward. What it holds leaves it by a treasury vote, and the node refuses a transaction sent by that address. It used to share the address of the Foundation pool (14M). One item still needs a decision before the genesis ceremony: the **Bootstrap baker** holds the only genesis validator stake (1M) and is therefore a single point of control at launch — the validator-onboarding plan in [`docs/setup-validator.md`](docs/setup-validator.md) should bring independent validators in as early as possible. Earlier drafts described a flat 70/10/15/3/2 split; the 1M baker line was carved out of the Foundation share, which is why Foundation reads 14% here.
 
 See [`docs/tokenomics.md`](docs/tokenomics.md) §4 for full rationale and [`docs/contributors-program.md`](docs/contributors-program.md) for the contributor compensation structure.
 
@@ -200,7 +200,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 1621 passed in about 3 minutes (the multi-process consensus tests start real nodes)
+# 1669 passed in about 3 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### A multi-node devnet in one command (Docker)

@@ -378,9 +378,11 @@ class ProtocolProposal:
     votes: Dict[str, Dict[str, str]] = field(default_factory=dict)
     # Phase transition history.
     phase_transitions: List[Tuple[str, int]] = field(default_factory=list)
-    # v0.8: equivocations recorded for slashing. List of dicts:
+    # v0.8: equivocations recorded for slashing, one for a voter and a
+    # phase at most. List of dicts:
     #   {"voter": addr, "phase": str, "first_vote": str, "second_vote": str,
-    #    "first_level": int, "second_level": int}
+    #    "second_at_level": int}
+    # to which a slash adds "consumed", "slashed_at_level" and "reporter".
     equivocations: List[dict] = field(default_factory=list)
     # Window parameters at submission time (locked in for this proposal).
     proposal_blocks: int = DEFAULT_PROPOSAL_BLOCKS
@@ -642,15 +644,21 @@ class ProtocolGovernance:
         # In a real BFT network the equivocation is detected from the
         # signed message history (two signed votes with different content
         # for the same proposal+phase) and used as slashing evidence.
+        #
+        # It is recorded once for a voter and a phase, with the level of
+        # the vote that differed first: a third vote adds nothing, and one
+        # offence is punished once. The caller writes the proposal back to
+        # the state although the vote is refused (chain._apply_governance_vote).
         existing = prop.votes[phase_key].get(voter)
         if existing is not None and existing != vote.value:
-            prop.equivocations.append({
-                "voter": voter,
-                "phase": phase_key,
-                "first_vote": existing,
-                "second_vote": vote.value,
-                "second_at_level": current_level,
-            })
+            if not any(e.get("voter") == voter and e.get("phase") == phase_key for e in prop.equivocations):
+                prop.equivocations.append({
+                    "voter": voter,
+                    "phase": phase_key,
+                    "first_vote": existing,
+                    "second_vote": vote.value,
+                    "second_at_level": current_level,
+                })
             return False, "equivocation detected; original vote stands"
 
         prop.votes[phase_key][voter] = vote.value
