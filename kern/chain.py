@@ -170,7 +170,12 @@ def initial_state_from_genesis(genesis: dict) -> dict:
     if delegation_unbonding_blocks(state) < epoch_blocks(state):
         raise ValueError("delegation_unbonding_blocks must be >= epoch_blocks")
     state["consensus_set"] = compute_consensus_set(state)
-    state["treasury_address"] = genesis.get("treasury_address")
+    # The treasury sends no transaction (TREASURY_SENDS_NOTHING below), and
+    # a validator must: its votes and its reports are transactions.
+    treasury = genesis.get("treasury_address")
+    if treasury is not None and any(v.get("address") == treasury for v in state["validators"]):
+        raise ValueError(f"genesis treasury_address {treasury} is the address of a validator")
+    state["treasury_address"] = treasury
     # What a genesis says of the issuance passes the checks of a proposal.
     # Nothing read it before the first block, which raised on a block time
     # of zero and went on with a curve whose bounds were crossed.
@@ -196,7 +201,18 @@ def derive_contract_address(origination_tx_hash: bytes) -> str:
 
 # --- Transaction application ----------------------------------------------
 
+# What the treasury holds leaves it when a treasury proposal is executed,
+# and in no other way. Whoever has a key for that address signs nothing a
+# block charges: a transaction it sends is refused before the fee, here, at
+# the door of a mempool and by a proposer (mempool_verdict). The address
+# was an account like any other, which a transfer emptied without a vote,
+# and so did a fee as large as what it held.
+TREASURY_SENDS_NOTHING = "the treasury address sends no transaction"
+
+
 def _check_signature_and_nonce(tx: Transaction, state: dict) -> Optional[str]:
+    if tx.sender == state.get("treasury_address"):
+        return TREASURY_SENDS_NOTHING
     if not tx.verify_signature():
         return "invalid signature"
     # Phase B (audit 1, finding 9): cross-network replay protection. The
@@ -442,7 +458,9 @@ def _governance_validator_set(state: dict) -> List[dict]:
 
 def _apply_block_rewards(state: dict, block: Block) -> None:
     """Credit per-block issuance rewards: treasury share + per-validator
-    distribution. Updates total_supply. Mutates state in place.
+    distribution. Updates total_supply, which grows by what is credited:
+    without a treasury address its share is not minted. Mutates state in
+    place.
 
     Skipped at level 0 (genesis); only validators present at the time of
     the block are eligible (which matches reality — you can't be rewarded
@@ -495,9 +513,17 @@ def _apply_block_rewards(state: dict, block: Block) -> None:
         params=params,
     )
 
-    # Credit treasury (if address is configured).
+    # The supply grows by what this block credits, and by nothing else. It
+    # used to grow by the whole reward whatever was credited: on a chain
+    # whose genesis names no treasury, the share of the treasury was counted
+    # block after block and nobody held it.
+    minted = 0
+
+    # Credit treasury (if address is configured). Without one its share is
+    # not minted.
     if treasury_addr and acc.treasury_credit > 0:
         _credit(state, treasury_addr, acc.treasury_credit)
+        minted += acc.treasury_credit
 
     # Credit each validator — but first split their share with delegators
     # (v1.0-rc: stake delegation, bonded since Phase D). Validators keep a commission
@@ -518,6 +544,7 @@ def _apply_block_rewards(state: dict, block: Block) -> None:
         dels = delegators_of(state, addr)
         if not dels:
             _credit(state, addr, amt)   # no delegators → keep all
+            minted += amt
             continue
         commission_pct = commission_rate_of(state, addr)
         val_share, del_shares = split_validator_reward(
@@ -527,11 +554,13 @@ def _apply_block_rewards(state: dict, block: Block) -> None:
             commission_pct=commission_pct,
         )
         _credit(state, addr, val_share)
+        minted += val_share
         for del_addr, del_amt in del_shares.items():
             _credit(state, del_addr, del_amt)
+            minted += del_amt
 
     # Update total_supply.
-    state["total_supply"] = acc.total_supply_after
+    state["total_supply"] = total_supply + minted
 
 
 # --- Governance transaction handlers --------------------------------------
@@ -698,9 +727,14 @@ def _apply_governance_vote(state: dict, tx: Transaction) -> ApplyResult:
     if track == "protocol":
         gov = load_protocol_governance(gov_state, _governance_validator_set(state))
         ok, reason = gov.vote(pid, tx.sender, Vote(vote_str), _current_level(state))
+        # Written back whether the vote counts or not. A second vote that
+        # says something else is refused, and the double vote it leaves is
+        # kept, for slash_equivocation to find. It used to be dropped here
+        # with the object: no double vote sent by a transaction could be
+        # punished.
+        save_protocol_governance(gov_state, gov)
         if not ok:
             return ApplyResult(ok=False, error=reason)
-        save_protocol_governance(gov_state, gov)
         return ApplyResult(ok=True, gas_used=tx.gas_limit)
 
     treasury_balance = state["balances"].get(state.get("treasury_address") or "", 0)
@@ -1385,8 +1419,13 @@ def _settle_bond(state: dict, track_state: dict, proposal_id: str,
     # Burned bond: just reduces total_supply (effectively).
     if outcome.burn > 0:
         state["total_supply"] = max(0, state.get("total_supply", 0) - outcome.burn)
-    if outcome.to_treasury > 0 and state.get("treasury_address"):
-        _credit(state, state["treasury_address"], outcome.to_treasury)
+    if outcome.to_treasury > 0:
+        if state.get("treasury_address"):
+            _credit(state, state["treasury_address"], outcome.to_treasury)
+        else:
+            # No treasury to keep that half: it is burned with the other. It
+            # used to stay in the supply, held by nobody.
+            state["total_supply"] = max(0, state.get("total_supply", 0) - outcome.to_treasury)
 
 
 def _apply_activated_change(state: dict, change: dict) -> None:
@@ -1554,12 +1593,16 @@ def mempool_verdict(sender: str, nonce: int, fee: int, size: int, state: dict, f
 
     `fees` is fee_params() of the state the block is built on. Returns
     (TAKE, ""), or (WAIT, reason), or (DROP, reason). Pure, and cheap: no
-    signature is verified here, `apply_transaction` does it."""
+    signature is verified here, `apply_transaction` does it. What the
+    treasury address would send is dropped whatever its nonce: no block
+    charges it."""
     if size > MAX_TX_BYTES:
         return DROP, f"{size} bytes: a transaction is {MAX_TX_BYTES} bytes at most"
     if fees["enabled"] and fee < fees["base"] + fees["per_byte"] * size:
         return DROP, (f"fee {fee} below the fee floor: "
                       f"{fees['base'] + fees['per_byte'] * size} for {size} bytes")
+    if sender == state.get("treasury_address"):
+        return DROP, TREASURY_SENDS_NOTHING
     account_nonce = state["nonces"].get(sender, 0)
     if nonce < account_nonce:
         return DROP, f"nonce {nonce} is consumed: the account is at {account_nonce}"

@@ -121,7 +121,8 @@ def propose_block(
       `evict_out`, when it is given, so that the caller removes it from
       the mempool: a nonce that is consumed or too far ahead, a sender that
       cannot pay the fee, a fee under the floor, a size beyond what a node
-      takes, a signature or a chain that `apply_transaction` refuses.
+      takes, a sender that is the treasury address, a signature or a chain
+      that `apply_transaction` refuses.
 
     The state is copied once. Until this rule the proposer copied it before
     each of the 5,000 oldest transactions, left out those whose operation

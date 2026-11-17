@@ -20,16 +20,26 @@ S == sum(B.values())
 ```
 
 Every mukrn is in exactly one place: a balance, a locked attestation bond,
-or a governance proposal bond. Issuance adds to `S` and to balances in the
-same step; burns (slashing, rejected proposals) subtract from `S` and from
-the place the funds were taken.
+a governance proposal bond, a bonded stake or a bonded delegation, live or
+unbonding. Issuance adds to `S` what it credits, in the same step; burns
+(slashing, rejected proposals) subtract from `S` and from the place the
+funds were taken.
+
+- A block mints what it credits. On a chain whose genesis names no
+  treasury, the treasury share of a reward is not minted, and the half of
+  a rejected proposal's bond that a treasury keeps is burned with the
+  other half. A proposer without a stake of its own receives everything
+  the treasury does not, and shares it with its delegators like any reward.
 
 - Attestation bonds have a single economic owner at any time: the record
   while locked (including during the unbonding period after revocation),
   the issuer once released, the slash otherwise. A slash resolves both
   bonds of the contradicting pair.
 - Pinned by `tests/test_phase_b_bond_lifecycle.py`, including the audit
-  sequence "revoke both halves, then get slashed".
+  sequence "revoke both halves, then get slashed", and by
+  `tests/test_treasury_and_supply.py`, which checks the equation after
+  every block of a chain that puts something in each of its terms: with a
+  treasury, without one, and with a proposer whose weight is all delegated.
 
 ## 2. Nonce monotonicity
 
@@ -123,3 +133,31 @@ For every delegation and unbonding record,
 
 Pinned by `tests/test_phase_d_bonded_stake.py` and
 `tests/test_phase_e_bond_timing.py`.
+
+## 11. The treasury sends nothing
+
+A transaction whose sender is `state["treasury_address"]` is refused before
+the fee debit, whatever its kind, its nonce and its fee: it changes
+nothing. A mempool refuses it at its door and removes it when it goes
+through what waits, and a proposer leaves it out of its block
+(`chain.mempool_verdict`). What the treasury holds leaves it when a
+treasury proposal is executed, and in no other way. A genesis whose
+treasury address is the address of one of its validators is refused.
+
+A block that carries such a transaction is still valid, like any block
+that carries a transaction it cannot charge. Structure version 1 makes it
+invalid ([api-stability.md](api-stability.md), section 9.16).
+
+Pinned by `tests/test_treasury_and_supply.py`.
+
+## 12. A double vote is kept
+
+On the protocol track the first vote of a validator in a phase stands. A
+later vote of that validator in that phase that says something else is
+refused, pays its fee, and stays in the state as a double vote, once for
+that validator and that phase, with the level of its block.
+`SLASH_EQUIVOCATION` punishes a double vote once, as an offence of that
+level (invariant 10). A later vote that says the same thing is a vote like
+the first. On the treasury track a later vote replaces the earlier one.
+
+Pinned by `tests/test_treasury_and_supply.py`.

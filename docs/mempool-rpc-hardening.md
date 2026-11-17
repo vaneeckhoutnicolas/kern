@@ -83,7 +83,7 @@ nonce, its fee and its size (`chain.mempool_verdict`).
 |---|---|---|---|
 | take | Its nonce is the nonce of its account, and the sender holds the fee | Taken | In the block, whether its operation then succeeds or fails |
 | wait | Its nonce is ahead of its account, by 256 at most, and the sender holds the fee | Taken | Left in the mempool |
-| drop | Its nonce is consumed, or more than 256 ahead; the sender does not hold the fee; the fee is under the [fee floor](fee-floor.md), when the floor is on; it is more than 131,072 bytes; it is signed for another chain | Refused | Removed from the mempool |
+| drop | Its nonce is consumed, or more than 256 ahead; the sender does not hold the fee; the fee is under the [fee floor](fee-floor.md), when the floor is on; it is more than 131,072 bytes; it is signed for another chain; its sender is the treasury address, which sends nothing | Refused | Removed from the mempool |
 
 **At the door.** `Node.admit_transaction` is the one way in, for a
 transaction that a peer sends and for one that a client posts. It applies
