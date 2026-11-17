@@ -190,6 +190,10 @@ def _dynamic_extra_cost(op: int, state: "VmState", code: bytes) -> int:
     This is the v1.0-rc wiring of `kern.evm.dynamic_gas` into the VM:
     memory expansion, SHA3 word cost, EXP exponent cost, SSTORE 3-case
     pricing, LOG data+topic cost, MSTORE/MLOAD/MSTORE8 memory expansion.
+
+    Every instruction that makes `step` extend the memory pays for it
+    here, RETURN and REVERT among them: the gas check comes before the
+    instruction, so a step that cannot pay never touches the memory.
     """
     from . import dynamic_gas as dg
 
@@ -208,6 +212,16 @@ def _dynamic_extra_cost(op: int, state: "VmState", code: bytes) -> int:
             return 0
         offset = vals[0]
         return dg.memory_expansion_cost(mem_size, offset + 1)
+
+    if op in (Op.RETURN, Op.REVERT):
+        # The range handed back is read from the memory, which grows up to
+        # its end. These two paid nothing: a few bytes of code held as much
+        # memory, and handed back as much output, as they named.
+        vals = _peek_stack(state.stack, 2)
+        if len(vals) < 2:
+            return 0
+        offset, length = vals[0], vals[1]
+        return dg.memory_expansion_cost(mem_size, offset + length)
 
     if op == Op.SHA3:
         vals = _peek_stack(state.stack, 2)
