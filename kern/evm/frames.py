@@ -67,7 +67,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 from .opcodes import Op
-from .vm import ExecContext, ExecutionTrace, VmState, execute
+from .vm import MAX_CALLDATA_BYTES, ExecContext, ExecutionTrace, VmState, execute
 
 
 # Precompile address range.
@@ -439,7 +439,16 @@ def call_contract(
 
     Handles value transfer, precompile dispatch, frame creation,
     execution, and snapshot/revert semantics. Returns a CallResult.
+
+    `ValueError` when the calldata, or the storage the call would run on,
+    is beyond the limits of the machine: the call does not start, and the
+    world is as it was.
     """
+    # 0. A call carries no more calldata than a state of the machine holds,
+    # whether it goes to a contract or to a precompile.
+    if len(calldata) > MAX_CALLDATA_BYTES:
+        raise ValueError("calldata is beyond the limit of the Mini-EVM")
+
     # 1. Static-call propagation: STATICCALL forces is_static for its subcalls.
     if kind == FrameKind.STATICCALL:
         is_static = True
@@ -496,10 +505,16 @@ def call_contract(
 
     # 8. Execute. We pass in current storage as a copy; if the call
     # succeeds we merge it back, otherwise we discard.
-    trace = execute(
-        callee.code, gas=gas, context=ctx,
-        initial_storage=dict(storage_account.storage),
-    )
+    try:
+        trace = execute(
+            callee.code, gas=gas, context=ctx,
+            initial_storage=dict(storage_account.storage),
+        )
+    except ValueError:
+        # The storage of the account is beyond the limits of the machine:
+        # the call does not start, and the value goes back.
+        world.revert_to(snap)
+        raise
     final = trace.states[-1]
 
     if final.reverted:
