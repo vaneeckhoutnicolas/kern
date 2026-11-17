@@ -165,6 +165,8 @@ The opcodes implemented by [`kern/evm/vm.py`](https://github.com/vaneeckhoutnico
 
 The Yellow-Paper-equivalent gas costs in [`kern/evm/dynamic_gas.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/dynamic_gas.py).
 
+Every instruction that makes the machine extend its memory pays for the extension before it runs: MLOAD, MSTORE, MSTORE8, SHA3, RETURN and REVERT. A step that cannot pay fails for want of gas and leaves the memory as it was (`tests/test_evm_return_gas.py`). An empty range pays for the way to its start, which Ethereum does not charge.
+
 **Stable**: constants can be tuned via protocol amendment based on operational data, but the *shape* of the pricing (memory expansion quadratic, SSTORE 3-case, etc.) is frozen.
 
 ### 2.10 Precompile addresses
