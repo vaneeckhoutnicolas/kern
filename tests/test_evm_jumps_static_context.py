@@ -411,10 +411,11 @@ def test_control_the_same_program_writes_when_its_call_is_not_static(kind, holde
     assert w.get(holder).storage == {1: 9}
 
 
-def test_control_a_static_call_that_carries_a_value_does_not_run_and_gives_no_gas_back():
+def test_a_staticcall_that_carries_a_value_does_not_run_and_gives_back_all_its_gas():
+    """It gave no gas back: tests/test_evm_hardening.py holds the rule."""
     w = world(WRITES)
     before = copy.deepcopy(w.accounts)
-    assert call(w, kind=FrameKind.STATICCALL, value=1) == (False, b"", 0)
+    assert call(w, kind=FrameKind.STATICCALL, value=1) == (False, b"", GAS)
     assert w.accounts == before
 
 
@@ -486,7 +487,6 @@ def test_the_page_of_calls_says_what_a_static_call_may_do():
         "- A call gives back the gas its program had left when it stopped, whether the call succeeded or failed: "
         "the machine keeps the gas of the state it reached",
         "In Ethereum a call that fails gives gas back only when its program ends on REVERT.",
-        "A static call that carries a value does not run, and gives no gas back.",
     ):
         assert sentence in text, sentence
     for withdrawn in ("writes nothing to the world", "nothing is written to the world"):
@@ -566,19 +566,18 @@ def test_control_another_context_is_made_from_one():
     assert taken.storage == {1: 7}
 
 
-def test_control_a_context_with_one_more_attribute_is_not_the_context_of_a_state():
-    """What cannot be assigned can still be written into the object: the
-    machine turns that object away."""
+def test_control_a_context_that_lost_a_field_is_not_the_context_of_a_state():
+    """A field can still be taken away from a context: the machine turns
+    that object away."""
     context = ExecContext(**CONTEXT)
-    vars(context)["note"] = "one more"
+    object.__delattr__(context, "value")
     assert vm.not_a_state(VmState(gas=1_000, context=context)) == "its context is not an ExecContext"
 
 
 def test_section_2_9_says_what_keeps_a_context_and_what_runs_a_static_call():
     text = section(STABILITY, "### 2.9 ")
     for sentence in (
-        "The context of a state cannot be assigned to: the states of an execution share it, and a state read from "
-        "a trace is a copy of everything else, so that nothing done to it changes the trace.",
+        "The context of a state cannot be assigned to, and it has no dictionary to write into.",
         "A static call goes through `run` with its `static` mode, where a program halts on the first write it "
         "reaches ([`multi-frame-evm.md`](multi-frame-evm.md)); `step`, `execute` and the referee of a step have no "
         "such mode.",

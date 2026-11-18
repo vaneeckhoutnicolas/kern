@@ -43,7 +43,7 @@ import random
 import sys
 import time
 import tracemalloc
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 
 import pytest
@@ -272,9 +272,17 @@ class DerivedStorage(dict):
 
 
 def with_one_more_attribute(target):
-    """Written into the object itself: a context cannot be assigned to."""
+    """Written into the dictionary of the object."""
     vars(target)["note"] = "one more"
     return target
+
+
+def whose_context_lost_a_field() -> VmState:
+    """A context has no dictionary and takes no attribute more. One of its
+    fields can still be taken away."""
+    context = ExecContext(**CONTEXT)
+    object.__delattr__(context, "value")
+    return a_state_with(context=context)
 
 
 def that_answers_for_its_own_commitment() -> VmState:
@@ -351,8 +359,7 @@ NOT_STATES = {
                                        "its context is not an ExecContext"),
     "a context of a derived class": (lambda: a_state_with(context=DerivedContext(**CONTEXT)),
                                      "its context is not an ExecContext"),
-    "a context with one more attribute": (lambda: a_state_with(
-        context=with_one_more_attribute(ExecContext(**CONTEXT))), "its context is not an ExecContext"),
+    "a context that lost a field": (whose_context_lost_a_field, "its context is not an ExecContext"),
     "an address that is a text": (lambda: in_a_context_with(address="5"), "an address of its context is out of range"),
     "an address of 2^160": (lambda: in_a_context_with(address=ADDRESS_MAX + 1),
                             "an address of its context is out of range"),
@@ -471,7 +478,7 @@ def of(state: VmState, **changes) -> VmState:
 
 
 def with_a_text_address(state: VmState) -> VmState:
-    return of(state, context=ExecContext(**{**vars(state.context), "address": str(state.context.address)}))
+    return of(state, context=replace(state.context, address=str(state.context.address)))
 
 
 # The program, the step that is disputed, what the execution starts from, and
