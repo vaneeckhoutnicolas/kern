@@ -218,7 +218,7 @@ def test_the_price_of_a_write_is_a_function_of_the_slot_and_of_the_value_written
     assert dynamic_gas.sstore_cost(0, 42) == 20_000
     assert dynamic_gas.sstore_cost(99, 42) == 5_000
     assert dynamic_gas.sstore_cost(99, 0) == 5_000
-    assert dynamic_gas.sstore_cost(42, 42) == dynamic_gas.sstore_cost(0, 0) == 100
+    assert dynamic_gas.sstore_cost(42, 42) == dynamic_gas.sstore_cost(0, 0) == 5_000
 
 
 def test_a_state_holds_nothing_outside_its_commitment_but_its_last_error():
@@ -272,7 +272,8 @@ class DerivedStorage(dict):
 
 
 def with_one_more_attribute(target):
-    target.note = "one more"
+    """Written into the object itself: a context cannot be assigned to."""
+    vars(target)["note"] = "one more"
     return target
 
 

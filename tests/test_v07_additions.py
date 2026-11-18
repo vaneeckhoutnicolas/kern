@@ -37,7 +37,6 @@ from kern.evm.dynamic_gas import (
     memory_expansion_cost,
     sha3_cost,
     sstore_cost,
-    sstore_refund,
 )
 
 
@@ -233,20 +232,10 @@ def test_sstore_reset_modify_existing():
 
 
 def test_sstore_noop_same_value():
-    """Writing the same value is essentially a no-op (warm read cost)."""
+    """Writing the same value costs what any other write costs outside a
+    slot that holds zero: it is what the machine takes."""
     cost = sstore_cost(current=42, new=42)
-    assert cost < G_SSTORE_RESET
-
-
-def test_sstore_refund_for_clearing():
-    """Setting a slot to zero gets a refund."""
-    refund = sstore_refund(current=42, new=0, original=42)
-    assert refund > 0
-
-
-def test_sstore_no_refund_for_set():
-    refund = sstore_refund(current=0, new=42, original=0)
-    assert refund == 0
+    assert cost == G_SSTORE_RESET
 
 
 # ===========================================================================

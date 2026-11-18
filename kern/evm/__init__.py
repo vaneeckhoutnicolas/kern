@@ -6,9 +6,11 @@ kern.evm
 
 Mini-EVM and fraud-proof framework for Kern's optimistic rollups.
 
-This package implements a deliberate subset of the Ethereum Virtual
-Machine sufficient to demonstrate the full bisection-based fraud-proof
-protocol with real EVM-compatible execution semantics.
+This package implements a subset of the Ethereum Virtual Machine, enough
+to run the bisection-based fraud-proof protocol of a rollup on real
+programs. It is not the EVM of Ethereum: sections 2.8 and 2.9 of
+docs/api-stability.md say what the machine executes and where its rules
+are its own.
 
 Top-level API:
 
@@ -72,7 +74,7 @@ __all__ = [
     "beyond_limits", "not_a_state", "require_state", "require_program",
     "BisectionState", "SingleStepResult",
     "bisection_round", "run_full_bisection", "single_step_verify",
-    # frames / multi-frame
+    # calls, creations and precompiles
     "Account", "CallResult", "Frame", "FrameKind", "WorldState",
     "PRECOMPILES", "is_precompile", "execute_precompile",
     "call_contract", "create_contract",

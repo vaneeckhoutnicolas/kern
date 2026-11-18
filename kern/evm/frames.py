@@ -19,8 +19,11 @@ one account once, in one of three kinds:
 
     CALL          the storage of the contract; the value moves to it
     DELEGATECALL  the storage of the caller; the value does not move
-    STATICCALL    the storage of the contract; a value is refused, and
-                  nothing is written to the world
+    STATICCALL    the storage of the contract, which the program cannot
+                  write; a value is refused
+
+A static call runs its program with `run(..., static=True)`: the program
+halts, reverted, on the first SSTORE it reaches, and the call fails.
 
 A program cannot call another program: the machine does not execute
 CALL, CALLCODE, DELEGATECALL, STATICCALL, CREATE or CREATE2, and halts on
@@ -444,6 +447,11 @@ def call_contract(
 
     A call whose run is cut by the step limit of the machine before it
     halts fails as a call that reverts: the world is as it was.
+
+    A static call (`STATICCALL`, or any kind with `is_static`) cannot
+    write: its program halts, reverted, on the first SSTORE it reaches,
+    and the call fails. A call gives back the gas its program had left
+    when it stopped, whether it succeeds or fails.
     """
     # 0. A call carries no more calldata than a state of the machine holds,
     # whether it goes to a contract or to a precompile, and its context is
@@ -462,7 +470,7 @@ def call_contract(
     if holder is not None and len(holder.storage) > MAX_STORAGE_SLOTS:
         raise ValueError("not a state of the Mini-EVM: its storage is beyond the limit")
 
-    # 1. Static-call propagation: STATICCALL forces is_static for its subcalls.
+    # 1. A STATICCALL is static, whatever `is_static` says.
     if kind == FrameKind.STATICCALL:
         is_static = True
 
@@ -495,8 +503,8 @@ def call_contract(
         return CallResult(success=True, return_data=b"", gas_remaining=gas)
 
     # 7. Set up the execution frame.
-    # For DELEGATECALL: storage_address = caller, value = preserved from
-    # caller frame, caller stays the same as the outer caller.
+    # For DELEGATECALL: the program runs on the storage of the caller, and
+    # reads the value and the caller of the call as they are.
     if kind == FrameKind.DELEGATECALL:
         storage_address = caller
         effective_value = value      # caller passes through current msg.value
@@ -517,11 +525,13 @@ def call_contract(
     )
 
     # 8. Execute. The machine runs on a copy of the current storage; if the
-    # call succeeds we merge it back, otherwise we discard.
+    # call succeeds we merge it back, otherwise we discard. A static call
+    # halts on the first write its program reaches.
     try:
         final = run(
             callee.code, gas=gas, context=ctx,
             initial_storage=storage_account.storage,
+            static=is_static,
         )
     except ValueError:
         # The code or the storage of the account does not make a state of
@@ -537,7 +547,8 @@ def call_contract(
             gas_remaining=final.gas,
         )
 
-    # 9. Success. Merge storage changes back if not static.
+    # 9. Success. Keep the storage the program leaves. A static call wrote
+    # nothing: there is nothing to keep.
     if not is_static:
         # SSTORE writes by the VM update its `storage` dict; final.storage
         # has the latest values. Replace the account's storage atomically.
