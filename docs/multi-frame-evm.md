@@ -42,10 +42,12 @@ result = call_contract(
 |---|---|---|
 | `CALL` | The storage of the contract | Moved from the caller to the contract before the program runs |
 | `DELEGATECALL` | The storage of the caller | Not moved; the program reads it as the value of its call |
-| `STATICCALL` | The storage of the contract | Refused: a static call that carries a value fails |
+| `STATICCALL` | The storage of the contract, which the program cannot write | Refused: a static call that carries a value does not run |
 
-- A call that succeeds keeps the storage its program leaves. A static call writes nothing to the world.
+- A call that succeeds keeps the storage its program leaves.
+- A static call cannot write. Its program halts, reverted, on the first SSTORE it reaches, even one that would change nothing, and the call fails, as in Ethereum.
 - A call whose program reverts, or is still running when the step limit of the machine cuts it, fails: the world is as it was before the call, the value included.
+- A call gives back the gas its program had left when it stopped, whether the call succeeded or failed: the machine keeps the gas of the state it reached ([section 2.9](api-stability.md#29-gas-pricing)). In Ethereum a call that fails gives gas back only when its program ends on REVERT. A static call that carries a value does not run, and gives no gas back.
 - A call to an account without code moves the value and succeeds.
 - A call whose value the caller does not hold fails.
 - A call does not start when its gas, value, addresses, block or calldata do not make the context of a state of the machine, or when the code or the storage it would run on does not make one. It raises `ValueError`, and the world is as it was ([section 2.9](api-stability.md#29-gas-pricing)).
@@ -109,4 +111,4 @@ The design this page used to describe, where a CALL instruction opens a frame an
 - `PRECOMPILES`, `is_precompile`, `execute_precompile`: the nine built-in functions
 - `Frame`: a dataclass of the earlier design, which nothing builds
 
-It is tested in [`tests/test_evm_frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_frames.py), in [`tests/test_evm_referee.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_referee.py) for what a call refuses and what it leaves when it fails, and in [`tests/test_evm_pages.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_pages.py), which compares this page with the library.
+It is tested in [`tests/test_evm_frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_frames.py), in [`tests/test_evm_referee.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_referee.py) for what a call refuses and what it leaves when it fails, in [`tests/test_evm_jumps_static_context.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_jumps_static_context.py) for what a static call may do and the gas a call gives back, and in [`tests/test_evm_pages.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_pages.py), which compares this page with the library.

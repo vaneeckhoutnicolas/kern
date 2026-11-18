@@ -6,24 +6,34 @@ kern.evm.vm
 
 The Mini-EVM step-wise executor.
 
-The defining property of this VM, for the purposes of fraud proofs, is
-that it produces a sequence of **state commitments** — one per executed
-instruction. Each commitment is a blake2b-256 hash of the canonical
-serialization of the VM state (PC, stack, memory, gas, halt status).
+For the fraud proofs of a rollup, this machine gives one **state
+commitment** for each instruction it executes: the BLAKE2b hash, under
+the key `kern.evm`, of the canonical serialization of the state.
 
 The bisection protocol relies on this property: a challenger and a
 defender each compute the trace of commitments for the same input,
 then narrow down to the first commitment where they disagree. That
-single step is then re-executed on L1 by the verifier, which
-deterministically decides who's right.
+single step is then run again by a referee (`single_step_verify`),
+which decides who is right.
 
-State commitment includes:
-- pc:     program counter
-- stack:  list of 256-bit words (top of stack = end of list)
-- memory: byte array, padded to a multiple of 32
-- gas:    remaining gas
-- halted: terminated? (STOP / RETURN / REVERT / out-of-gas)
-- output: return data if halted via RETURN/REVERT
+The commitment of a state holds nine fields:
+- pc:       program counter
+- stack:    list of 256-bit words (top of stack = end of list)
+- memory:   byte array, a whole number of 32-byte words
+- gas:      remaining gas
+- halted:   terminated? (STOP, RETURN, REVERT, or an instruction the
+            machine refuses)
+- output:   return data if halted by RETURN or REVERT
+- reverted: halted by REVERT or by a refusal
+- storage:  the slots that do not hold zero
+- context:  what the execution was given (address, caller, value,
+            calldata, block number, block timestamp)
+
+`last_error` says why the machine halted. It is outside the commitment
+and no step reads it.
+
+A step is a function of the committed state and of the program. Where a
+jump may land is read from the program alone.
 """
 
 from __future__ import annotations
@@ -46,12 +56,16 @@ class EvmError(Exception):
     These cause the VM to halt with revert status."""
 
 
-@dataclass
+@dataclass(frozen=True)
 class ExecContext:
     """The transaction-level execution context: who called, with what value,
     against what contract, with what input data, in what block. All fields
     are committed to the trace's initial state so the verifier can re-run
-    deterministically."""
+    deterministically.
+
+    A context does not change once it is built: assigning to one of its
+    fields raises `dataclasses.FrozenInstanceError`. The states of an
+    execution share theirs, and `dataclasses.replace` makes another one."""
 
     address: int = 0          # `self` — contract being executed (as int)
     caller: int = 0           # `msg.sender` — caller address (as int)
@@ -122,7 +136,7 @@ class VmState:
             output=self.output,
             reverted=self.reverted,
             storage=dict(self.storage),
-            context=self.context,  # frozen-ish; safe to share
+            context=self.context,  # a context cannot be assigned to: the states share it
             last_error=self.last_error,
         )
 
@@ -406,12 +420,64 @@ def _halted_at_limit(state: VmState, code: bytes, what: str, detail: str = "") -
     return s
 
 
+# ---------------------------------------------------------------------------
+# Where a jump may land
+# ---------------------------------------------------------------------------
+
+_JUMPDEST = int(Op.JUMPDEST)
+_PUSH1 = int(Op.PUSH1)
+_PUSH32 = int(Op.PUSH32)
+
+
+def _jump_destinations(code: bytes) -> bytes:
+    """One byte for each byte of `code`: 1 where a jump may land.
+
+    A jump lands on a JUMPDEST that is an instruction. A byte 0x5b in the
+    data of a PUSH is not one, and what is data is known only by reading
+    the program from its start: each PUSH says how many bytes of data
+    follow it."""
+    marks = bytearray(len(code))
+    pc, end = 0, len(code)
+    while pc < end:
+        op = code[pc]
+        if op == _JUMPDEST:
+            marks[pc] = 1
+        elif _PUSH1 <= op <= _PUSH32:
+            pc += op - _PUSH1 + 1
+        pc += 1
+    return bytes(marks)
+
+
+class _Landings:
+    """Where a jump may land in one program. The program is read the first
+    time a jump aims at a byte 0x5b, and once: a run, or a trace, keeps
+    what it read. A single `step` reads the program for itself."""
+
+    __slots__ = ("_code", "_marks")
+
+    def __init__(self, code: bytes) -> None:
+        self._code = code
+        self._marks: Optional[bytes] = None
+
+    def __contains__(self, dest: int) -> bool:
+        code = self._code
+        if dest >= len(code) or code[dest] != _JUMPDEST:
+            return False
+        if self._marks is None:
+            self._marks = _jump_destinations(code)
+        return self._marks[dest] == 1
+
+
 def step(state: VmState, code: bytes) -> VmState:
     """Execute exactly one EVM instruction. Returns the post-step state.
 
     Pure function: does not mutate the input state. Always advances PC
     (or sets halted=True). Out-of-gas, bad jumps, stack underflow, and
     unknown opcodes all halt with `reverted=True`.
+
+    A jump lands on a JUMPDEST that is an instruction. A byte 0x5b in the
+    data of a PUSH is not one, and a jump to it is a bad jump. Where a jump
+    may land is read from `code` and from nothing else.
 
     So does an instruction that would take the stack, the memory or the
     storage beyond the limits of the machine. Like a step that cannot
@@ -426,15 +492,16 @@ def step(state: VmState, code: bytes) -> VmState:
     (`require_program`)."""
     require_program(code)
     require_state(state)
-    return _advance(state, code)
+    return _advance(state, code, _Landings(code))
 
 
-def _advance(state: VmState, code: bytes) -> VmState:
+def _advance(state: VmState, code: bytes, landings: _Landings) -> VmState:
     """`step`, for a state the machine made itself and a program it has
     checked: the loops of `execute`, `run` and `TraceStates`, which would
-    otherwise read every word of each state they have just built."""
+    otherwise read every word of each state they have just built, and the
+    whole program at each jump."""
     try:
-        s = _step(state, code)
+        s = _step(state, code, landings)
     except _MemoryLimit as reached:
         return _halted_at_limit(state, code, "memory", f" (needs {reached.args[0]} bytes)")
     beyond = beyond_limits(s)
@@ -445,7 +512,7 @@ def _advance(state: VmState, code: bytes) -> VmState:
     return s
 
 
-def _step(state: VmState, code: bytes) -> VmState:
+def _step(state: VmState, code: bytes, landings: _Landings) -> VmState:
     """The instruction itself: `step`, less the limits of the state."""
     s = state.clone()
 
@@ -555,14 +622,14 @@ def _step(state: VmState, code: bytes) -> VmState:
         # ----- control flow -------------------------------------------------
         elif op == Op.JUMP:
             (dest,) = _pop(s.stack, 1)
-            if dest >= len(code) or code[dest] != Op.JUMPDEST:
+            if dest not in landings:
                 raise EvmError(f"invalid jump dest {dest}")
             s.pc = dest
             return s
         elif op == Op.JUMPI:
             dest, cond = _pop(s.stack, 2)
             if cond != 0:
-                if dest >= len(code) or code[dest] != Op.JUMPDEST:
+                if dest not in landings:
                     raise EvmError(f"invalid jumpi dest {dest}")
                 s.pc = dest
                 return s
@@ -713,13 +780,15 @@ class TraceStates:
     Only the first state and the last one are kept. Any other is run again
     from the first, without hashing anything: a trace holds one commitment
     for each step, and not one copy of the memory for each step. What is
-    handed out is a copy: changing it changes nothing in the trace."""
+    handed out is a copy, and its context cannot be assigned to: nothing
+    done to it changes the trace."""
 
     def __init__(self, code: bytes, first: VmState, last: VmState, n_steps: int) -> None:
         self._code = code
         self._first = first
         self._last = last
         self._n_steps = n_steps
+        self._landings = _Landings(code)
 
     def __len__(self) -> int:
         return self._n_steps + 1
@@ -728,7 +797,7 @@ class TraceStates:
         state = self._first
         yield state.clone()
         for _ in range(self._n_steps):
-            state = _advance(state, self._code)
+            state = _advance(state, self._code, self._landings)
             yield state.clone()
 
     def __getitem__(self, index: Union[int, slice]) -> Any:
@@ -743,7 +812,7 @@ class TraceStates:
             return self._last.clone()
         state = self._first
         for _ in range(position):
-            state = _advance(state, self._code)
+            state = _advance(state, self._code, self._landings)
         return state.clone()
 
 
@@ -801,15 +870,18 @@ def execute(
     nothing is copied, nothing is hashed and nothing runs."""
     initial = _initial_state(code, gas, context, initial_storage)
     commitments: List[bytes] = [initial.commitment()]
+    landings = _Landings(code)
 
     last = initial
     for _ in range(max_steps):
         if last.halted:
             break
-        last = _advance(last, code)
+        last = _advance(last, code, landings)
         commitments.append(last.commitment())
 
-    return ExecutionTrace(states=TraceStates(code, initial, last, len(commitments) - 1), commitments=commitments)
+    states = TraceStates(code, initial, last, len(commitments) - 1)
+    states._landings = landings          # the program is read once: its trace does not read it again
+    return ExecutionTrace(states=states, commitments=commitments)
 
 
 def _initial_state(code: bytes, gas: int, context: Optional[ExecContext],
@@ -829,6 +901,16 @@ def _initial_state(code: bytes, gas: int, context: Optional[ExecContext],
     return initial
 
 
+def _halted_at_write(state: VmState) -> VmState:
+    """The state of a static run whose next instruction is a write: the
+    run halts, reverted, and nothing else changes."""
+    s = state.clone()
+    s.halted = True
+    s.reverted = True
+    s.last_error = f"write in a static call at pc={s.pc}"
+    return s
+
+
 def run(
     code: bytes,
     *,
@@ -836,16 +918,29 @@ def run(
     max_steps: int = 1_000_000,
     context: Optional[ExecContext] = None,
     initial_storage: Optional[Dict[int, int]] = None,
+    static: bool = False,
 ) -> VmState:
     """Run `code` as `execute` does and return its last state alone.
 
     Nothing is kept on the way and nothing is hashed: this is what a call
     needs. The last state is not halted when `max_steps` ran out first.
 
+    With `static`, the program cannot write. It halts, reverted, on the
+    first SSTORE it reaches, even one that would change nothing, and the
+    state is what it was before that instruction, its gas included: the
+    write is refused before its price is looked at. This is the run of a
+    static call. `step` and `execute` have no such mode: a step is a
+    function of the state and of the program, and a fraud proof is never
+    about a static call.
+
     `ValueError` as for `execute`."""
     state = _initial_state(code, gas, context, initial_storage)
+    landings = _Landings(code)
     for _ in range(max_steps):
         if state.halted:
             break
-        state = _advance(state, code)
+        if static and _peek_op(code, state.pc) == Op.SSTORE:
+            state = _halted_at_write(state)
+            break
+        state = _advance(state, code, landings)
     return state
