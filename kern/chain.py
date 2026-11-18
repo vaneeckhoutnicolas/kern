@@ -314,8 +314,16 @@ def apply_transaction(state: dict, tx: Transaction, baker: str) -> ApplyResult:
         if tx.kind == OpKind.ORIGINATE:
             assert tx.code is not None  # guaranteed by _malformed_reason
             contract_addr = derive_contract_address(tx.hash())
-            # Validate and "compile" the Skald source.
-            storage = interpret_origination(tx.code, tx.initial_storage)
+            # Validate and "compile" the Skald source. Its invariants see
+            # who creates the contract, its address and what was sent
+            # there before it existed.
+            storage = interpret_origination(
+                tx.code,
+                tx.initial_storage,
+                sender=tx.sender,
+                self_addr=contract_addr,
+                balance=state["balances"].get(contract_addr, 0),
+            )
             state["contracts"][contract_addr] = {
                 "code": tx.code,
                 "storage": storage,
@@ -343,6 +351,8 @@ def apply_transaction(state: dict, tx: Transaction, baker: str) -> ApplyResult:
                 sender=tx.sender,
                 amount=tx.amount,
                 self_addr=tx.recipient,
+                # What the contract holds, with the amount just attached.
+                balance=state["balances"].get(tx.recipient, 0),
             )
             contract["storage"] = new_storage
             return ApplyResult(ok=True, gas_used=20_000)
