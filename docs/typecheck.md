@@ -38,9 +38,9 @@ The motivation: a contract that contains type errors must never be deployed. Cat
 Skald has exactly four primitive types in v0.2:
 
 ```
-int      — arbitrary-precision signed integer
+int      — signed integer of 64 bits, from -2^63 to 2^63 - 1
 bool     — true | false
-string   — UTF-8 byte sequence
+string   — UTF-8 byte sequence, of 4,096 bytes at most
 address  — kn1... account identifier
 ```
 

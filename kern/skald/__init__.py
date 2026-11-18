@@ -16,9 +16,14 @@ would type-check at compile time) and features:
 
 This module exposes two functions used by `kern.chain`:
 
-    interpret_origination(code, initial_storage) -> storage_dict
-    interpret_call(code, storage, entry, params, *, sender, amount, self_addr)
-        -> new_storage_dict
+    interpret_origination(code, initial_storage, *, sender, self_addr, balance)
+        -> storage_dict
+    interpret_call(code, storage, entry, params, *, sender, amount, self_addr,
+                   balance) -> new_storage_dict
+
+What a contract computes is bounded (see "Bounds" below): an integer is 64
+bits, a text is 4,096 bytes, an execution is 10,000 steps, and the code and
+its execution are 64 levels deep at most.
 
 The grammar implemented here is a subset of the full Skald spec; see
 `docs/skald-language.md` for the complete syntax and semantics.
@@ -64,6 +69,48 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 class SkaldError(Exception):
     """Raised on any Skald-level error: parse, type, runtime, invariant."""
+
+
+# ---------------------------------------------------------------------------
+# Bounds
+# ---------------------------------------------------------------------------
+#
+# What a contract computes is bounded, by the same numbers on every node.
+# Without them a few hundred bytes of code made an integer of hundreds of
+# megabits, whose state root no longer computed, or ran for an hour. And
+# the parser, the type checker and the interpreter all walk the code
+# recursively: a code nested deeply enough was read or refused according to
+# the Python stack of the node that applied it, which is not the same for
+# the proposer of a block and for the node that validates it.
+#
+# A value that leaves its bound, a step or a level too many: SkaldError.
+# The operation fails like one whose `require` refuses.
+
+INT_MIN = -(2 ** 63)        # an integer is 64 bits, at every expression
+INT_MAX = 2 ** 63 - 1
+MAX_TEXT_BYTES = 4096       # a text, counted in UTF-8, at every expression
+MAX_STEPS = 10_000          # an execution, its invariants included: a step is a statement
+                            # executed or an expression evaluated
+MAX_DEPTH = 64              # a statement or an invariant, when the code is read: a statement,
+                            # an expression and a pair of parentheses are one level each.
+                            # And an execution, through the functions it calls: a statement
+                            # and an expression in progress are one level each
+
+_TOO_DEEP = f"a statement is {MAX_DEPTH} levels deep at most"
+
+
+def _bounded(value: Any) -> Any:
+    """`value`, when it is an integer or a text within its bound."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if not INT_MIN <= value <= INT_MAX:
+            raise SkaldError(f"an integer is 64 bits, from {INT_MIN} to {INT_MAX}")
+    elif isinstance(value, str):
+        size = len(value) if value.isascii() else len(value.encode("utf-8", "surrogatepass"))
+        if size > MAX_TEXT_BYTES:
+            raise SkaldError(f"a text is {MAX_TEXT_BYTES} bytes at most, counted in UTF-8")
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +211,29 @@ class _Parser:
     def __init__(self, tokens: List[Token]):
         self.toks = tokens
         self.i = 0
+        # Nesting, see MAX_DEPTH. `_open` counts the statements, the
+        # expressions and the prefix operators being read: each of them is
+        # a level of the tree they are in, so the parser stops before it
+        # goes deeper than a tree is allowed to be. `_depth` is the depth
+        # of the tree that the last parse_* call returned.
+        self._open = 0
+        self._depth = 0
+
+    def _down(self) -> None:
+        self._open += 1
+        if self._open > MAX_DEPTH:
+            raise SkaldError(_TOO_DEEP)
+
+    def _up(self, depth: int) -> None:
+        """Leave what `_down` entered, with the depth of the tree it made."""
+        self._open -= 1
+        self._depth = self._level(depth)
+
+    @staticmethod
+    def _level(depth: int) -> int:
+        if depth > MAX_DEPTH:
+            raise SkaldError(_TOO_DEEP)
+        return depth
 
     def peek(self, offset: int = 0) -> Token:
         return self.toks[self.i + offset]
@@ -261,6 +331,14 @@ class _Parser:
     # --- statements -------------------------------------------------------
 
     def parse_stmt(self):
+        self._down()
+        stmt = self._parse_stmt()
+        self._up(self._depth + 1)
+        return stmt
+
+    def _parse_stmt(self):
+        # Every branch leaves in `_depth` the depth of the deepest thing
+        # the statement holds.
         t = self.peek()
         if t.value == "require":
             return self.parse_require()
@@ -287,26 +365,33 @@ class _Parser:
     def parse_require(self):
         self.eat("require")
         cond = self.parse_expr()
+        deepest = self._depth
         msg = None
         if self.accept("with"):
             msg = self.parse_expr()
+            deepest = max(deepest, self._depth)
         self.eat(";")
+        self._depth = deepest
         return ("require", cond, msg)
 
     def parse_if(self):
         self.eat("if")
         self.eat("(")
         cond = self.parse_expr()
+        deepest = self._depth
         self.eat(")")
         self.eat("{")
         then_stmts: list = []
         while not self.accept("}"):
             then_stmts.append(self.parse_stmt())
+            deepest = max(deepest, self._depth)
         else_stmts: list = []
         if self.accept("else"):
             self.eat("{")
             while not self.accept("}"):
                 else_stmts.append(self.parse_stmt())
+                deepest = max(deepest, self._depth)
+        self._depth = deepest
         return ("if", cond, then_stmts, else_stmts)
 
     def parse_let(self):
@@ -336,28 +421,41 @@ class _Parser:
     }
 
     def parse_expr(self, min_prec: int = 0):
+        self._down()
         left = self.parse_unary()
+        depth = self._depth
         while True:
             t = self.peek()
             prec = self._PREC.get(t.value)
             if prec is None or prec < min_prec:
+                self._up(depth)
                 return left
             op = self.eat().value
             right = self.parse_expr(prec + 1)
+            # A chain `a + b + c` is read in this loop, without recursion,
+            # and its tree is as deep as it is long.
+            depth = self._level(1 + max(depth, self._depth))
             left = ("bin", op, left, right)
 
     def parse_unary(self):
         if self.accept("-"):
-            return ("unary", "-", self.parse_unary())
+            return self._prefix("-")
         if self.accept("!"):
-            return ("unary", "!", self.parse_unary())
+            return self._prefix("!")
         return self.parse_atom()
+
+    def _prefix(self, op: str):
+        self._down()
+        operand = self.parse_unary()
+        self._up(self._depth + 1)
+        return ("unary", op, operand)
 
     def parse_atom(self):
         t = self.peek()
+        self._depth = 1
         if t.kind == "NUMBER":
             self.i += 1
-            return ("num", int(t.value))
+            return ("num", _number(t.value))
         if t.kind == "STRING":
             self.i += 1
             return ("str", _unescape(t.value[1:-1]))
@@ -371,19 +469,38 @@ class _Parser:
             self.i += 1
             e = self.parse_expr()
             self.eat(")")
+            # The parentheses leave no node in the tree, and are a level.
+            self._depth = self._level(self._depth + 1)
             return e
         if t.kind == "ID":
             name = self.eat("ID").value
             if self.accept("("):
                 args = []
+                deepest = 0
                 if not self.accept(")"):
                     args.append(self.parse_expr())
+                    deepest = self._depth
                     while self.accept(","):
                         args.append(self.parse_expr())
+                        deepest = max(deepest, self._depth)
                     self.eat(")")
+                self._depth = self._level(deepest + 1)
                 return ("call", name, args)
             return ("id", name)
         raise SkaldError(f"unexpected token in expression at pos {t.pos}: {t.value!r}")
+
+
+def _number(text: str) -> int:
+    """The integer that `text` writes. A number of more than 19 digits,
+    the zeros it starts with aside, leaves 64 bits whatever it is: it is
+    read as the first integer beyond the bound, and fails where it is
+    evaluated like any other. Converting the text as it is written would
+    lean on the limit that Python puts on the digits of an integer, 4,300
+    unless the node was started with another."""
+    digits = text.lstrip("-").lstrip("0")
+    if len(digits) > 19:
+        return INT_MAX + 1
+    return -int(digits or "0") if text.startswith("-") else int(digits or "0")
 
 
 def _unescape(s: str) -> str:
@@ -421,6 +538,12 @@ def _typecheck(value: Any, type_: str, *, where: str) -> None:
     if type_ == "address":
         if not (isinstance(value, str) and value.startswith("kn1")):
             raise SkaldError(f"{where}: expected address, got {value!r}")
+    # What a contract is given, a parameter or its initial storage, is
+    # within the bounds of what it computes.
+    try:
+        _bounded(value)
+    except SkaldError as error:
+        raise SkaldError(f"{where}: {error}") from None
 
 
 class _Interp:
@@ -434,6 +557,17 @@ class _Interp:
         self.storage = storage  # mutated in place
         self.ctx = ctx
         self.locals: Dict[str, Any] = {}
+        self.steps = 0  # statements executed and expressions evaluated so far
+        self.depth = 0  # statements and expressions in progress
+
+    def _enter(self) -> None:
+        """One step more, and one level deeper until the caller is done."""
+        self.steps += 1
+        if self.steps > MAX_STEPS:
+            raise SkaldError(f"an execution is {MAX_STEPS} steps at most")
+        self.depth += 1
+        if self.depth > MAX_DEPTH:
+            raise SkaldError(f"an execution is {MAX_DEPTH} levels deep at most")
 
     def lookup(self, name: str) -> Any:
         if name in self.locals:
@@ -445,6 +579,14 @@ class _Interp:
         raise SkaldError(f"undefined identifier: {name}")
 
     def eval_expr(self, e) -> Any:
+        """The value of `e`: one step, one level, and a value within its
+        bound, whether it was written, read or computed."""
+        self._enter()
+        value = _bounded(self._eval(e))
+        self.depth -= 1
+        return value
+
+    def _eval(self, e) -> Any:
         tag = e[0]
         if tag == "num":
             return e[1]
@@ -482,6 +624,13 @@ class _Interp:
         raise SkaldError(f"unknown expression tag: {tag}")
 
     def exec_stmt(self, s) -> Optional[Any]:
+        """Execute `s`: one step, and one level."""
+        self._enter()
+        result = self._exec(s)
+        self.depth -= 1
+        return result
+
+    def _exec(self, s) -> Optional[Any]:
         tag = s[0]
         if tag == "assign":
             name, e = s[1], s[2]
@@ -573,12 +722,25 @@ def _binop(op: str, a: Any, b: Any) -> Any:
 # Public API
 # ---------------------------------------------------------------------------
 
-def interpret_origination(code: str, initial_storage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def interpret_origination(
+    code: str,
+    initial_storage: Optional[Dict[str, Any]],
+    *,
+    sender: Optional[str] = None,
+    self_addr: Optional[str] = None,
+    balance: int = 0,
+) -> Dict[str, Any]:
     """Parse `code`, type-check it, validate against `initial_storage`, and
     return the initial storage dict.
 
     Type-checking is mandatory at origination — a contract that fails to
-    type-check cannot be deployed."""
+    type-check cannot be deployed.
+
+    The invariants are checked on the initial state, in an execution of
+    their own. They see `sender`, the account that creates the contract,
+    `self_addr`, its address, and `balance`, what that address already
+    holds; `amount` is 0. A caller that gives none of them, outside a
+    chain, gets the zero address for both and a balance of 0."""
     # Import here to avoid circular import (typecheck imports from this module).
     from .typecheck import type_check as _type_check
     errors = _type_check(code)
@@ -598,10 +760,10 @@ def interpret_origination(code: str, initial_storage: Optional[Dict[str, Any]]) 
         storage[p.name] = v
     # Run invariants on the initial state.
     interp = _Interp(contract, storage, ctx={
-        "sender": "kn1" + "0" * 33,
+        "sender": sender if sender is not None else "kn1" + "0" * 33,
         "amount": 0,
-        "self": "kn1" + "0" * 33,
-        "balance": 0,
+        "self": self_addr if self_addr is not None else "kn1" + "0" * 33,
+        "balance": balance,
     })
     interp.check_invariants()
     return storage
@@ -616,10 +778,14 @@ def interpret_call(
     sender: str,
     amount: int,
     self_addr: str,
+    balance: int = 0,
 ) -> Dict[str, Any]:
     """Execute `entry(params)` against a deep-copy of `storage`, check
     invariants, and return the new storage. Raises SkaldError on any
-    Skald-level failure."""
+    Skald-level failure.
+
+    `balance` is what the contract holds while the entry runs, with the
+    `amount` of the call."""
     import copy
     contract = parse(code)
     new_storage = copy.deepcopy(storage)
@@ -643,7 +809,7 @@ def interpret_call(
         "sender": sender,
         "amount": amount,
         "self": self_addr,
-        "balance": 0,  # production: read from state
+        "balance": balance,
     })
     interp._call(fn, args)
     interp.check_invariants()

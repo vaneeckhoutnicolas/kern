@@ -310,7 +310,7 @@ Internal helpers (`_apply_*`, `_credit`, `_debit`, etc., with leading underscore
 
 The Skald lexer, parser, AST, and interpreter as of v1.0. The static type checker in [`kern/skald/typecheck.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/typecheck.py).
 
-**Stable**: existing contract source code that compiles in v1.0 will continue to compile in all v1.x.
+**Stable**: existing contract source code that compiles in v1.0 will continue to compile in all v1.x. One bound came to it: a code nested deeper than 64 levels is not read ([`skald-language.md`](skald-language.md), "Bounds"). Before the bound such a code was read or refused according to the Python stack of the node that read it, so no node could promise to read it.
 
 ### 3.4 Storage schema
 
@@ -972,7 +972,7 @@ With one request waiting at most, the answer to a request is the next `blocks` f
 | A transaction that lacks what its kind needs, or has more | Included in a block, fails, pays its fee | Not a transaction: refused when received, and the block that holds it is invalid | Note, 4.3: an object has exactly the fields of its schema |
 | Parameters of a call | An object by name, a list by position, one value, or `null` | A map of names to values | One form for one call |
 | Initial storage | Any JSON, or `null` | A map of names to values, which can be empty | The same |
-| What a contract takes and holds | Any JSON | An integer of 64 bits, a boolean or a text | The four types of Skald |
+| What a contract takes and holds | Any JSON in the transaction. An integer outside 64 bits or a text beyond 4,096 bytes fails the operation, which pays its fee | An integer of 64 bits, a boolean or a text | The four types of Skald |
 | The size of a transaction | What is signed | The whole transaction, witness included | Note, 7 |
 | Parameters of a protocol proposal | Seventeen names, seven of them with a fraction | Nine names, each an integer or a boolean with its range | Note, 4.3: no number with a fraction |
 | `salt` of a proposal | Optional, 0 when absent | Required | No default |

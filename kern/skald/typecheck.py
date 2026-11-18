@@ -115,7 +115,11 @@ class TypeChecker:
         closes that determinism hole.
 
         Implementation: build the static call graph among declared functions
-        and report every cycle found via depth-first search.
+        and report every cycle found via depth-first search. The search keeps
+        its own stack: a chain of functions as long as a transaction can
+        carry is searched like a short one, where a search that recursed
+        once for each function raised RecursionError, at a length that
+        depended on the Python stack of the caller.
         """
         graph: Dict[str, set] = {}
         for fn in self.contract.functions.values():
@@ -130,34 +134,41 @@ class TypeChecker:
         reported: set = set()
         path: List[str] = []
 
-        def dfs(node: str) -> None:
-            color[node] = 1
-            path.append(node)
-            for nxt in sorted(graph.get(node, ())):
-                state = color.get(nxt, 0)
-                if state == 1:  # back-edge -> cycle
-                    i = path.index(nxt)
-                    cyc = path[i:] + [nxt]
-                    key = frozenset(cyc)
-                    if key not in reported:
-                        reported.add(key)
-                        self.errors.append(TypeError(
-                            where="contract",
-                            detail=(
-                                "recursion is not allowed in Skald (call "
-                                f"cycle: {' -> '.join(cyc)}); rewrite without "
-                                "recursion so execution depth is statically "
-                                "bounded and deterministic across all nodes"
-                            ),
-                        ))
-                elif state == 0:
-                    dfs(nxt)
-            path.pop()
-            color[node] = 2
-
-        for n in sorted(graph):
-            if color.get(n, 0) == 0:
-                dfs(n)
+        for root in sorted(graph):
+            if color.get(root, 0) != 0:
+                continue
+            color[root] = 1
+            path.append(root)
+            # One iterator for each function of `path`: the callees it has
+            # not looked at yet.
+            pending = [iter(sorted(graph[root]))]
+            while pending:
+                for nxt in pending[-1]:
+                    state = color.get(nxt, 0)
+                    if state == 1:  # back-edge -> cycle
+                        i = path.index(nxt)
+                        cyc = path[i:] + [nxt]
+                        key = frozenset(cyc)
+                        if key not in reported:
+                            reported.add(key)
+                            self.errors.append(TypeError(
+                                where="contract",
+                                detail=(
+                                    "recursion is not allowed in Skald (call "
+                                    f"cycle: {' -> '.join(cyc)}); rewrite without "
+                                    "recursion so execution depth is statically "
+                                    "bounded and deterministic across all nodes"
+                                ),
+                            ))
+                    elif state == 0:
+                        color[nxt] = 1
+                        path.append(nxt)
+                        pending.append(iter(sorted(graph[nxt])))
+                        break
+                else:
+                    # Every callee of the last function of `path` is done.
+                    color[path.pop()] = 2
+                    pending.pop()
 
     def _collect_calls_stmt(self, stmt, out: set) -> None:
         tag = stmt[0]

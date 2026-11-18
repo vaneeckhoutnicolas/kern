@@ -122,7 +122,9 @@ These are available in every entry/view body:
 | `sender`  | `address` | The account that signed the calling transaction.  |
 | `amount`  | `int`     | The value (in mukrn) attached to this call.       |
 | `self`    | `address` | The address of the contract being executed.       |
-| `balance` | `int`     | The current native-token balance of `self`.       |
+| `balance` | `int`     | What `self` holds (in mukrn), with the `amount` of this call. |
+
+At origination, the invariants see the account that creates the contract as `sender`, the address of the contract as `self`, what that address already holds as `balance`, and an `amount` of 0.
 
 ## Function classes
 
@@ -148,6 +150,24 @@ Storage assignments are type-checked at runtime. (A future static type checker w
 Each invariant is a Boolean expression over storage fields. After every entry call, the interpreter evaluates all invariants over the post-call storage. If any returns `false`, the entire transaction is reverted (storage unchanged, fee still debited per the spec).
 
 Invariants are also evaluated at origination, against the initial storage. A contract that cannot be originated with valid invariants is rejected before it is deployed.
+
+## Bounds
+
+What a contract computes is bounded, by the same numbers on every node:
+
+| What is bounded | Bound | What it counts |
+|---|---|---|
+| An integer | 64 bits, from -2^63 to 2^63 - 1 | Every value an expression gives, whether it is written in the code, read from storage, received as a parameter or computed. `(a * a) % 7` fails when `a * a` leaves 64 bits |
+| A text | 4,096 bytes | The same, counted in UTF-8. An address is a text |
+| An execution | 10,000 steps | One step for each statement executed and each expression evaluated: in the entry, in the functions it calls and in the invariants checked after it |
+| The nesting of the code | 64 levels | The tree of each statement and of each invariant. A statement, an expression and a pair of parentheses are one level each, and a chain `a + b + c` is as deep as it is long |
+| The nesting of an execution | 64 levels | A statement and an expression in progress are one level each, through the functions called |
+
+A value that leaves its bound, a step or a level too many, and the execution fails like one whose `require` refuses: storage is unchanged and the fee is debited. The same bounds hold for the invariants of an origination, which are an execution of their own, for the initial storage, and for a view.
+
+A code nested deeper than 64 levels is not read: its origination is refused. A number written with more digits than 64 bits hold is read, and fails where it is evaluated.
+
+The parser, the type checker and the interpreter walk the code recursively. Without a bound on its nesting, a code nested deeply enough was read or refused according to the Python stack of the node that applied it, and a proposer could build a block that the nodes validating it refused. At the bound, reading, checking and running a code takes fewer than 250 frames of that stack, where Python allows 1,000 by default.
 
 ## Example: Counter
 
@@ -221,7 +241,7 @@ These features are part of the Skald design but are deliberately left out of the
 - **Compound types** — `map<K, V>`, `list<T>`, `option<T>`, `(a, b)` tuples. Currently storage fields must be primitive.
 - **Cross-contract calls** — Skald can only mutate `self`'s storage in v0.1. Inter-contract messages will arrive via an explicit `emit` statement that produces internal transactions.
 - **Static type checking** — types are checked at runtime; a separate compile step will catch errors before origination.
-- **Gas metering** — a fixed gas cost is charged per entry call. Per-operation metering is straightforward but not yet implemented.
+- **Gas metering** — a fixed gas cost is charged per entry call, whatever the call computes within the bounds above. The bounds limit what a call can ask of a node; they are not a price. Per-operation metering is not implemented.
 - **Cryptographic primitives** — `blake2b`, `ed25519_verify`, etc., as Skald built-ins.
 
 ## Implementation notes
@@ -231,9 +251,11 @@ The reference implementation in `kern/skald/__init__.py` is a tree-walking inter
 The interpreter exposes three entry points to the rest of the node:
 
 ```python
-interpret_origination(code: str, initial_storage: dict) -> dict
-interpret_call(code, storage, entry, params, *, sender, amount, self_addr) -> dict
+interpret_origination(code: str, initial_storage: dict, *, sender=None, self_addr=None, balance=0) -> dict
+interpret_call(code, storage, entry, params, *, sender, amount, self_addr, balance=0) -> dict
 interpret_view(code, storage, view, params, *, self_addr=...) -> Any
 ```
+
+The chain gives an origination its `sender`, the address of the contract and what that address holds, and gives a call what the contract holds. A caller outside a chain that leaves them out gets the zero address and a balance of 0.
 
 Each call parses the source from scratch (no caching yet); a production node will store compiled KVM bytecode in the contract's state and skip re-parsing.
