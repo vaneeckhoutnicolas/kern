@@ -23,7 +23,9 @@ one account once, in one of three kinds:
                   write; a value is refused
 
 A static call runs its program with `run(..., static=True)`: the program
-halts, reverted, on the first SSTORE it reaches, and the call fails.
+halts, reverted, on the first SSTORE it reaches, and the call fails. It
+moves no value: a CALL marked static, or a STATICCALL, that carries one
+does not run. A DELEGATECALL moves none: marked static, it runs.
 
 A program cannot call another program: the machine does not execute
 CALL, CALLCODE, DELEGATECALL, STATICCALL, CREATE or CREATE2, and halts on
@@ -33,8 +35,11 @@ about one program. `Frame` below is a dataclass of an earlier design,
 which nothing builds.
 
 `WorldState` holds the accounts (balance, code, storage, nonce) by
-address. A call takes a snapshot of it first: a call that reverts, or
-that the step limit of the machine cuts, leaves the world as it was.
+address. A call first checks the code and the storage it would run on:
+what does not make a state of the machine is refused before the world is
+copied and before any value moves. Then it takes a snapshot: a call that
+reverts, or that the step limit of the machine cuts, leaves the world as
+it was.
 
 Precompiles
 -----------
@@ -442,8 +447,10 @@ def call_contract(
     `ValueError` when the calldata, the gas, the value, the addresses and
     the block of the call do not make the context of a state of the
     machine, or when the code or the storage the call would run on does
-    not make one: the call does not start, and the world is as it was.
-    The size of that storage is read before the world is copied.
+    not make one: the call does not start. All of it is checked before
+    the world is copied and before any value moves, the size of that
+    storage first: nothing is copied, and the accounts of the world are
+    the objects they were.
 
     A call whose run is cut by the step limit of the machine before it
     halts fails as a call that reverts: the world is as it was.
@@ -452,6 +459,12 @@ def call_contract(
     write: its program halts, reverted, on the first SSTORE it reaches,
     and the call fails. A call gives back the gas its program had left
     when it stopped, whether it succeeds or fails.
+
+    A static call moves no value. A `CALL` marked static, or a
+    `STATICCALL`, that carries one does not run, and gives back all its
+    gas, like a call whose caller does not hold the value. A
+    `DELEGATECALL` moves none: marked static, it runs with the value it
+    is given, which its program reads.
     """
     # 0. A call carries no more calldata than a state of the machine holds,
     # whether it goes to a contract or to a precompile, and its context is
@@ -467,16 +480,29 @@ def call_contract(
     # The storage the call would run on is read for its size before the
     # world is copied.
     holder = world.accounts.get(caller if kind == FrameKind.DELEGATECALL else address)
+    if holder is not None and type(holder.storage) is not dict:
+        raise ValueError("not a state of the Mini-EVM: its storage is not a dict")
     if holder is not None and len(holder.storage) > MAX_STORAGE_SLOTS:
         raise ValueError("not a state of the Mini-EVM: its storage is beyond the limit")
+    # So are the program the call would run and every slot of that storage:
+    # a call that cannot start copies nothing and moves nothing.
+    callee = world.accounts.get(address)
+    if callee is not None and not is_precompile(address):
+        require_program(callee.code)
+        if callee.code:
+            require_state(VmState(gas=gas, storage={} if holder is None else holder.storage, context=ExecContext(
+                address=address, caller=caller, value=value, calldata=calldata,
+                block_number=block_number, block_timestamp=block_timestamp,
+            )))
 
     # 1. A STATICCALL is static, whatever `is_static` says.
     if kind == FrameKind.STATICCALL:
         is_static = True
 
-    # 2. Reject value transfer in static calls.
-    if is_static and value != 0:
-        return CallResult(success=False, return_data=b"", gas_remaining=0)
+    # 2. A static call moves no value: a CALL or a STATICCALL that carries
+    # one does not run, and has all its gas left. A DELEGATECALL moves none.
+    if is_static and value != 0 and kind != FrameKind.DELEGATECALL:
+        return CallResult(success=False, return_data=b"", gas_remaining=gas)
 
     # 3. Snapshot for potential rollback.
     snap = world.snapshot()

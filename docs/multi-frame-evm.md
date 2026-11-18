@@ -47,9 +47,11 @@ result = call_contract(
 - A call that succeeds keeps the storage its program leaves.
 - A static call cannot write. Its program halts, reverted, on the first SSTORE it reaches, even one that would change nothing, and the call fails, as in Ethereum.
 - A call whose program reverts, or is still running when the step limit of the machine cuts it, fails: the world is as it was before the call, the value included.
-- A call gives back the gas its program had left when it stopped, whether the call succeeded or failed: the machine keeps the gas of the state it reached ([section 2.9](api-stability.md#29-gas-pricing)). In Ethereum a call that fails gives gas back only when its program ends on REVERT. A static call that carries a value does not run, and gives no gas back.
+- A call gives back the gas its program had left when it stopped, whether the call succeeded or failed: the machine keeps the gas of the state it reached ([section 2.9](api-stability.md#29-gas-pricing)). In Ethereum a call that fails gives gas back only when its program ends on REVERT.
+- A static call moves no value. A `CALL` marked static, or a `STATICCALL`, that carries one does not run, and gives back all its gas. A `DELEGATECALL` moves none: marked static, it runs, its program reads the value of its call and cannot write, as in Ethereum.
 - A call to an account without code moves the value and succeeds.
-- A call whose value the caller does not hold fails.
+- A call whose value the caller does not hold fails, and gives back all its gas: its program did not run.
+- A call whose code or storage does not make a state of the machine does not start: `ValueError`, before the world is copied and before any value moves.
 - A call does not start when its gas, value, addresses, block or calldata do not make the context of a state of the machine, or when the code or the storage it would run on does not make one. It raises `ValueError`, and the world is as it was ([section 2.9](api-stability.md#29-gas-pricing)).
 
 ## Creations

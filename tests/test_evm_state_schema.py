@@ -24,6 +24,7 @@ that check takes for a state, the schema accepts.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import random
 import sys
@@ -219,7 +220,7 @@ def in_order(**changes) -> VmState:
 
 
 def called(**changes) -> ExecContext:
-    return ExecContext(**{**vars(CALL), **changes})
+    return dataclasses.replace(CALL, **changes)
 
 
 # What is outside the ranges and the sentences of section 9.22, with the

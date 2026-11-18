@@ -56,7 +56,7 @@ class EvmError(Exception):
     These cause the VM to halt with revert status."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExecContext:
     """The transaction-level execution context: who called, with what value,
     against what contract, with what input data, in what block. All fields
@@ -64,8 +64,12 @@ class ExecContext:
     deterministically.
 
     A context does not change once it is built: assigning to one of its
-    fields raises `dataclasses.FrozenInstanceError`. The states of an
-    execution share theirs, and `dataclasses.replace` makes another one."""
+    fields raises `dataclasses.FrozenInstanceError`, and it has no
+    dictionary to write into. The states of a run share theirs. An
+    execution works on a copy of the context it is given, and a state read
+    from a trace carries a copy of its own: a trace shares no object with
+    the code that built it or that reads it. `dataclasses.replace` makes
+    another context, and `dataclasses.asdict` gives its six values."""
 
     address: int = 0          # `self` — contract being executed (as int)
     caller: int = 0           # `msg.sender` — caller address (as int)
@@ -141,6 +145,20 @@ class VmState:
         )
 
 
+def _a_copy(context: ExecContext) -> ExecContext:
+    """Another context with the same six values."""
+    return ExecContext(context.address, context.caller, context.value, context.calldata,
+                       context.block_number, context.block_timestamp)
+
+
+def _apart(state: VmState) -> VmState:
+    """A copy of `state` that shares nothing with it, its context included:
+    what a trace keeps of a state it is given, and what it hands out."""
+    copy = state.clone()
+    copy.context = _a_copy(state.context)
+    return copy
+
+
 # ---------------------------------------------------------------------------
 # The limits of a state
 # ---------------------------------------------------------------------------
@@ -205,7 +223,7 @@ def not_a_state(state: Any) -> Optional[str]:
         if type(getattr(state, name)) is not kind:
             return f"its {name} is not a {kind.__name__}"
     context = state.context
-    if type(context) is not ExecContext or vars(context).keys() != _CONTEXT_FIELDS:
+    if type(context) is not ExecContext or not all(hasattr(context, name) for name in _CONTEXT_FIELDS):
         return "its context is not an ExecContext"
     if type(context.calldata) is not bytes:
         return "its calldata is not bytes"
@@ -780,25 +798,48 @@ class TraceStates:
     Only the first state and the last one are kept. Any other is run again
     from the first, without hashing anything: a trace holds one commitment
     for each step, and not one copy of the memory for each step. What is
-    handed out is a copy, and its context cannot be assigned to: nothing
-    done to it changes the trace."""
+    handed out is a copy that shares nothing with the trace, its context
+    included: nothing done to it changes the trace.
+
+    A trace built by hand is given a program, a first state, a last state
+    and a number of steps. `ValueError` when the program is not a program
+    of the machine, when one of the two states is not a state of it, or
+    when the number of steps is not a count. The trace keeps copies of the
+    two states: nothing done to them afterwards changes it. Nothing checks
+    that the last state is the one the program reaches after that many
+    steps: `execute` builds the trace of an execution."""
 
     def __init__(self, code: bytes, first: VmState, last: VmState, n_steps: int) -> None:
+        require_program(code)
+        require_state(first)
+        require_state(last)
+        if type(n_steps) is not int or n_steps < 0:
+            raise ValueError("not a trace of the Mini-EVM: its number of steps is not a count")
         self._code = code
-        self._first = first
-        self._last = last
+        self._first = _apart(first)
+        self._last = _apart(last)
         self._n_steps = n_steps
         self._landings = _Landings(code)
+
+    @classmethod
+    def _of_an_execution(cls, code: bytes, first: VmState, last: VmState, n_steps: int,
+                         landings: _Landings) -> "TraceStates":
+        """The trace of `execute`: its two states are the machine's own,
+        which nothing else holds, and its program was read once."""
+        states = cls.__new__(cls)
+        states._code, states._first, states._last = code, first, last
+        states._n_steps, states._landings = n_steps, landings
+        return states
 
     def __len__(self) -> int:
         return self._n_steps + 1
 
     def __iter__(self) -> Iterator[VmState]:
         state = self._first
-        yield state.clone()
+        yield _apart(state)
         for _ in range(self._n_steps):
             state = _advance(state, self._code, self._landings)
-            yield state.clone()
+            yield _apart(state)
 
     def __getitem__(self, index: Union[int, slice]) -> Any:
         if isinstance(index, slice):
@@ -809,11 +850,11 @@ class TraceStates:
         if not 0 <= position < len(self):
             raise IndexError("no such step in the trace")
         if position == self._n_steps:
-            return self._last.clone()
+            return _apart(self._last)
         state = self._first
         for _ in range(position):
             state = _advance(state, self._code, self._landings)
-        return state.clone()
+        return _apart(state)
 
 
 @dataclass
@@ -879,15 +920,15 @@ def execute(
         last = _advance(last, code, landings)
         commitments.append(last.commitment())
 
-    states = TraceStates(code, initial, last, len(commitments) - 1)
-    states._landings = landings          # the program is read once: its trace does not read it again
+    states = TraceStates._of_an_execution(code, initial, last, len(commitments) - 1, landings)
     return ExecutionTrace(states=states, commitments=commitments)
 
 
 def _initial_state(code: bytes, gas: int, context: Optional[ExecContext],
                    initial_storage: Optional[Dict[int, int]]) -> VmState:
     """The state a program starts from, or `ValueError`. The size of the
-    initial storage is read before its first copy."""
+    initial storage is read before its first copy. The state holds a copy
+    of the context it is given: the caller keeps its own."""
     require_program(code)
     storage: Dict[int, int] = {}
     if initial_storage is not None:
@@ -898,6 +939,7 @@ def _initial_state(code: bytes, gas: int, context: Optional[ExecContext],
         storage = dict(initial_storage)
     initial = VmState(gas=gas, storage=storage, context=ExecContext() if context is None else context)
     require_state(initial)
+    initial.context = _a_copy(initial.context)
     return initial
 
 
