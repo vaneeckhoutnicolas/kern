@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2026-2036 Nicolas Van Eeckhout (founder) and Kern contributors
-"""Tests for kern.evm.frames — multi-frame execution, precompiles,
-contract creation."""
+"""Tests for kern.evm.frames: calls, creations and precompiles."""
 
 import hashlib
 import sys
@@ -411,4 +410,4 @@ if __name__ == "__main__":
     for t in tests:
         getattr(me, t)()
         print(f"  ✓ {t}")
-    print(f"All {len(tests)} multi-frame tests passed.")
+    print(f"All {len(tests)} tests of calls, creations and precompiles passed.")

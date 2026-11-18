@@ -163,6 +163,17 @@ def single_step_verify(
     wins. If neither claim matches (e.g., both parties lied), the
     challenger wins by default (the sequencer's claim has been
     refuted).
+
+    An instruction that would take the state beyond the limits of the
+    machine has a truth like any other: the halted state `step` returns.
+
+    No verdict is given on what is not a state of the machine. The
+    `pre_state` comes from a party, and `step` checks it in full
+    (`not_a_state`), its sizes first, before anything copies it, hashes it
+    or reads a word of it, and so the program. `ValueError` otherwise: a
+    stack of texts hashes like a stack of words, and a verdict read from it
+    would be the verdict of another machine. `RollupState.resolve_challenge`
+    turns such a pre-state away before it gets here.
     """
     truth = step(pre_state, code)
     truth_commitment = truth.commitment_hex()

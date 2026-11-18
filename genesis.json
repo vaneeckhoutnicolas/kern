@@ -1,5 +1,5 @@
 {
-  "_notice": "DEVNET GENESIS. All addresses are derived from public seeds in scripts/build_v1_genesis.py and are spendable by anyone. Not a mainnet genesis.",
+  "_notice": "DEVNET GENESIS. Every address that holds a balance or a stake is derived from a public seed in scripts/build_v1_genesis.py and is spendable by anyone. The treasury address has no key and holds nothing at genesis. Not a mainnet genesis.",
   "balances": {
     "kn1KU1aiU6MZxJXV4CiDtkAGBzfHPTD24qmx": 10000000000000,
     "kn1LsLG7LvXzwYiJ2CyKPGRdxTyDkuHydMtn": 14000000000000,
@@ -29,7 +29,7 @@
   },
   "state_root_function": "trie",
   "total_supply": 100000000000000,
-  "treasury_address": "kn1LsLG7LvXzwYiJ2CyKPGRdxTyDkuHydMtn",
+  "treasury_address": "kn1LEjxRGejJ111fCTSJmQa7sVdm8Zmt6n5Y",
   "validators": [
     {
       "address": "kn1dSwF8xJXHXkv3BFRgHShj79xFjxn7zapT",

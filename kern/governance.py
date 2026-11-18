@@ -68,6 +68,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+from .crypto import address_is_valid
+from .issuance import IssuanceParams
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -183,54 +186,161 @@ class Vote(str, Enum):
 
 KNOWN_PROTOCOL_PAYLOAD_KEYS = {"params", "swap", "to"}
 
-# Allowed parameter names for the "params" payload.
-ALLOWED_PARAMS = {
-    # Canonical integer (ppm) issuance parameters.
-    "i_min_ppm", "i_max_ppm", "target_staking_ratio_ppm", "target_block_time_ms",
-    "treasury_share_ppm", "proposer_bonus_ppm",
-    # Legacy float names, still accepted and converted at the parsing
-    # boundary by IssuanceParams.from_dict (pre-integer-migration chains).
-    "i_min", "i_max", "target_staking_ratio", "target_block_time_seconds",
-    "treasury_share", "proposer_bonus",
-    "block_time_seconds",
+# What each parameter may be worth. A proposal used to be checked for the
+# names of its parameters and never for their values: a block time of zero,
+# or a rate given as a text, was voted and activated like any other, and
+# from then on no block could be applied. Every name now has a type and a
+# range, checked when the proposal is submitted and again when it would be
+# activated.
+#
+# The integer names but `proposer_bonus_ppm`, and the switch, are the
+# parameters of structure version 1 (docs/api-stability.md, section 9), with
+# the ranges written there. A boolean is not an integer.
+INTEGER_PARAM_RANGES: Dict[str, Tuple[int, int]] = {
+    # Issuance, in parts per million.
+    "i_min_ppm": (0, 1_000_000),
+    "i_max_ppm": (0, 1_000_000),
+    "target_staking_ratio_ppm": (0, 1_000_000),
+    "treasury_share_ppm": (0, 1_000_000),
+    "proposer_bonus_ppm": (0, 1_000_000),
+    # From a millisecond to an hour: the issuance per block divides by the
+    # number of blocks in a year, which must not be zero.
+    "target_block_time_ms": (1, 3_600_000),
     # Optional L1 fee floor + block size cap (see kern.chain). Off unless
     # `fee_floor_enabled` is set. Changing these is a consensus rule change,
     # which is exactly why they live behind the governance whitelist.
-    "fee_floor_enabled", "fee_floor_base", "fee_floor_per_byte", "max_block_bytes",
+    "fee_floor_base": (0, 10**12),
+    "fee_floor_per_byte": (0, 10**9),
+    # The smallest block holds the largest transaction, and the largest one
+    # fits in a frame with its certificate.
+    "max_block_bytes": (131_072, 8_388_608),
 }
+BOOLEAN_PARAMS = frozenset({"fee_floor_enabled"})
+
+# Legacy names, still accepted and converted at the parsing boundary by
+# IssuanceParams.from_dict (pre-integer-migration chains): a rate as a
+# fraction, a time in seconds. A time shorter than a millisecond would be
+# converted to zero.
+FRACTION_PARAMS = frozenset({"i_min", "i_max", "target_staking_ratio", "treasury_share", "proposer_bonus"})
+FRACTION_RANGE = (0, 1)
+SECONDS_PARAMS = frozenset({"target_block_time_seconds", "block_time_seconds"})
+SECONDS_RANGE = (0.001, 3_600)
+
+# Allowed parameter names for the "params" payload: those that have a rule.
+ALLOWED_PARAMS = set(INTEGER_PARAM_RANGES) | BOOLEAN_PARAMS | FRACTION_PARAMS | SECONDS_PARAMS
 
 # Allowed swap targets.
 ALLOWED_SWAPS = {"state_root_function": {"json", "trie"}}
 
 
+def _param_error(name: str, value: Any) -> Optional[str]:
+    """Why `value` cannot be the value of the parameter `name`, or None."""
+    if name in INTEGER_PARAM_RANGES:
+        low, high = INTEGER_PARAM_RANGES[name]
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            return f"param {name} must be an integer from {low} to {high}"
+        return None
+    if name in BOOLEAN_PARAMS:
+        return None if isinstance(value, bool) else f"param {name} must be true or false"
+    bottom, top = FRACTION_RANGE if name in FRACTION_PARAMS else SECONDS_RANGE
+    # An integer of any size compares with a float, and a float that is not
+    # a number is outside every range: no comparison with it holds.
+    is_number = isinstance(value, (int, float)) and not isinstance(value, bool)
+    if not is_number or not bottom <= value <= top:
+        return f"param {name} must be a number from {bottom} to {top}"
+    return None
+
+
+# The two bounds of the issuance curve, each under its two names: in parts
+# per million, and as the fraction older states and genesis files hold.
+_LOWEST_RATE = ("i_min_ppm", "i_min")
+_HIGHEST_RATE = ("i_max_ppm", "i_max")
+
+
+def _bounds(params: dict) -> Optional[Tuple[int, int]]:
+    """The lowest and the highest rate of issuance as the node reads them
+    from what a state holds, defaults included, or None when it cannot read
+    them. A name in parts per million comes before the older name."""
+    try:
+        read = IssuanceParams.from_dict(params)
+    except (TypeError, ValueError, ArithmeticError):
+        return None
+    return read.i_min_ppm, read.i_max_ppm
+
+
+def _order_error(bounds: Optional[Tuple[int, int]]) -> Optional[str]:
+    """The curve falls from the highest rate, when nothing is staked, to the
+    lowest, at the target. With the lowest above the highest nothing
+    raises: the curve is upside down, and its formula divides a negative
+    number, which two languages do not round the same way."""
+    if bounds is not None and bounds[0] > bounds[1]:
+        return f"the lowest rate of issuance ({bounds[0]} ppm) is above the highest ({bounds[1]} ppm)"
+    return None
+
+
+def issuance_error(params: Any) -> Optional[str]:
+    """Why `params` cannot be the issuance parameters a network starts
+    with, or None. Never raises.
+
+    A genesis passes the checks of a proposal: each value of a name a
+    proposal knows has its type and its range, and the lowest rate is not
+    above the highest. Nothing at all means the defaults. A name no
+    proposal knows is left alone, as the node leaves it alone."""
+    if params is None:
+        return None
+    if not isinstance(params, dict):
+        return "the issuance parameters must be an object"
+    for name, value in params.items():
+        if name in ALLOWED_PARAMS:
+            err = _param_error(name, value)
+            if err:
+                return err
+    return _order_error(_bounds(params))
+
+
 def validate_protocol_payload(payload: dict) -> Optional[str]:
-    """Return None if payload is well-formed, else an error string."""
+    """Return None if payload is well-formed, else an error string. Never
+    raises, whatever the payload holds."""
     if not isinstance(payload, dict):
         return "payload must be a dict"
     keys = set(payload.keys())
     extra = keys - KNOWN_PROTOCOL_PAYLOAD_KEYS
     if extra:
-        return f"unknown payload keys: {sorted(extra)}"
+        return f"unknown payload keys: {sorted(extra, key=repr)}"
     if "params" in payload:
         params = payload["params"]
         if not isinstance(params, dict):
             return "'params' must be a dict"
-        for k in params:
+        for k, value in params.items():
             if k not in ALLOWED_PARAMS:
                 return f"unknown param: {k}"
+            err = _param_error(k, value)
+            if err:
+                return err
+        # A proposal that carries both bounds says by itself whether they
+        # cross. One that carries a single bound is judged when it would
+        # be activated, against the other bound as the state then holds it.
+        if any(name in params for name in _LOWEST_RATE) and any(name in params for name in _HIGHEST_RATE):
+            err = _order_error(_bounds(params))
+            if err:
+                return err
     if "swap" in payload:
         target = payload["swap"]
         to = payload.get("to")
-        if target not in ALLOWED_SWAPS:
+        if not isinstance(target, str) or target not in ALLOWED_SWAPS:
             return f"unknown swap target: {target}"
-        if to not in ALLOWED_SWAPS[target]:
+        if not isinstance(to, str) or to not in ALLOWED_SWAPS[target]:
             return f"unknown swap value '{to}' for {target}"
     return None
 
 
 def validate_treasury_payload(payload: dict) -> Optional[str]:
     """A treasury payload says who receives how much KRN, with an optional
-    memo. Multi-recipient batches are allowed."""
+    memo. Multi-recipient batches are allowed. Never raises.
+
+    Each recipient is an address, of an account or of a contract: a payout
+    to a value that is not a text could not be applied, and a block that
+    cannot be applied stops the chain."""
     if not isinstance(payload, dict):
         return "payload must be a dict"
     if "recipients" not in payload:
@@ -243,7 +353,10 @@ def validate_treasury_payload(payload: dict) -> Optional[str]:
             return "each recipient must be a dict"
         if "address" not in r or "amount" not in r:
             return "each recipient needs address+amount"
-        if not isinstance(r["amount"], int) or r["amount"] <= 0:
+        if not address_is_valid(r["address"]):
+            return "each recipient address must be an address"
+        amount = r["amount"]
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
             return "amount must be a positive int (mukrn)"
     return None
 
@@ -265,9 +378,11 @@ class ProtocolProposal:
     votes: Dict[str, Dict[str, str]] = field(default_factory=dict)
     # Phase transition history.
     phase_transitions: List[Tuple[str, int]] = field(default_factory=list)
-    # v0.8: equivocations recorded for slashing. List of dicts:
+    # v0.8: equivocations recorded for slashing, one for a voter and a
+    # phase at most. List of dicts:
     #   {"voter": addr, "phase": str, "first_vote": str, "second_vote": str,
-    #    "first_level": int, "second_level": int}
+    #    "second_at_level": int}
+    # to which a slash adds "consumed", "slashed_at_level" and "reporter".
     equivocations: List[dict] = field(default_factory=list)
     # Window parameters at submission time (locked in for this proposal).
     proposal_blocks: int = DEFAULT_PROPOSAL_BLOCKS
@@ -529,15 +644,21 @@ class ProtocolGovernance:
         # In a real BFT network the equivocation is detected from the
         # signed message history (two signed votes with different content
         # for the same proposal+phase) and used as slashing evidence.
+        #
+        # It is recorded once for a voter and a phase, with the level of
+        # the vote that differed first: a third vote adds nothing, and one
+        # offence is punished once. The caller writes the proposal back to
+        # the state although the vote is refused (chain._apply_governance_vote).
         existing = prop.votes[phase_key].get(voter)
         if existing is not None and existing != vote.value:
-            prop.equivocations.append({
-                "voter": voter,
-                "phase": phase_key,
-                "first_vote": existing,
-                "second_vote": vote.value,
-                "second_at_level": current_level,
-            })
+            if not any(e.get("voter") == voter and e.get("phase") == phase_key for e in prop.equivocations):
+                prop.equivocations.append({
+                    "voter": voter,
+                    "phase": phase_key,
+                    "first_vote": existing,
+                    "second_vote": vote.value,
+                    "second_at_level": current_level,
+                })
             return False, "equivocation detected; original vote stands"
 
         prop.votes[phase_key][voter] = vote.value
@@ -545,16 +666,35 @@ class ProtocolGovernance:
 
     # ----- cycle advancement ---------------------------------------------
 
-    def advance_phases(self, current_level: int) -> List[Tuple[str, str]]:
+    def advance_phases(self, current_level: int, issuance: Optional[dict] = None) -> List[Tuple[str, str]]:
         """Walk all proposals and advance them to the next phase if the
         current phase window has elapsed. Returns a list of
         (proposal_id, new_phase) transitions that just happened.
 
-        Called by the chain at every block."""
+        Called by the chain at every block, with what the state holds as
+        issuance parameters in `issuance`. A proposal that would leave the
+        lowest rate above the highest is then rejected at the block that
+        would activate it. Several proposals of one block are looked at
+        one after the other, each on top of those activated before it."""
         transitions: List[Tuple[str, str]] = []
+        held = issuance
         for prop in self.proposals.values():
             new_phase = self._next_phase(prop, current_level)
             if new_phase is not None and new_phase != prop.phase:
+                # A state written before the values were checked can hold a
+                # proposal that cannot be applied. It is rejected here, at
+                # the last moment, instead of activated.
+                if new_phase == ProtocolPhase.ACTIVATED and validate_protocol_payload(prop.payload) is not None:
+                    new_phase = ProtocolPhase.REJECTED
+                if new_phase == ProtocolPhase.ACTIVATED and held is not None:
+                    after = {**held, **prop.payload.get("params", {})}
+                    # A proposal answers for the bounds it moves. A state
+                    # written before this rule can hold crossed bounds: a
+                    # proposal about something else is activated as before.
+                    if _order_error(_bounds(after)) is not None and _bounds(after) != _bounds(held):
+                        new_phase = ProtocolPhase.REJECTED
+                    else:
+                        held = after
                 prop.phase = new_phase
                 prop.phase_transitions.append((new_phase.value, current_level))
                 if new_phase == ProtocolPhase.ACTIVATED:
@@ -723,10 +863,13 @@ class TreasuryGovernance:
             new_phase = self._next_phase(prop, current_level)
             if new_phase is None or new_phase == prop.phase:
                 continue
-            # If transitioning to EXECUTED, ensure treasury still has funds.
+            # If transitioning to EXECUTED, ensure the payout can be made
+            # (a state written before the recipients were checked can hold
+            # one that cannot) and that the treasury still has funds.
             if new_phase == TreasuryPhase.EXECUTED:
-                total = prop.total_amount()
-                if self.treasury_balance < total:
+                payable = validate_treasury_payload(prop.payload) is None
+                total = prop.total_amount() if payable else 0
+                if not payable or self.treasury_balance < total:
                     new_phase = TreasuryPhase.REJECTED
                 else:
                     self.treasury_balance -= total

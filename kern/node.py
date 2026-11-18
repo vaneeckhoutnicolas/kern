@@ -41,7 +41,10 @@ from aiohttp import web
 from .bft import (BftEngine, ConsensusMessage, MAX_ROUND_DISTANCE, MsgKind,
                   QuorumCertificate)
 from .block import Block, BlockHeader, txs_merkle_root_hex
-from .chain import Chain, apply_block, state_root_hex, validate_and_apply
+from .chain import (
+    DROP, Chain, admission_error, apply_block, fee_params, mempool_pass, mempool_verdict, state_root_hex,
+    validate_and_apply,
+)
 from . import failpoints
 from .consensus import (BakerConfig, propose_block, round_timeout, select_proposer,
                         DEFAULT_BLOCK_TIME_S)
@@ -49,7 +52,7 @@ from .crypto import KernKeypair
 from .network import Network
 from .rpc import build_app
 from .signing_journal import JOURNAL_FILE, JournalError, SigningJournal
-from .storage import Storage
+from .storage import MEMPOOL_FULL, Storage
 from .transaction import Transaction
 
 LOG = logging.getLogger("kern.node")
@@ -62,6 +65,14 @@ MAX_SEEN_ENTRIES = 50_000
 
 # The signing journal is compacted every this many finalized levels.
 JOURNAL_COMPACT_EVERY = 64
+
+# The fee of a slashing report of this validator, in mukrn: small, so that
+# reporting stays cheap.
+SLASH_REPORT_FEE = 1_000
+
+# What a node answers to a second transaction of a sender for a nonce that
+# another one already holds in its mempool: a block takes one of them at most.
+NONCE_TAKEN = "a transaction of this sender with this nonce already waits"
 
 # Configured peers that are not connected are tried again this often: a
 # peer that was not listening yet when this node started, that restarted,
@@ -105,10 +116,24 @@ def check_genesis_safety(genesis: dict) -> None:
         )
 
 
+def genesis_timestamp(genesis: dict) -> int:
+    """The moment the genesis gives, in seconds. It is part of the header
+    of the genesis block, hence of its hash, so it is read from the file
+    and from nowhere else: a genesis without it is refused. With the time
+    of the machine in its place, two operators who initialised their nodes
+    from one file at two moments would start two chains."""
+    timestamp = genesis.get("timestamp")
+    if isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 0:
+        raise ValueError("genesis has no usable `timestamp`: an integer number of seconds, "
+                         "zero or more, is required")
+    return timestamp
+
+
 def build_genesis_block(genesis: dict) -> Block:
     """Build the genesis block (level 0). It has no transactions and a
     state_root computed from the pre-funded balances declared in the
-    genesis dict."""
+    genesis dict. Everything in it comes from the genesis: two builds of
+    one genesis give one block."""
     state = {
         "balances": dict(genesis.get("balances", {})),
         "nonces": {},
@@ -118,7 +143,7 @@ def build_genesis_block(genesis: dict) -> Block:
     header = BlockHeader(
         level=0,
         payload_round=0,
-        timestamp=int(genesis.get("timestamp", time.time())),
+        timestamp=genesis_timestamp(genesis),
         parent_hash="0" * 64,
         state_root=state_root_hex(state),
         txs_root=txs_merkle_root_hex([]),
@@ -240,9 +265,12 @@ class Node:
         # Advisory dedup sets (see MAX_SEEN_ENTRIES note above).
         self._seen_blocks: Set[str] = set()
         self._seen_txs: Set[str] = set()
+        # The height at which this node last went through a mempool that
+        # was full, and what it found then that waits, the row that gives
+        # way first at the end (see _make_room).
+        self._passed_at: int = -1
+        self._giving_way: List[str] = []
         self._seen_cons: Set[Tuple[str, int, int, str, str]] = set()
-        # Next nonce for this validator's own slashing reports (Phase D).
-        self._next_report_nonce: int = 0
         self._round_deadline: float = 0.0
         self._proposed_this_round: bool = False
         self._last_block_at: float = time.monotonic()
@@ -483,6 +511,12 @@ class Node:
         self.storage.save_block(block)
         self.storage.maybe_save_state(self.chain.state, level)
         self.storage.remove_from_mempool([tx.hash_hex() for tx in block.transactions])
+        # A block consumes a nonce of each of its senders, and with it any
+        # other transaction this node held for that nonce: a peer can have
+        # sent another one than the proposer took. Every node removes them,
+        # not only the one that proposes, when its turn comes.
+        nonces = self.chain.state["nonces"]
+        self.storage.remove_consumed({tx.sender: nonces.get(tx.sender, 0) for tx in block.transactions})
         self._seen_blocks.add(block.hash_hex())
         self._trim(self._seen_blocks)
         # Reset consensus context for the next level.
@@ -600,20 +634,23 @@ class Node:
             if cand is not None and qc is not None:
                 block, valid_round, proof = cand, lv.valid_round, qc
         if block is None:
-            txs = self.storage.drain_mempool(max_n=self.baker.max_txs_per_block)
             evicted: list = []
+            # The whole mempool is offered, as rows; the proposer stops
+            # reading when its block is full.
             block = propose_block(
                 parent=parent,
-                mempool=txs,
+                mempool=self.storage.waiting(),
                 proposer_keypair=self.baker.keypair,
                 proposer_pubkey_b58=self.baker.pubkey_b58,
                 state_before=self.chain.state,
                 round_=r,
+                max_txs=self.baker.max_txs_per_block,
                 evict_out=evicted,
             )
             if evicted:
-                # Transactions that can never become valid (bad signature,
-                # consumed nonce) are dropped so they are not re-tried forever.
+                # Transactions that no block will charge (consumed nonce,
+                # sender that cannot pay the fee, bad signature, ...) are
+                # dropped so they are not looked at forever.
                 self.storage.remove_from_mempool(evicted)
             if not self._keep_block(block):
                 return
@@ -720,31 +757,49 @@ class Node:
         to the local mempool and gossiped. The chain re-verifies the
         evidence and slashes each offence once, so duplicate reports from
         several validators are harmless (they fail and pay their fee)."""
-        if self.bft is None or self.baker is None:
+        if self.bft is None or self.baker is None or not self.bft.pending_evidence:
             return
         from .transaction import make_slash_consensus_equivocation
         from .observability import REGISTRY
+        kp = self.baker.keypair
+        # A report pays its fee like any transaction, and a transaction whose
+        # sender cannot pay is taken by no mempool and removed by every
+        # proposer. A validator that cannot pay for its reports, after what
+        # it already has waiting, keeps the evidence in the engine and files
+        # it when it can: filed now, the evidence would be lost.
+        held = self.chain.state.get("balances", {}).get(kp.address, 0)
+        owed = self.storage.waiting_fees(kp.address) + SLASH_REPORT_FEE * len(self.bft.pending_evidence)
+        if held < owed:
+            return
         taken = self.bft.take_evidence()
-        if taken:
-            REGISTRY.counter("kern_consensus_vote_equivocations_total").inc(len(taken))
+        REGISTRY.counter("kern_consensus_vote_equivocations_total").inc(len(taken))
         for ev in taken:
             try:
-                kp = self.baker.keypair
                 # Phase D: several reports can be filed before any of them
-                # is included; each needs its own nonce. Take the higher of
-                # the chain's nonce and the next one this node handed out.
-                nonce = max(self.chain.state.get("nonces", {}).get(kp.address, 0),
-                            self._next_report_nonce)
-                self._next_report_nonce = nonce + 1
+                # is included; each needs its own nonce. It is the first one
+                # that neither the chain nor a transaction of this validator
+                # that still waits has taken, so that no report is left
+                # behind a nonce nothing will ever consume.
+                nonce = self.storage.next_free_nonce(
+                    kp.address, self.chain.state.get("nonces", {}).get(kp.address, 0))
                 tx = make_slash_consensus_equivocation(
-                    kp, ev.msg_a.to_dict(), ev.msg_b.to_dict(), nonce=nonce,
+                    kp, ev.msg_a.to_dict(), ev.msg_b.to_dict(), nonce=nonce, fee=SLASH_REPORT_FEE,
                     chain_id=self.chain.state.get("chain_id"),
                 )
-                if self.storage.add_to_mempool(tx):
-                    LOG.warning("submitted slashing evidence against %s (tx %s)",
-                                ev.offender, tx.hash_hex()[:12])
-                    if self.network:
-                        asyncio.create_task(self.network.broadcast_tx(tx.to_dict()))
+                refused = self.admit_transaction(tx)
+                if refused == MEMPOOL_FULL:
+                    # A mempool without room says nothing against the
+                    # report, and the evidence has left the engine: it
+                    # goes back there, and is filed when there is room.
+                    self.bft.pending_evidence.append(ev)
+                    continue
+                if refused is not None:
+                    LOG.warning("slashing evidence against %s not filed: %s", ev.offender, refused)
+                    continue
+                LOG.warning("submitted slashing evidence against %s (tx %s)",
+                            ev.offender, tx.hash_hex()[:12])
+                if self.network:
+                    asyncio.create_task(self.network.broadcast_tx(tx.to_dict()))
             except Exception:
                 LOG.exception("could not submit slashing evidence against %s", ev.offender)
 
@@ -970,6 +1025,74 @@ class Node:
                          self.chain.height, level)
                 await self.network.request_blocks(self.chain.height + 1, level)
 
+    def admit_transaction(self, tx: Transaction) -> Optional[str]:
+        """Take `tx` in the mempool, whether a peer or a client sent it.
+        Returns None when it is taken, or the reason why it is not.
+
+        What no block built on the head could charge is refused here, at
+        the door (chain.admission_error), before its signature is even
+        verified: the checks that cost least come first.
+
+        A sender has one transaction waiting for each nonce, since a block
+        takes one at most. And a mempool that is full still takes what the
+        next block can charge, in the place of a transaction that waits."""
+        state = self.chain.state
+        reason = admission_error(tx, state)
+        if reason is not None:
+            return reason
+        if not tx.verify_signature():
+            return "invalid signature"
+        if self.storage.holds(tx.hash_hex()):
+            return None
+        fees = fee_params(state)
+        twins = self.storage.waiting_of(tx.sender, tx.nonce)
+        if any(mempool_verdict(row.sender, row.nonce, row.fee, row.size, state, fees)[0] != DROP for row in twins):
+            return NONCE_TAKEN
+        # A twin that its sender can no longer pay gives way to this one.
+        self._drop([row.hash_hex for row in twins])
+        if self.storage.add_to_mempool(tx):
+            return None
+        # What was not refused above can be charged by the next block when
+        # its nonce is the one its account is at. Anything else waits, and
+        # what waits takes the place of none. Nor does a transaction that
+        # no row can hold: nothing gives way to what cannot come in.
+        if tx.nonce != state["nonces"].get(tx.sender, 0) or not self.storage.has_a_row_for(tx):
+            return MEMPOOL_FULL
+        self._make_room(tx.sender, state, fees)
+        return None if self.storage.add_to_mempool(tx) else MEMPOOL_FULL
+
+    def _drop(self, hashes: List[str]) -> int:
+        """Remove from the mempool transactions that another day may be
+        taken again, and forget that they were seen. Returns how many were
+        there."""
+        self._seen_txs.difference_update(hashes)
+        return self.storage.remove_from_mempool(hashes)
+
+    def _make_room(self, sender: str, state: dict, fees: dict) -> None:
+        """Free a place, if one can be freed, for a transaction of `sender`
+        that the next block can charge.
+
+        What goes first is what no block could charge any more. Then the
+        transaction that waits farthest ahead of its account, the one that
+        came last among those as far ahead. When the sender holds all its
+        places, the place is taken among its own transactions."""
+        mine = self.storage.waiting_of(sender)
+        if len(mine) >= self.storage.max_mempool_per_sender:
+            dead, waits = mempool_pass(mine, state, fees)
+            self._drop(dead or waits[:1])
+        else:
+            # The sender has places left: it is the mempool that is full.
+            # Going through it is done once for a head: what gives way
+            # until the head moves is taken from what was found then.
+            if self._passed_at != self.chain.height:
+                self._passed_at = self.chain.height
+                dead, waits = mempool_pass(self.storage.waiting(), state, fees)
+                self._giving_way = waits[::-1]
+                if self._drop(dead):
+                    return
+            while self._giving_way and not self._drop([self._giving_way.pop()]):
+                pass
+
     async def _on_tx_msg(self, tx_dict: dict) -> None:
         try:
             tx = Transaction.from_dict(tx_dict)
@@ -980,14 +1103,16 @@ class Node:
         if h in self._seen_txs:
             return
         # The identifier of a transaction leaves its signature out, so a
-        # copy with a damaged signature has the same one. Only a copy whose
-        # signature verifies is remembered: otherwise a damaged copy
-        # received first would make the node ignore the real transaction.
-        if not tx.verify_signature():
+        # copy with a damaged signature has the same one. Only a copy that
+        # is taken is remembered: otherwise a damaged copy received first
+        # would make the node ignore the real transaction. The same goes
+        # for a transaction refused for its nonce or its fee: it may be
+        # taken when it comes again, once its account has moved.
+        if self.admit_transaction(tx) is not None:
             return
         self._seen_txs.add(h)
         self._trim(self._seen_txs)
-        if self.storage.add_to_mempool(tx) and self.network:
+        if self.network:
             asyncio.create_task(self.network.broadcast_tx(tx.to_dict()))
 
     # ------------------------------------------------------------ sync out
@@ -1013,6 +1138,18 @@ class Node:
 
 def cmd_init(args: argparse.Namespace) -> int:
     genesis = load_genesis(args.genesis)
+
+    from .chain import initial_state_from_genesis
+
+    # The genesis is read in full before anything is written, so that a
+    # genesis that is refused leaves no half-initialised data directory.
+    try:
+        genesis_block = build_genesis_block(genesis)
+        initial_state = initial_state_from_genesis(genesis)
+    except ValueError as exc:
+        print(f"error: invalid genesis: {exc}", file=sys.stderr)
+        return 1
+
     os.makedirs(args.data_dir, exist_ok=True)
     storage = Storage(args.data_dir)
 
@@ -1020,10 +1157,6 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"data-dir already initialized at level {storage.head_level()}", file=sys.stderr)
         return 1
 
-    from .chain import initial_state_from_genesis
-
-    genesis_block = build_genesis_block(genesis)
-    initial_state = initial_state_from_genesis(genesis)
     # Reset nonces/contracts so they start clean (initial_state_from_genesis
     # only fills balances + validators).
     initial_state.setdefault("nonces", {})

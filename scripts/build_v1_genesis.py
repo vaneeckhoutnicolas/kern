@@ -32,7 +32,13 @@ Distribution as written to genesis.json (70 / 10 / 14 / 3 / 2 / 1):
     -------------------------------------
     Total               : 100_000_000 KRN
 
-PLACEHOLDER KEYS. Every address in the file this script writes is derived
+THE TREASURY. The on-chain treasury has an address of its own, for which
+nobody has a key (see treasury_address). It holds nothing at genesis, fills
+from its share of each block reward, and what it holds leaves it by a
+treasury vote: the node refuses a transaction sent by that address. It used
+to be the address of the Foundation pool, so that one key moved both.
+
+PLACEHOLDER KEYS. Every address that holds a balance or a stake is derived
 from a public seed (bytes([seed_byte]) * 32, see derive_placeholder_address).
 Anyone who reads this script can spend those balances. The output is
 therefore a DEVNET genesis only: it is labelled "placeholder_keys": true and
@@ -54,7 +60,7 @@ from pathlib import Path
 # Make kern importable when run as script.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from kern.crypto import KernKeypair
+from kern.crypto import KernKeypair, address_from_pubkey
 
 
 MUKRN_PER_KRN = 1_000_000
@@ -116,6 +122,19 @@ def derive_placeholder_address(seed_byte: int) -> tuple:
     return kp.address, kp.public_key_b58
 
 
+# The address of an account is the hash of its public key, 32 bytes. The
+# address of the treasury is the same hash of this text, which is no key.
+TREASURY_TEXT = b"kern.treasury"
+
+
+def treasury_address() -> str:
+    """The address of the on-chain treasury: one for which nobody has a
+    key. To sign for it one would need a 32-byte public key with the hash
+    of a 13-byte text, and the node refuses what that address would send
+    in any case (chain.TREASURY_SENDS_NOTHING)."""
+    return address_from_pubkey(TREASURY_TEXT)
+
+
 DEFAULT_CHAIN_ID = "kern-devnet-placeholder"
 
 
@@ -170,15 +189,18 @@ def build_genesis(chain_id: str = DEFAULT_CHAIN_ID) -> dict:
         "chain_id": chain_id,
         "placeholder_keys": True,
         "_notice": (
-            "DEVNET GENESIS. All addresses are derived from public seeds in "
-            "scripts/build_v1_genesis.py and are spendable by anyone. Not a "
-            "mainnet genesis."
+            "DEVNET GENESIS. Every address that holds a balance or a stake "
+            "is derived from a public seed in scripts/build_v1_genesis.py and "
+            "is spendable by anyone. The treasury address has no key and "
+            "holds nothing at genesis. Not a mainnet genesis."
         ),
         "genesis_time": "2027-Q3 (target)",
         "total_supply": total_supply_mukrn,
         "balances": balances,
         "validators": validators,
-        "treasury_address": foundation_addr,
+        # An address of its own, without a key and without a balance: not
+        # the Foundation pool, which keeps its address and its allocation.
+        "treasury_address": treasury_address(),
         # Issuance parameters: defaults from kern.issuance
         "issuance_params": {
             "i_min": 0.0025,
@@ -272,6 +294,9 @@ def main():
     print(f"  Bootstrap baker     : {1_000_000:>13,}  (own stake)")
     print(f"  {'─' * 38}")
     print(f"  Total               : {TOTAL_SUPPLY_KRN:>13,}")
+    print()
+    print(f"On-chain treasury: {genesis['treasury_address']}")
+    print("  no key and no balance at genesis; it fills from block rewards")
 
 
 if __name__ == "__main__":

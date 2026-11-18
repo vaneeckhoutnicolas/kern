@@ -16,7 +16,7 @@ The Kern reference implementation at v1.0-rc is **original Python source code** 
 Specifically:
 
 - **No source code is copied from any external project.** Every line of Python in `kern/` was written for Kern.
-- **External public specifications are implemented from spec.** The EVM opcode semantics follow the Ethereum Yellow Paper (a public specification); the BN254 curve uses the public BN128 parameters; gas costs follow public EIP standards (EIP-2200, EIP-197). Implementing a public specification is not copying — it is what every implementor does.
+- **External public specifications are implemented from spec.** The Mini-EVM takes the numbers of its instructions and its gas constants from the Ethereum Yellow Paper (a public specification), for the subset it executes, and `docs/api-stability.md` (sections 2.8 and 2.9) says where its rules are its own; the BN254 curve uses the public BN128 parameters, and the pairing precompile reads the input layout of EIP-197. Implementing a public specification is not copying — it is what every implementor does.
 - **Design influences are noted in code where relevant.** Where Kern's design implements a pattern that is already part of the public state-of-the-art in blockchain design (e.g., delegated Proof-of-Stake, dual-track on-chain governance), the relevant code includes a brief comment noting the pattern (e.g., `# stake delegation (bonded since v1.1-rc Phase D)`), but the implementation itself is fresh Python.
 - **External libraries are imported, never copied:** `py_ecc` (Ethereum Foundation's reference Python BN128 library), `pynacl`, `aiohttp` and `cryptography`. They are imported via Python's standard import mechanism and declared in `requirements.txt` and `pyproject.toml`. No library's source code is vendored into this repo.
 - **Official test vectors are kept as unchanged copies, and say so.** `tests/vectors` holds test vectors published by the IETF (RFC 10073), NIST and Project Wycheproof. They are data for the tests, not code of Kern: each directory carries its notice or its licence, and `tests/vectors/SOURCES.json` records the repository, the commit and the SHA-256 of every file.
@@ -66,7 +66,7 @@ Beyond the source code itself, the **identity** of Kern is original to Nicolas V
 | The dual-track governance with proposal bonds + delegated voting + quadratic treasury + equivocation slashing | Original synthesis — no other protocol has all four together |
 | The split between Foundation pool (15M, off-chain) and on-chain treasury (grows from issuance) | Original design choice |
 | The 100M genesis with 70/10/15/3/2 split | Original parameterization (modeled on Ethereum 2014 template but Nicolas's specific numbers) |
-| The integration of multi-frame EVM with native Skald and BFT consensus | Original system design |
+| The integration of the Mini-EVM and its fraud proofs with native Skald and BFT consensus | Original system design |
 
 ---
 

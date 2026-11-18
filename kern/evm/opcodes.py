@@ -4,23 +4,27 @@
 kern.evm.opcodes
 ================
 
-Opcode definitions for Kern's Mini-EVM — a deliberate subset of the
-Ethereum Virtual Machine sufficient to demonstrate the bisection
-fraud-proof protocol with real EVM-compatible execution semantics.
+The instructions of Kern's Mini-EVM, the machine of the fraud proofs of a
+rollup: their numbers, which are those of the Ethereum Yellow Paper, and
+their static price.
 
-The subset covers stack manipulation, arithmetic, memory, basic
-control flow, and termination. It does NOT cover:
-- Storage (SSTORE/SLOAD) — modeled at the rollup level
-- Calls (CALL/STATICCALL/DELEGATECALL) — single-contract execution only
-- Logs (LOG0-LOG4) — events not modeled
-- Precompiles, contract creation, value transfer
+The machine executes a subset of the EVM of Ethereum and is not that EVM.
+Section 2.8 of docs/api-stability.md lists what it executes: arithmetic,
+comparison and bits, SHA3, the context of a call, the stack, the memory,
+the storage (SLOAD and SSTORE), jumps, RETURN and REVERT, and the PUSH,
+DUP and SWAP families. tests/test_evm_pages.py compares that list with
+`kern.evm.vm`.
 
-A real production rollup verifier would extend this with the full EVM
-opcode set. The protocol around it (bisection, single-step verification,
-fraud proof structure) is fully implemented here.
+`Op` names more than the machine executes. LOG0 to LOG4, CREATE, CREATE2,
+CALL, CALLCODE, DELEGATECALL and STATICCALL have a number and a price
+here, and the machine halts on them, reverted, as on any byte it does not
+execute: a program cannot call another program and emits no event. Calls,
+creations and precompiles are served from outside the machine, by
+`kern.evm.frames`.
 
-Opcode values match the Ethereum Yellow Paper for the supported subset,
-so a real EVM bytecode using only these opcodes runs unchanged.
+Bytecode written for Ethereum is not promised to run here unchanged:
+`SHA3` computes SHA3-256 and not Keccak-256, and the rules of the gas are
+those of section 2.9 of the same page.
 """
 
 from __future__ import annotations
@@ -136,7 +140,8 @@ class Op(IntEnum):
     INVALID = 0xfe
 
 
-# Per-opcode gas cost (subset; matches yellow paper "base" tier for simplicity)
+# The static price of each instruction. `kern.evm.vm` adds the part that
+# depends on what the instruction does (`kern.evm.dynamic_gas`).
 GAS_COST: Dict[int, int] = {
     Op.STOP: 0, Op.RETURN: 0, Op.REVERT: 0, Op.JUMPDEST: 1,
     Op.ADD: 3, Op.SUB: 3, Op.LT: 3, Op.GT: 3, Op.EQ: 3,

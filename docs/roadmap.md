@@ -16,9 +16,9 @@ Code is what you `git pull`. Versions follow semver: `0.x` is pre-stable, `1.x` 
 | v0.2 | Multi-validator BFT + Static Skald + Rollup framework | 3-node consensus + typed Skald + bridge contract | ✅ |
 | v0.3 | Mini-EVM + bisection + forced inclusion + adaptive issuance | EVM fraud proof end-to-end demo | ✅ |
 | v0.4 | Issuance live in production + Merkle trie + EVM extensions | Block rewards crediting, light-client proofs available | ✅ |
-| v0.5 | Governance live + trie swap-in + multi-frame EVM | CALL family + on-chain state-root function swap | ✅ |
+| v0.5 | Governance live + trie swap-in + calls, creations and precompiles for the Mini-EVM | One call at a time, in three kinds + on-chain state-root function swap | ✅ |
 | v0.6 | Governance via transactions + apply_block wiring + bonds + more precompiles | Proposals injectable through RPC, settle via governance tick | ✅ |
-| v0.7 | BN254 precompiles + dynamic gas costs (Yellow Paper compliance) | Pass ethereum/tests opcode subset; zkSNARK verification working | ✅ |
+| v0.7 | BN254 precompiles + dynamic gas costs (constants from the Yellow Paper) | zkSNARK verification working. No test from ethereum/tests runs in this repository | ✅ |
 | v0.8 | Voting refinements: quadratic + delegated; GovernanceVote over P2P with equivocation slashing | Multi-validator votes via gossip; slashing detected from history | ✅ |
 | v0.9 | Hardening: structured logs, Prometheus metrics, fuzzing harness, devnet bootstrap | No crashes, no consensus stalls under fuzz | ✅ |
 | **v1.0-rc** | **Genesis distribution (100M KRN) + PoS stake delegation (bonded since v1.1-rc Phase D) + slashing tx + dynamic gas wired into VM** | **Code freeze. RPC API frozen. Documentation complete.** | **🟡 In progress (this iteration)** |

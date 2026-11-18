@@ -366,7 +366,9 @@ def test_a_request_that_is_not_json_or_nests_too_deep_is_answered_400(tmp_path):
 
     alice, bob = KernKeypair.generate(), KernKeypair.generate()
     tx = make_transfer(alice, recipient=bob.address, amount=1, nonce=0)
-    node = SimpleNamespace(storage=Storage(str(tmp_path)), network=None)
+    storage = Storage(str(tmp_path))
+    node = SimpleNamespace(storage=storage, network=None,           # a node that takes what its mempool has room for
+                           admit_transaction=lambda taken: None if storage.add_to_mempool(taken) else "mempool full")
     assert post(json.dumps(tx.to_dict()).encode(), node) == (200, {"hash": tx.hash_hex()})
 
 
