@@ -125,7 +125,7 @@ nav:
       - Oracle network: oracle-network.md
   - Rollups & EVM:
       - EVM rollups: rollups.md
-      - Multi-frame EVM: multi-frame-evm.md
+      - Calls, creations and precompiles: multi-frame-evm.md
       - EVM fraud proofs: evm-fraud-proofs.md
       - Forced inclusion: forced-inclusion.md
   - Build & run:

@@ -157,19 +157,38 @@ Planned before the freeze takes effect: hybrid signatures, Ed25519 together with
 
 ### 2.8 KVM (EVM rollup) opcode set
 
-The opcodes implemented by [`kern/evm/vm.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/vm.py) and [`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py) are listed in [`docs/multi-frame-evm.md`](multi-frame-evm.md) (~60 opcodes; the same subset used by Solidity emit at the EVM London hardfork level).
+The Mini-EVM of the rollup framework, in [`kern/evm/vm.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/vm.py), executes 44 instructions and three families, with the numbers the Ethereum Yellow Paper gives them:
+
+| Group | Instructions |
+|---|---|
+| Stop and arithmetic | STOP, ADD, MUL, SUB, DIV, MOD, ADDMOD, MULMOD, EXP, SIGNEXTEND |
+| Comparison and bits | LT, GT, EQ, ISZERO, AND, OR, XOR, NOT, BYTE, SHL, SHR, SAR |
+| Hash | SHA3 |
+| Context | ADDRESS, CALLER, CALLVALUE, CALLDATALOAD, CALLDATASIZE, TIMESTAMP, NUMBER |
+| Stack, memory and storage | POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE |
+| Flow | JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST |
+| End | RETURN, REVERT |
+| Families | PUSH1 to PUSH32, DUP1 to DUP16, SWAP1 to SWAP16 |
+
+Any other byte halts the machine, reverted. Eleven instructions of Ethereum have a price in [`kern/evm/opcodes.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/opcodes.py) and are not executed: LOG0 to LOG4, CREATE, CREATE2, CALL, CALLCODE, DELEGATECALL and STATICCALL. A program cannot call another program, and it emits no event. [`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py) runs one program for a call or for a creation, from outside the machine: [`multi-frame-evm.md`](multi-frame-evm.md) says what it does.
+
+`SHA3` computes SHA3-256 (FIPS 202), not the Keccak-256 of Ethereum ([cryptographic inventory](cryptographic-inventory.md)). The machine executes a subset of the EVM of Ethereum and is not that EVM: bytecode that uses another instruction halts on it, and a hash it computes is not the one Ethereum computes. Contracts compiled from Solidity generally call other contracts, emit events and compute hashes.
+
+`tests/test_evm_pages.py` compares this section with the machine.
 
 **Stable** (can be extended additively): new opcodes can be added in v1.x via protocol amendment. Existing opcodes' semantics are frozen.
 
 ### 2.9 Gas pricing
 
-The Yellow-Paper-equivalent gas costs in [`kern/evm/dynamic_gas.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/dynamic_gas.py).
+The gas costs of the Mini-EVM are in [`kern/evm/dynamic_gas.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/dynamic_gas.py). Their constants are those of the Ethereum Yellow Paper. The paragraphs below say where the rules of this machine are its own.
 
 Every instruction that makes the machine extend its memory pays for the extension before it runs: MLOAD, MSTORE, MSTORE8, SHA3, RETURN and REVERT. An empty range pays for the way to its start. That is a rule of this machine: Ethereum charges nothing for an empty range.
 
 A step that cannot pay halts for want of gas, reverted, and changes nothing else: the gas, the stack, the program counter, the memory and the storage are what they were. That is a rule of this machine too: in Ethereum a call that runs out of gas loses all of it.
 
 A write to the storage (SSTORE) costs 20,000 when it puts a value other than zero in a slot that holds zero, and 5,000 otherwise, a write that changes nothing included. The price reads the slot and the value written, and nothing else. That is a rule of this machine too: Ethereum also reads what the slot held when the transaction started, a value that is not in the state the two parties of a dispute commit to. A state of the machine holds nothing outside its commitment but the text of its last error, which no step reads.
+
+No gas is refunded: emptying a slot costs 5,000 and gives nothing back. A read of the storage (SLOAD) costs 100 each time: the machine does not tell a first access from a later one. Ethereum does both differently.
 
 The gas does not bound a state: a gas of 64 bits pays for more memory than a host holds. A state of the machine holds at most 1,024 words of stack, 1,048,576 bytes of memory and as many of output, 16,384 slots of storage and 1,048,576 bytes of calldata, and the machine runs no program longer than 1,048,576 bytes. An instruction that would take the stack, the memory or the storage beyond its limit halts as a step that cannot pay does, before any memory is reserved, and the gas is looked at first. What is beyond a limit is refused on its size, before anything copies it or hashes it: a state by `step` and `single_step_verify`, an initial storage and a program by `execute` and `run`, the code and the storage of a contract by `call_contract`, the code of a creation by `create_contract`.
 
@@ -179,7 +198,7 @@ A call reads the last state of a run and no other: `call_contract` and `create_c
 
 `tests/test_evm_return_gas.py` holds the price of the memory, `tests/test_evm_limits.py` the limits and what a halted step leaves, and `tests/test_evm_referee.py` the price of a write, what a state is, what the referee refuses, and what a call and a trace keep.
 
-**Stable**: constants can be tuned via protocol amendment based on operational data, but the *shape* of the pricing (memory expansion quadratic, SSTORE 3-case, etc.) is frozen.
+**Stable**: constants can be tuned via protocol amendment based on operational data, but the *shape* of the pricing (memory expansion quadratic, a write priced from the slot and the value written, etc.) is frozen.
 
 ### 2.10 Precompile addresses
 
@@ -1714,5 +1733,5 @@ The identifier of a key is `H("kern.zk_claims.vk", ...)` of its canonical JSON (
 - [`tokenomics.md`](tokenomics.md) — economic spec
 - [`governance.md`](governance.md) — governance process spec
 - [`staking.md`](staking.md) — staking and delegation spec
-- [`multi-frame-evm.md`](multi-frame-evm.md) — KVM spec
+- [`multi-frame-evm.md`](multi-frame-evm.md) — calls, creations and precompiles of the Mini-EVM
 - [`architecture.md`](architecture.md) — overall component layout

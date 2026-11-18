@@ -43,9 +43,9 @@ The reference implementation implements **public specifications** that anyone ma
 
 | Specification | Authority | Implementation file(s) | Attribution |
 |---|---|---|---|
-| EVM opcodes (gas, semantics) | Ethereum Yellow Paper (Wood 2014, updated) | `kern/evm.py`, `kern/vm_gas.py` | Cited in `docs/multi-frame-evm.md`, `docs/evm-fraud-proofs.md`, code comments |
-| EIP-2200 (SSTORE) | Ethereum Improvement Proposal | `kern/vm_gas.py` | Cited |
-| EIP-2929 (state access costs) | EIP | `kern/vm_gas.py` | Cited |
+| EVM opcodes (numbers, gas constants) | Ethereum Yellow Paper (Wood 2014, updated) | `kern/evm/opcodes.py`, `kern/evm/vm.py`, `kern/evm/dynamic_gas.py` | Cited in `docs/api-stability.md` (sections 2.8 and 2.9), `docs/evm-fraud-proofs.md`, code comments. The Mini-EVM executes a subset, with rules of its own |
+| EIP-2200 (SSTORE) | Ethereum Improvement Proposal | `kern/evm/dynamic_gas.py` | Cited. The machine prices a write from the slot and the value written, not as EIP-2200 does |
+| EIP-2929 (state access costs) | EIP | `kern/evm/dynamic_gas.py` | Constants cited. The machine does not tell a first access from a later one |
 | EIP-197 (BN128 pairing precompiles) | EIP | `kern/precompiles.py` | Cited |
 | EIP-712 (typed signing) | EIP | `kern/attestations.py` | Cited |
 | EIP-4337 (account abstraction) | EIP | Roadmap, not implemented yet | Cited as future |
