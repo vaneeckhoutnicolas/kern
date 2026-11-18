@@ -102,7 +102,7 @@ This is intentionally simple: rollups can have permissioned sequencers (e.g., a 
 
 A risk in optimistic rollups is sequencer censorship: a malicious sequencer could refuse to include certain transactions. Kern's rollup framework includes a planned **forced-inclusion** path: any user can post a transaction directly to L1, addressed to a specific rollup. The sequencer is then required to include it in a batch within N blocks; failure to do so is itself a slashable offense.
 
-This mechanism is not yet implemented in v0.2 but is part of the v0.3 roadmap.
+It is specified in [forced-inclusion.md](forced-inclusion.md) and modelled, off the chain, in [`kern/forced_inclusion.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/forced_inclusion.py).
 
 ## Cross-rollup transfers
 
@@ -130,23 +130,24 @@ The closest comparison is Etherlink on Tezos — same architectural pattern, sam
 
 ## Reference implementation status
 
-The reference module [`kern/rollup.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/rollup.py) implements:
+The rollup framework is a model, off the chain: none of its operations is a transaction of the chain. The reference module [`kern/rollup.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/rollup.py) implements:
 
 - ✅ `Rollup` descriptor and registration
 - ✅ `Batch` posting with sequencer signatures
 - ✅ Batch-index ordering and parent-state-root chaining
 - ✅ `FraudProof` shape and challenge opening
-- ✅ Challenge resolution (winner/loser branches)
+- ✅ Bisection of a challenge down to one step (`challenge_round`, with [`kern/evm/bisection.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/bisection.py))
+- ✅ Challenge resolution by executing the disputed step (`resolve_challenge`, with the single-step referee of the Mini-EVM)
 - ✅ Pending-batch finalization on window elapse
 - ✅ Withdrawal queueing and claim-after-finality
 - ✅ Bridge Skald contract template with declared `solvent` invariant
 
-It does **not** yet implement:
+The forced-inclusion mailbox is modelled in [`kern/forced_inclusion.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/forced_inclusion.py).
 
-- ❌ Interactive bisection protocol for fraud-proof verification
-- ❌ Single-step EVM verifier on L1
-- ❌ Forced-inclusion path for censorship-resistance
+It does **not** implement:
+
+- ❌ An execution layer that is the EVM of Ethereum: the Mini-EVM executes a subset ([api-stability.md, section 2.8](api-stability.md#28-kvm-evm-rollup-opcode-set))
 - ❌ Cross-rollup LP-bridge primitives
 - ❌ ZK variant
 
-These are the natural next steps for a v0.3 rollup framework. The current implementation is sufficient to model the protocol's L1-side state machine end-to-end and to exercise the bridge invariant.
+The implementation is sufficient to model the protocol's L1-side state machine end-to-end and to exercise the bridge invariant.

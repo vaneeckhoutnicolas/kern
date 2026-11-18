@@ -4,59 +4,52 @@
 kern.evm.frames
 ===============
 
-Multi-frame EVM execution: CALL / STATICCALL / DELEGATECALL, contract
-creation via CREATE / CREATE2, event LOGs, and the EVM precompiles.
+Calls, creations and precompiles around the Mini-EVM.
 
-The single-frame `kern.evm.vm` handles one EVM execution context — a
-single contract, called once. The frame manager here handles the
-recursive case: a contract calling another contract calling another,
-each with its own VM state (stack, memory, storage, gas), but sharing a
-global world state (account balances + code).
+`kern.evm.vm` executes one program. This module runs one program for a
+call (`call_contract`) or for a creation (`create_contract`), on a world
+of accounts (`WorldState`), and it serves the precompiles. It is a
+library of the rollup framework: nothing in the node calls it.
 
-Design
-------
+One program at a time
+---------------------
 
-A `Frame` is a single VM execution context: code, calldata, caller,
-value, gas budget, and a `VmState`. The `FrameStack` holds active
-frames; the top frame is what's currently executing. When a CALL
-opcode fires, we push a new frame; when a RETURN/STOP/REVERT fires in
-the top frame, we pop it and propagate the outcome (success+return
-data, or revert+reason) back to the caller frame's stack and memory.
+A call comes from outside the machine. `call_contract` runs the code of
+one account once, in one of three kinds:
 
-`WorldState` holds the global EVM state: account balances and code,
-keyed by address (256-bit). Calls atomically update balances; reverts
-roll them back via snapshots.
+    CALL          the storage of the contract; the value moves to it
+    DELEGATECALL  the storage of the caller; the value does not move
+    STATICCALL    the storage of the contract; a value is refused, and
+                  nothing is written to the world
 
-For v0.5, frame execution is **batched**: we run the top frame to
-completion (or until it CALLs), then advance. The step-wise per-
-instruction commitment scheme of `kern.evm.vm` still applies *within*
-each frame — so the bisection fraud-proof protocol from
-`docs/evm-fraud-proofs.md` extends naturally: a fraud proof now
-identifies (frame_index, step_index) and the single-step verifier
-re-runs that one instruction in that frame.
+A program cannot call another program: the machine does not execute
+CALL, CALLCODE, DELEGATECALL, STATICCALL, CREATE or CREATE2, and halts on
+them, reverted, as on an unknown instruction. There are no nested frames
+and no stack of frames in the commitment of a state: a fraud proof is
+about one program. `Frame` below is a dataclass of an earlier design,
+which nothing builds.
 
-Multi-frame fraud proofs are handled by hashing the entire frame stack
-into the state commitment, so any divergence — within any frame, in
-any returned value, in any storage update — is detectable.
+`WorldState` holds the accounts (balance, code, storage, nonce) by
+address. A call takes a snapshot of it first: a call that reverts, or
+that the step limit of the machine cuts, leaves the world as it was.
 
 Precompiles
 -----------
 
-Addresses 0x01..0x09 are reserved for built-in functions:
-    0x01: ECRECOVER  (signature recovery)
-    0x02: SHA256
-    0x03: RIPEMD160
-    0x04: IDENTITY   (memcpy)
-    0x05: MODEXP     (modular exponentiation)
-    0x06: BN_ADD     (elliptic curve add)
-    0x07: BN_MUL
-    0x08: BN_PAIRING
-    0x09: BLAKE2F
+Addresses 0x01 to 0x09 run a built-in function instead of a program:
 
-This module implements 0x01 (ECRECOVER, using Ed25519 instead of the
-secp256k1 used by Ethereum — a Kern-specific choice), 0x02 (SHA256),
-and 0x04 (IDENTITY). The others are stubs that revert; adding them is
-mechanical.
+    0x01: signature check, Ed25519 (not the secp256k1 recovery of Ethereum)
+    0x02: SHA-256
+    0x03: RIPEMD-160
+    0x04: identity
+    0x05: modular exponentiation
+    0x06: BN254 point addition
+    0x07: BN254 scalar multiplication
+    0x08: BN254 pairing check
+    0x09: BLAKE2F, a placeholder (a BLAKE2b hash of its input)
+
+docs/multi-frame-evm.md says the same with examples, and lists what this
+library does not do.
 """
 
 from __future__ import annotations

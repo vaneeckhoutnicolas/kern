@@ -24,7 +24,7 @@
 
 This repository is the **v1.1 release candidate** — building on the v1.0-rc audit-frozen foundation with **slashable attestations** as a new L1 primitive, three **tokenized-securities Skald templates** for the EU securities regime — MiFID II / Prospectus Regulation / AIFMD, *not* MiCA, which excludes financial instruments under Art. 2(4) (startup equity, institutional fund, real estate; see [docs/sto-mica.md](docs/sto-mica.md)), **public goods funding primitives** (Quadratic Funding + Retroactive PGF), an **oracle network** (generic data + DeFi prices + schema marketplace), **ZK-claims** for privacy-preserving attestations (a Groth16 verifier over BN254 against registered verifier keys; no circuits, trusted setup or prover are shipped), and **Heimdall** — the official block explorer + monitoring stack that surfaces the institutional-legibility features Kern was built to support. See [docs/v11rc-changes.md](docs/v11rc-changes.md) for the full vertical and [docs/setup-heimdall-operator.md](docs/setup-heimdall-operator.md) for the explorer.
 
-The v1.0-rc foundation includes: the Skald language with static type checker, a multi-validator BFT consensus engine, an optimistic rollup framework with a multi-frame Mini-EVM and bisection-based fraud proofs, **bonded PoS delegation (no LST derivative; delegated KRN are locked and slashable, with an unbonding period)**, **EVM Yellow Paper-compliant gas metering in the rollup Mini-EVM** (the L1 native layer uses a flat per-transaction fee and a non-recursive, loop-free Skald execution model that terminates by construction — see [docs/skald-language.md](docs/skald-language.md), with an optional governance-gated [fee floor + per-block size cap](docs/fee-floor.md) that is off by default), **real BN254 pairing via py_ecc**, and a complete on-chain governance system with slashing.
+The v1.0-rc foundation includes: the Skald language with static type checker, a multi-validator BFT consensus engine, an optimistic rollup framework with a Mini-EVM that runs one program at a time and bisection-based fraud proofs, **bonded PoS delegation (no LST derivative; delegated KRN are locked and slashable, with an unbonding period)**, **gas metering in the rollup Mini-EVM, with constants from the Ethereum Yellow Paper and rules of its own written down in [docs/api-stability.md](docs/api-stability.md), section 2.9** (the L1 native layer uses a flat per-transaction fee and a non-recursive, loop-free Skald execution model that terminates by construction — see [docs/skald-language.md](docs/skald-language.md), with an optional governance-gated [fee floor + per-block size cap](docs/fee-floor.md) that is off by default), **real BN254 pairing via py_ecc**, and a complete on-chain governance system with slashing.
 
 The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad public distribution (70% public sale / 10% founder vested 4 years / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake), and a documented **API stability spec** declaring what's frozen at v1.0. The distribution is a design, not a launched economy: no sale has taken place, and a mainnet genesis can only be built from real multisig keys in a separate ceremony.
 
@@ -69,7 +69,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 | [Forced inclusion](docs/forced-inclusion.md) | Censorship-resistance mailbox |
 | [Adaptive issuance](docs/adaptive-issuance.md) | Block rewards with self-stabilizing emission |
 | [Merkle trie](docs/merkle-trie.md) | Binary trie + light-client proofs |
-| [Multi-frame EVM](docs/multi-frame-evm.md) | CALL / STATICCALL / DELEGATECALL / CREATE / precompiles |
+| [Calls, creations and precompiles of the Mini-EVM](docs/multi-frame-evm.md) | One call at a time, in three kinds; the addresses of a creation; nine precompiles |
 | [Governance](docs/governance.md) | Two-track on-chain governance, end-to-end |
 | [**Roadmap**](docs/roadmap.md) | **Three-track plan: code, networks, operations** |
 | [v0.4 changes](docs/v04-changes.md) | What was new in v0.4 |
@@ -84,7 +84,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 2314 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 2354 tests passing.**
 
 ```
 kern/
@@ -117,7 +117,7 @@ kern/
 │   │   ├── bisection.py
 │   │   ├── frames.py
 │   │   ├── bn254.py            # Real pairing via py_ecc
-│   │   └── dynamic_gas.py      # Yellow Paper gas cost model
+│   │   └── dynamic_gas.py      # Gas cost model (constants from the Yellow Paper)
 │   └── skald/                  # Skald language + 10 example contracts
 ├── kern_explorer/              # ★ Heimdall — block explorer + monitoring stack
 │   ├── client.py               # Async RPC client
@@ -139,7 +139,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 2314 tests, none skipped
+├── tests/                      # 2354 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -200,7 +200,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 2314 passed in about 3 minutes (the multi-process consensus tests start real nodes)
+# 2354 passed in about 3 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### A multi-node devnet in one command (Docker)
@@ -323,7 +323,7 @@ code = bytes([
 ])
 honest = execute(code, gas=100_000)
 print(f"Result: {honest.states[-1].stack}")           # [24]
-print(f"Steps:  {honest.n_steps}")                     # 5
+print(f"Steps:  {honest.n_steps}")                     # 6
 
 # Sequencer corrupts the final commitment...
 fake_commitments = list(honest.commitments)
@@ -370,7 +370,7 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | v0.2 | Multi-validator BFT + Static Skald + Rollup framework | ✅ |
 | v0.3 | Mini-EVM + bisection + forced inclusion + adaptive issuance | ✅ |
 | v0.4 | Issuance live in production + Merkle trie + EVM extensions | ✅ |
-| v0.5 | Governance live + trie swap-in + multi-frame EVM | ✅ |
+| v0.5 | Governance live + trie swap-in + calls, creations and precompiles for the Mini-EVM | ✅ |
 | v0.6 | Governance via transactions + apply_block wiring + bonds | ✅ |
 | v0.7 | BN254 scaffolding + dynamic gas constants (Yellow Paper) | ✅ |
 | v0.8 | Quadratic + delegated voting + equivocation tracking | ✅ |
