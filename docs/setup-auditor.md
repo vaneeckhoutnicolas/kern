@@ -43,7 +43,7 @@ pip install -e ".[dev]"
 
 ```bash
 pytest tests/ -v
-# Expected: 1909 passed, none skipped (v1.1-rc) — record exact counts in your audit notes
+# Expected: 2314 passed, none skipped (v1.1-rc) — record exact counts in your audit notes
 # Record the test run time and resource usage too
 
 python -c "import kern; print(kern.__file__)"
@@ -249,7 +249,7 @@ The following are explicit must-cover items. Do not omit any:
 ### EVM and rollups
 
 - [ ] Gas accounting matches Yellow Paper for every supported opcode
-- [ ] SSTORE EIP-2200 three-case pricing is correct
+- [ ] SSTORE pricing reads the slot and the value written, and nothing outside the committed state: 20,000 to fill a slot that holds zero, 5,000 otherwise
 - [ ] Memory expansion cost calculation matches the spec
 - [ ] BN254 pairing precompile produces correct results for empty input, identity case, and random valid inputs
 - [ ] Fraud-proof bisection correctly converges in O(log n) steps

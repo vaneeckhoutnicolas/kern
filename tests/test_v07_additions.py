@@ -224,17 +224,17 @@ def test_memory_expansion_growth():
 
 def test_sstore_set_zero_to_nonzero():
     """First-time write to a previously-zero slot."""
-    assert sstore_cost(current=0, new=42, original=0) == G_SSTORE_SET
+    assert sstore_cost(current=0, new=42) == G_SSTORE_SET
 
 
 def test_sstore_reset_modify_existing():
     """Modifying an existing nonzero value."""
-    assert sstore_cost(current=99, new=42, original=99) == G_SSTORE_RESET
+    assert sstore_cost(current=99, new=42) == G_SSTORE_RESET
 
 
 def test_sstore_noop_same_value():
     """Writing the same value is essentially a no-op (warm read cost)."""
-    cost = sstore_cost(current=42, new=42, original=42)
+    cost = sstore_cost(current=42, new=42)
     assert cost < G_SSTORE_RESET
 
 

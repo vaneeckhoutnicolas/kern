@@ -67,7 +67,10 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 from .opcodes import Op
-from .vm import MAX_CALLDATA_BYTES, ExecContext, ExecutionTrace, VmState, execute
+from .vm import (
+    MAX_CALLDATA_BYTES, MAX_STORAGE_SLOTS, ExecContext, ExecutionTrace, VmState,
+    require_program, require_state, run,
+)
 
 
 # Precompile address range.
@@ -440,14 +443,31 @@ def call_contract(
     Handles value transfer, precompile dispatch, frame creation,
     execution, and snapshot/revert semantics. Returns a CallResult.
 
-    `ValueError` when the calldata, or the storage the call would run on,
-    is beyond the limits of the machine: the call does not start, and the
-    world is as it was.
+    `ValueError` when the calldata, the gas, the value, the addresses and
+    the block of the call do not make the context of a state of the
+    machine, or when the code or the storage the call would run on does
+    not make one: the call does not start, and the world is as it was.
+    The size of that storage is read before the world is copied.
+
+    A call whose run is cut by the step limit of the machine before it
+    halts fails as a call that reverts: the world is as it was.
     """
     # 0. A call carries no more calldata than a state of the machine holds,
-    # whether it goes to a contract or to a precompile.
+    # whether it goes to a contract or to a precompile, and its context is
+    # the context of a state of the machine.
+    if type(calldata) is not bytes:
+        raise ValueError("calldata is not bytes")
     if len(calldata) > MAX_CALLDATA_BYTES:
         raise ValueError("calldata is beyond the limit of the Mini-EVM")
+    require_state(VmState(gas=gas, context=ExecContext(
+        address=address, caller=caller, value=value, calldata=calldata,
+        block_number=block_number, block_timestamp=block_timestamp,
+    )))
+    # The storage the call would run on is read for its size before the
+    # world is copied.
+    holder = world.accounts.get(caller if kind == FrameKind.DELEGATECALL else address)
+    if holder is not None and len(holder.storage) > MAX_STORAGE_SLOTS:
+        raise ValueError("not a state of the Mini-EVM: its storage is beyond the limit")
 
     # 1. Static-call propagation: STATICCALL forces is_static for its subcalls.
     if kind == FrameKind.STATICCALL:
@@ -503,21 +523,21 @@ def call_contract(
         block_timestamp=block_timestamp,
     )
 
-    # 8. Execute. We pass in current storage as a copy; if the call
-    # succeeds we merge it back, otherwise we discard.
+    # 8. Execute. The machine runs on a copy of the current storage; if the
+    # call succeeds we merge it back, otherwise we discard.
     try:
-        trace = execute(
+        final = run(
             callee.code, gas=gas, context=ctx,
-            initial_storage=dict(storage_account.storage),
+            initial_storage=storage_account.storage,
         )
     except ValueError:
-        # The storage of the account is beyond the limits of the machine:
-        # the call does not start, and the value goes back.
+        # The code or the storage of the account does not make a state of
+        # the machine: the call does not start, and the value goes back.
         world.revert_to(snap)
         raise
-    final = trace.states[-1]
 
-    if final.reverted:
+    if final.reverted or not final.halted:
+        # A run that the step limit cut before it halted is not a success.
         world.revert_to(snap)
         return CallResult(
             success=False, return_data=final.output,
@@ -576,7 +596,17 @@ def create_contract(
     from init_code are the runtime code stored at the new address.
 
     Returns (deployed_address or None, CallResult).
+
+    `ValueError` when `init_code` is not a program of the machine, or when
+    the creator, the value, the gas and the block do not make the context
+    of a state of the machine: nothing is created, and the world is as it
+    was. A run that the step limit cuts before it halts fails as a run
+    that reverts.
     """
+    require_program(init_code)
+    require_state(VmState(gas=gas, context=ExecContext(
+        caller=creator, value=value, block_number=block_number, block_timestamp=block_timestamp,
+    )))
     creator_account = world.get(creator)
 
     # Compute deterministic address.
@@ -601,10 +631,9 @@ def create_contract(
         address=addr, caller=creator, value=value, calldata=b"",
         block_number=block_number, block_timestamp=block_timestamp,
     )
-    trace = execute(init_code, gas=gas, context=ctx)
-    final = trace.states[-1]
+    final = run(init_code, gas=gas, context=ctx)
 
-    if final.reverted:
+    if final.reverted or not final.halted:
         world.revert_to(snap)
         return None, CallResult(success=False, return_data=final.output,
                                 gas_remaining=final.gas)

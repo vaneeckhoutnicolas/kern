@@ -15,11 +15,17 @@ schemas (tests/schema_reference.py) is asked whether it accepts it.
 
 Nothing here reads a state from outside: the machine takes objects of
 Python, and no text.
+
+The machine has its own check of a state (`not_a_state`), which the referee
+of a dispute applies to what it is handed. The last tests hold the two
+together: what the schema refuses of a state, that check refuses, and what
+that check takes for a state, the schema accepts.
 """
 
 from __future__ import annotations
 
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -28,7 +34,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import kern.evm
 import schema_reference as sch
+from evm_states import a_program, a_state
 from kern.evm import (
     MAX_CALLDATA_BYTES,
     MAX_MEMORY_BYTES,
@@ -185,3 +193,84 @@ def test_the_devnet_commits_to_the_same_nine_fields_in_another_form():
         assert today[name] == version_1[name], name
     assert today["storage"] == [["2", "9"], ["5", "6"]] and version_1["storage"] == {"2": "9", "5": "6"}
     assert len(state.commitment_hex()) == 64 and len(sch.evm_state_hash(NETWORK, version_1).hex()) == 96
+
+
+# ---------------------------------------------------------------------------
+# The check of the machine and the schema
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", PROGRAMS)
+def test_every_state_of_an_execution_is_a_state_for_the_check_of_the_machine(name):
+    code, gas = PROGRAMS[name]
+    for position, state in enumerate(execute(code, gas=gas, context=CALL, initial_storage={5: 6}).states):
+        assert kern.evm.not_a_state(state) is None, (name, position)
+
+
+WORD_MAX = (1 << 256) - 1
+ADDRESS_MAX = (1 << 160) - 1
+
+
+def in_order(**changes) -> VmState:
+    """A state that uses every field, then `changes`."""
+    parts = dict(pc=3, stack=[1, 2], memory=bytearray(2 * WORD), gas=1_000, halted=False, output=b"", reverted=False,
+                 storage={7: 5}, context=CALL)
+    parts.update(changes)
+    return VmState(**parts)
+
+
+def called(**changes) -> ExecContext:
+    return ExecContext(**{**vars(CALL), **changes})
+
+
+# What is outside the ranges and the sentences of section 9.22, with the
+# answer of the schema and the answer of the machine.
+OUTSIDE = {
+    "a word of 2^256 in the stack": (dict(stack=[WORD_MAX + 1]), "bad_text",
+                                     "its stack holds something other than a word"),
+    "a negative word in the stack": (dict(stack=[-1]), "bad_text", "its stack holds something other than a word"),
+    "a pc of 2^63": (dict(pc=LARGEST_GAS + 1), "out_of_range", "its pc is out of range"),
+    "a negative pc": (dict(pc=-1), "out_of_range", "its pc is out of range"),
+    "a gas of 2^63": (dict(gas=LARGEST_GAS + 1), "out_of_range", "its gas is out of range"),
+    "a negative gas": (dict(gas=-1), "out_of_range", "its gas is out of range"),
+    "a memory of 33 bytes": (dict(memory=bytearray(WORD + 1)), "bad_text", "its memory is not a number of words"),
+    "a slot that holds zero": (dict(storage={7: 0}), "inconsistent", "a slot of its storage holds zero"),
+    "a slot named 2^256": (dict(storage={WORD_MAX + 1: 5}), "bad_text",
+                           "its storage holds something other than a word"),
+    "a slot that holds 2^256": (dict(storage={7: WORD_MAX + 1}), "bad_text",
+                                "its storage holds something other than a word"),
+    "reverted and not halted": (dict(reverted=True), "inconsistent", "it is reverted and not halted"),
+    "an output before it halts": (dict(output=b"\x01"), "inconsistent", "it has an output and is not halted"),
+    "an address of 2^160": (dict(context=called(address=ADDRESS_MAX + 1)), "bad_text",
+                            "an address of its context is out of range"),
+    "a caller of 2^160": (dict(context=called(caller=ADDRESS_MAX + 1)), "bad_text",
+                          "an address of its context is out of range"),
+    "a value of 2^256": (dict(context=called(value=WORD_MAX + 1)), "bad_text",
+                         "the value of its context is out of range"),
+    "a block number of 2^63": (dict(context=called(block_number=LARGEST_GAS + 1)), "out_of_range",
+                               "the block of its context is out of range"),
+    "a negative block time": (dict(context=called(block_timestamp=-1)), "out_of_range",
+                              "the block of its context is out of range"),
+}
+
+
+def test_the_state_the_next_test_changes_is_a_state_for_both():
+    assert verdict(in_order()) == "accepted" and kern.evm.not_a_state(in_order()) is None
+
+
+@pytest.mark.parametrize("name", [pytest.param(name, id=name.replace(" ", "-")) for name in OUTSIDE])
+def test_what_the_schema_refuses_of_a_state_the_machine_refuses(name):
+    changes, refusal, answer = OUTSIDE[name]
+    state = in_order(**changes)
+    assert verdict(state) == refusal
+    assert kern.evm.not_a_state(state) == answer
+
+
+def test_what_the_machine_takes_for_a_state_the_schema_accepts():
+    """States drawn at random, the first one at the limits. Each is a state
+    for the check of the machine, and the schema accepts it once it is
+    written in the form of structure version 1."""
+    rng = random.Random(9_22)
+    for draw in range(300):
+        state = a_state(rng, a_program(rng), large=draw == 0)
+        assert kern.evm.not_a_state(state) is None, draw
+        assert verdict(state) == "accepted", draw

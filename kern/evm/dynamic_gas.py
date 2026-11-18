@@ -112,24 +112,25 @@ def memory_expansion_cost(current_bytes: int, new_end_bytes: int) -> int:
 # SSTORE cost (EIP-2200 simplified)
 # ---------------------------------------------------------------------------
 
-def sstore_cost(current: int, new: int, original: int) -> int:
-    """Compute SSTORE cost given the current value, the value being
-    written, and the original value at the start of the transaction.
+def sstore_cost(current: int, new: int) -> int:
+    """The price of writing `new` in a slot that holds `current`.
 
-    Simplified version of EIP-2200's three-case model:
-    - SET:   original=0, current=0, new≠0  → G_SSTORE_SET (20 000)
-    - RESET: any other write where it actually changes  → G_SSTORE_RESET (5000)
-    - NOOP:  current = new  → small cost (warm-storage read)
+    Three cases, read from the slot and from the value written, and from
+    nothing else:
+    - NOOP:  current = new          → small cost (warm-storage read)
+    - SET:   current = 0, new ≠ 0   → G_SSTORE_SET (20 000)
+    - RESET: any other write        → G_SSTORE_RESET (5000)
+
+    EIP-2200 also reads what the slot held when the transaction started.
+    This machine does not: that value is not in the state the two parties
+    of a dispute commit to, and the price of a step is a function of the
+    committed state.
     """
     if current == new:
         return G_WARM_SLOAD       # no-op write costs warm-read
-    if original == current:
-        # First write in this transaction.
-        if original == 0:
-            return G_SSTORE_SET   # zero-to-nonzero: full set price
-        return G_SSTORE_RESET     # other: reset price
-    # Subsequent write in same tx — cheaper because the slot is already warm
-    return G_WARM_SLOAD
+    if current == 0:
+        return G_SSTORE_SET       # zero-to-nonzero: full set price
+    return G_SSTORE_RESET         # other: reset price
 
 
 def sstore_refund(current: int, new: int, original: int) -> int:
