@@ -21,6 +21,7 @@ verifies: verifying signatures is not what a schema does.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import sys
@@ -42,8 +43,13 @@ DIRECTIVES = {
     "$key": "the text form of the 1,984 bytes SHAKE256('kern schema vectors, key N'), N being the argument in decimal",
     "$sig": "the text form of the 3,373 bytes SHAKE256('kern schema vectors, signature N')",
     "$address": "the address of this network whose hash is the 48 bytes SHAKE256('kern schema vectors, address N')",
+    "$account": "the address of the account whose public key is the key N of $key: the hash of that key (note, "
+                "section 5)",
+    "$key_of_parts": "[n, m]: the text form of the first 1,952 bytes of the key n of $key, its ML-DSA part, followed "
+                     "by the last 32 bytes of the key m, its Ed25519 part",
     "$text": "[count, piece]: the piece written count times",
     "$concat": "[parts]: the parts one after the other, an integer in decimal",
+    "$canonical": "the canonical JSON of the argument, once its directives are carried out, as a text",
     "$list": "[count, item]: a list of count items",
     "$map": "[count, name, value]: an object of count members",
 }
@@ -86,11 +92,19 @@ class Vectors:
             return ref.signature_text(filler("signature", self.expand(argument, index), ref.SIGNATURE_BYTES))
         if name == "$address":
             return ref.address_from_hash(self.network_id, filler("address", self.expand(argument, index), 48))
+        if name == "$account":
+            public_key = filler("key", self.expand(argument, index), ref.PUBLIC_KEY_BYTES)
+            return ref.account_address(self.network_id, public_key)
+        if name == "$key_of_parts":
+            first, second = (filler("key", self.expand(part, index), ref.PUBLIC_KEY_BYTES) for part in argument)
+            return ref.key_text(sch.key_parts(first)[0] + sch.key_parts(second)[1])
         if name == "$text":
             count, piece = argument
             return piece * count
         if name == "$concat":
             return "".join(str(self.expand(part, index)) for part in argument)
+        if name == "$canonical":
+            return ref.canonical_json(self.expand(argument, index)).decode("utf-8")
         if name == "$list":
             count, item = argument
             return [self.expand(item, i) for i in range(count)]
@@ -192,17 +206,103 @@ def derived(name: str, schema: str, value: Any, network_id: bytes) -> dict:
     elif schema in ("vote", "propose message"):
         out["context"] = sch.PURPOSES[value["kind"]]
         out["signed"] = sch.signed_message(value).decode("utf-8")
+    elif schema == "state":
+        out["state_root"] = sch.state_root(network_id, value).hex()
+        out["accounts_root"] = ref.accounts_root(network_id, value).hex()
+        if name == "state_full":
+            out["accounts"] = sch.accounts(network_id, value)
+    elif schema == "genesis":
+        out["hashed"] = ref.canonical_json(sch.first_header(value)).decode("utf-8")
+        out["block_hash"] = sch.first_block_hash(value).hex()
+    elif schema == "rollup batch":
+        if name == "batch":
+            out["context"] = "kern.batch"
+            out["signed"] = sch.signed_batch(value).decode("utf-8")
+        out["hash"] = sch.batch_hash(network_id, value).hex()
+    elif schema == "inclusion request":
+        out["hash"] = sch.request_hash(network_id, value).hex()
+    elif schema == "Mini-EVM state":
+        out["hash"] = sch.evm_state_hash(network_id, value).hex()
+    elif schema == "verifier key":
+        out["id"] = sch.verifier_key_id(network_id, value).hex()
     return out
 
 
+# What the node of today takes when a genesis says nothing, written out: a state has no default.
+PARAMETERS_OF_TODAY = {
+    "i_min_ppm": 2_500, "i_max_ppm": 60_000, "target_staking_ratio_ppm": 500_000, "target_block_time_ms": 1_000,
+    "treasury_share_ppm": 50_000, "fee_floor_enabled": False, "fee_floor_base": 100,
+    "fee_floor_per_byte": 2, "max_block_bytes": 1_048_576,
+}
+# Short periods, so that the vectors can hold what is due and what is not.
+CONSTANTS_OF_THE_VECTORS = {
+    "epoch_blocks": 120, "delegation_unbonding_blocks": 300, "attestation_unbonding_blocks": 150,
+    "protocol_proposal_blocks": 100, "protocol_exploration_blocks": 100, "protocol_cooldown_blocks": 100,
+    "protocol_adoption_blocks": 100, "treasury_proposal_blocks": 200, "treasury_vote_blocks": 100,
+    "guardian_delay_blocks": 50, "treasury_release_blocks": 150,
+    "protocol_bond": 100_000_000, "treasury_bond": 10_000_000,
+}
+
+
+# The five parameters the reward of a block reads.
+REWARD_PARAMETERS = {name: PARAMETERS_OF_TODAY[name] for name in (
+    "i_min_ppm", "i_max_ppm", "target_staking_ratio_ppm", "target_block_time_ms", "treasury_share_ppm")}
+
+
+def difference(before: Any, after: Any, path: str = "") -> tuple[list[str], dict[str, Any]]:
+    """What turns one object into another: the members to remove, then the
+    values to put in place. Two lists of one length are compared item by
+    item, and a list of another length is put in place whole."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        remove = [join(path, name) for name in before if name not in after]
+        put: dict[str, Any] = {}
+        pairs = [(name, before[name], value) for name, value in after.items() if name in before]
+        put.update({join(path, name): value for name, value in after.items() if name not in before})
+    elif isinstance(before, list) and isinstance(after, list) and len(before) == len(after):
+        remove, put = [], {}
+        pairs = list(zip(range(len(after)), before, after))
+    else:
+        return [], {path: after}
+    for step, old, new in pairs:
+        if ref.canonical_json(old) != ref.canonical_json(new):
+            more, values = difference(old, new, join(path, step))
+            remove += more
+            put.update(values)
+    return remove, put
+
+
+RULED = sch.CHAPTER_2 + sch.CHAPTER_3                         # the objects whose tables come with sentences
+
+
+def the_rule(words: str) -> str:
+    """The one sentence of chapter 2 or 3 that holds these words."""
+    found = {sentence for obj in RULED for sentence, _ in obj.rules if words in sentence}
+    assert len(found) == 1, (words, found)
+    return found.pop()
+
+
+@contextlib.contextmanager
+def without(sentence: str) -> Iterator[None]:
+    """The reference without one rule of chapter 2 or 3, for as long as the block lasts."""
+    saved = [(obj, obj.rules) for obj in RULED]
+    for obj in RULED:
+        obj.rules = [rule for rule in obj.rules if rule[0] != sentence]
+    try:
+        yield
+    finally:
+        for obj, rules in saved:
+            obj.rules = rules
+
+
 DESCRIPTION = (
-    "Vectors of the schemas of structure version 1 (docs/api-stability.md, section 9), chapter 1: what is signed and "
-    "what travels. Built by tests/schema_vectors.py with tests/schema_reference.py; "
+    "Vectors of the schemas of structure version 1 (docs/api-stability.md, section 9), chapters 1 and 2: what is "
+    "signed and what travels, and what is kept. Built by tests/schema_vectors.py with tests/schema_reference.py; "
     "tests/vectors/kern/profile_check.go checks them with tables of its own (-schemas). "
     "`accepted` holds objects that are of their schema on the network `network_id`. `refused` holds objects that are "
     "not: an accepted object (`from`) with members removed (`remove`), then values put in place (`set`), or an "
     "object of its own; `rule` names the rule that refuses it, by a key of `rules`. A path is names of members and "
-    "positions in lists joined by full stops, and a value put one position past the end of a list is added to it. "
+    "positions in lists joined by full stops; a value put one position past the end of a list is added to it, and "
+    "a position that is removed takes its item out of the list. "
     "Objects are written with the `directives`. `bytes` is the length of the canonical encoding of the object once "
     "its directives are carried out, and `pin` the first 8 bytes of the SHA3-384 of that encoding: they only show "
     "that two programs built the same object. The fillers are not keys, and no signature here verifies: a schema "
@@ -213,7 +313,66 @@ DESCRIPTION = (
     "replaced by 0, every boolean by 1, every integer by its digits as a string, then by true. `accepted_texts` and "
     "`refused_texts` are texts as a node receives them: the size of a frame and the nesting are checked on the "
     "bytes, then the canonical encoding, then the schema; the schema `json` is any value of canonical JSON, and "
-    "`prefix` is the four bytes that precede the text in a frame."
+    "`prefix` is the four bytes that precede the text in a frame. An accepted object of the schema `frame` has its "
+    "`prefix` too: the length of its canonical encoding, most significant byte first, and nothing else. `prefixes` "
+    "holds four bytes as a node reads them before a frame: `announces` is the number of bytes that follow, and "
+    "`rule` refuses those that announce more than `frame_bytes`, which bounds what follows and does not count the "
+    "four bytes. `answers` holds what a node sends in answer to a `get_blocks` from `from` to `to`: `held` lists the "
+    "blocks it holds, each as a level and the bytes of its final block in the frame, and `levels` the levels of the "
+    "blocks of its answer; a frame without a block is 29 bytes, and each block after the first adds a comma. "
+    "`replies` holds answers as the node that asked sees them, by the levels of their blocks: accepted, or refused "
+    "by `rule`. "
+    "Chapter 2. A state is checked on itself, and a genesis on the network it names. `breaks`, on a refused state, "
+    "account or genesis, is the sentence of the document that the object breaks, and it breaks no other: without "
+    "that sentence the object is accepted. A state comes with its `state_root`, computed by the function it names, "
+    "and with the root of its accounts, `accounts_root`; `state_full` comes with its `accounts` too, as the state "
+    "trie holds them. A genesis comes with the nine fields of its block of level 0 in canonical JSON (`hashed`) and "
+    "with the hash of that block (`block_hash`); a text of the schema `genesis` is read like any text, without a "
+    "bound on its length. `charges` holds blocks of transfers: `state` gives the `chain_id`, the `parameters`, the "
+    "`balances` and the `nonces` before the block, and `then` what the block leaves, with the positions of the "
+    "transfers that failed and paid (`failed`); or `rule` names, by a key of `block_rules`, the rule that makes the "
+    "block invalid, and `at` the position of the transaction that breaks it. `decisions` holds proposals that are "
+    "decided at one level: `before` gives the parameters, the function of the state root, what the treasury holds "
+    "(`treasury`) and the two bonds; a protocol proposal is its `payload` and whether its vote passes, and a "
+    "treasury proposal the phase that ends, `voting` or `passed`, and when its vote ends whether it passes; `then` "
+    "gives the phase each one is in afterwards and what the rest has become, with what was burned. `payments` "
+    "holds transactions of guardians in one block: `before` gives the level of the block, the guardians, what the "
+    "treasury holds, the bond of the treasury track, the delay of the guardians other than the first, and the "
+    "treasury proposals by identifier, each one its `phase` as the block finds it, the level at which its vote "
+    "ended (`voted`), the sum of its amounts (`total`), the part of that sum whose recipient is the treasury itself "
+    "(`to_itself`) and `released_by` where a guardian has released it; an operation is its `sender`, its `kind` and "
+    "the `proposal_id` it names; `then` gives what each operation did (`did`: `paid`, `recorded` or `cancelled`, or "
+    "the rule that makes it fail, by a key of `guardian_rules`: the first one broken, in the order of that table), "
+    "what the treasury holds, what was burned and each payment afterwards. Guardians, senders and identifiers are "
+    "short names there: the rules only compare them. "
+    "`rewards` holds the reward of a block: `before` gives `total_supply`, the address of the treasury, the five "
+    "parameters the reward reads, the validators with their stakes and the delegations, each one its validator and "
+    "its amount; `then` gives what is staked, the rate, the reward, what each address receives (`credits`) and "
+    "`total_supply` afterwards. `tallies` holds votes: the weights of a snapshot (`consensus_set`), the vote of each "
+    "validator that voted (`ballots`) and the track; `then` gives the weights of the yes and of the no, that of all "
+    "the validators, whether the vote reaches its quorum and whether it passes. `slashes` holds the reports of "
+    "offences of one block: `before` gives the level of the block, `delegation_unbonding_blocks` and the tables a "
+    "slash reads, the proposals of the protocol track (`protocol`) as their `proposal_id` and their `double_votes`, "
+    "and a vote of the consensus without its signature; an operation is its `sender`, its `kind` and its `params`; "
+    "`then` gives what each operation did (`did`: `slashed`, or the rule that makes it fail, by a key of "
+    "`slash_rules`: the first one broken, in the order of that table), what each address receives, what was burned "
+    "and the tables afterwards. Addresses, identifiers and hashes are short names in these three families. "
+    "`transitions` holds whole blocks on whole states: `from` names the state, an accepted vector or the result of "
+    "an earlier transition (`name`), and `block` is an object of the schema `block`; `then` gives the state the "
+    "block leads to as the members to remove from the first state (`remove`) and the values to put in place "
+    "(`set`), the positions of the transactions whose operation failed (`failed`), the root of that state "
+    "(`state_root`, which is the one in the header of the block) and the pin of its canonical encoding; or `rule` "
+    "names what makes the block invalid, by a key of `whole_block_rules` or of `block_rules`, and `at` the position "
+    "of the transaction that breaks it. "
+    "`exchanges` holds what happens on a connection as the node that asks for blocks "
+    "sees it: a step is a request it would send (`ask`: the first and the last level), a `blocks` frame it receives "
+    "(`blocks`: the levels of its blocks) or four bytes it reads before a frame (`prefix`); `verdicts` gives "
+    "`accepted`, `refused` or `closed` for each step. `served` holds what a node sends when several requests reach "
+    "it on one connection: `held` as in `answers`, and the levels of one answer for each request. "
+    "The accepted objects of the schemas `rollup batch`, `inclusion request`, `Mini-EVM state` and `verifier key` "
+    "are hashed outside blocks. Each comes with what the profile computes from it: the hash of a batch, taken "
+    "without its signature (`hash`), and for the first one the text its sequencer signs and its context (`signed`, "
+    "`context`); the hash of a request and of a state (`hash`); the identifier of a key (`id`)."
 )
 
 
@@ -227,6 +386,18 @@ class Builder(Vectors):
         self.refused: list[dict] = []
         self.accepted_texts: list[dict] = []
         self.refused_texts: list[dict] = []
+        self.prefixes: list[dict] = []
+        self.answers: list[dict] = []
+        self.replies: list[dict] = []
+        self.charged: list[dict] = []
+        self.decided: list[dict] = []
+        self.guarded: list[dict] = []
+        self.rewarded: list[dict] = []
+        self.tallied: list[dict] = []
+        self.slashed: list[dict] = []
+        self.applied: list[dict] = []
+        self.exchanged: list[dict] = []
+        self.served: list[dict] = []
 
     # -- recording --------------------------------------------------------
 
@@ -236,6 +407,8 @@ class Builder(Vectors):
         sch.check(schema, value, self.network_id)
         record = {"name": name, "schema": schema, "what": what, "object": obj, **pin(ref.canonical_json(value)),
                   **derived(name, schema, value, self.network_id)}
+        if schema == "frame":
+            record["prefix"] = sch.frame_prefix(record["bytes"]).hex()
         if mutate:
             optional = []
             for change, path, changed in mutations(value, list(maps), list(free)):
@@ -251,7 +424,11 @@ class Builder(Vectors):
         return value
 
     def no(self, base: str, rule: str, why: str, *, remove: list[str] | None = None,
-           set: dict[str, Any] | None = None) -> None:
+           set: dict[str, Any] | None = None, breaks: str | None = None) -> None:
+        """A refused object: an accepted one with members removed, then
+        values put in place. `breaks` names, by a few of its words, the one
+        sentence of chapter 2 or 3 that refuses it: without that sentence the
+        reference accepts the object, so it breaks no other rule."""
         changed = self.edited(self.objects[base], remove, set)
         answer = sch.verdict(self.schemas[base], changed, self.network_id)
         assert answer == rule, f"{base}, {why}: {answer}, not {rule}"
@@ -260,7 +437,15 @@ class Builder(Vectors):
             record["remove"] = remove
         if set:
             record["set"] = set
-        self.refused.append({**record, "rule": rule, "why": why, **pin(ref.canonical_json(changed))})
+        record.update({"rule": rule, "why": why})
+        if breaks is not None:
+            record["breaks"] = the_rule(breaks)
+            with without(record["breaks"]):
+                alone = sch.verdict(self.schemas[base], changed, self.network_id)
+            assert alone == "accepted", f"{base}, {why}: without its rule, still {alone}"
+        elif self.schemas[base] in ("state", "account", "genesis", "inclusion request", "Mini-EVM state"):
+            assert rule != "inconsistent", f"{base}, {why}: which sentence does it break?"
+        self.refused.append({**record, **pin(ref.canonical_json(changed))})
 
     def no_object(self, schema: str, rule: str, why: str, obj: Any) -> None:
         value = self.expand(obj)
@@ -334,7 +519,1900 @@ class Builder(Vectors):
         return {"kind": kind, "level": level, "round": round_, "block_hash": hash_, "validator": {"$address": 1},
                 **more, "signature": {"$sig": sig}}
 
+    # -- chapter 2: what is kept -----------------------------------------------
+
+    def account(self, key: int) -> str:
+        return self.expand({"$account": key})
+
+    def address(self, n: int) -> str:
+        return self.expand({"$address": n})
+
+    def guardians(self) -> list[str]:
+        """The three guardians of the states of these vectors: the first
+        one, and the two others."""
+        return [self.account(n) for n in (160, 161, 162)]
+
+    def with_supply(self, state: dict) -> dict:
+        """The state with its `total_supply` set to the sum of what it holds."""
+        state["total_supply"] = sch.held(self.expand(state))
+        return state
+
+    def first_state(self, validators: int = 3) -> dict:
+        """A first state: balances, validators with their keys, parameters
+        and constants, and nothing else yet."""
+        listed = [{"address": self.account(100 + i), "stake": 1_000_000_000_000 - i} for i in range(validators)]
+        return self.with_supply({
+            "level": 0, "chain_id": "kern-devnet", "state_root_function": "json", "total_supply": 0,
+            "treasury_address": self.address(9), "guardians": self.guardians(),
+            "balances": {self.account(100): 5_000_000, self.address(1): 70_000_000_000_000, self.address(2): 1,
+                         self.address(9): 14_000_000_000_000},
+            "nonces": {}, "contracts": {},
+            "keys": {self.account(100 + i): [{"from": 0, "public_key": {"$key": 100 + i}}] for i in range(validators)},
+            "validators": listed, "consensus_set": copy(listed),
+            "delegations": {}, "delegation_unbonding": [], "attestations": {}, "consensus_slashes": [],
+            "governance": {"protocol": [], "treasury": []},
+            "parameters": dict(PARAMETERS_OF_TODAY), "constants": dict(CONSTANTS_OF_THE_VECTORS),
+        })
+
+    def full_state(self) -> dict:
+        """A state of level 1,000 in which every table holds something. Four
+        validators: A and B vote, C has sent a transaction and is named
+        nowhere else, Q has done nothing since the genesis."""
+        a, b, c, q = (self.account(100 + i) for i in range(4))
+        d, e, f, g = (self.account(n) for n in (110, 120, 130, 135))
+        one, two, treasury, contract = (self.address(n) for n in (1, 2, 9, 20))
+        hex_of = lambda pair: pair * 48                                                      # noqa: E731
+        listed = [{"address": a, "stake": 400_000_000}, {"address": b, "stake": 300_000_000},
+                  {"address": c, "stake": 200_000_000}, {"address": q, "stake": 1}]
+        snapshot = [{"address": a, "stake": 400_000_300}, {"address": b, "stake": 299_999_999},
+                    {"address": c, "stake": 200_000_000}, {"address": q, "stake": 1}]
+        bond = CONSTANTS_OF_THE_VECTORS
+        return self.with_supply({
+            "level": 1000, "chain_id": "kern-devnet", "state_root_function": "trie", "total_supply": 0,
+            "treasury_address": treasury, "guardians": self.guardians(),
+            "balances": {a: 12_345, b: 1, d: 900_000, e: 77, f: 5_000, one: 70_000_000_000_000, two: 1,
+                         treasury: 14_000_000_000_000, contract: 5},
+            "nonces": {a: 6, b: 3, c: 1, d: 3, e: 5, f: 2, g: 2},
+            "contracts": {contract: {"code": "contract Counter { storage { count: int } }", "storage": {"count": 7}}},
+            "keys": {
+                a: [{"from": 0, "public_key": {"$key": 100}}],
+                b: [{"from": 0, "public_key": {"$key": 101}}],
+                c: [{"from": 0, "public_key": {"$key": 102}}],
+                q: [{"from": 0, "public_key": {"$key": 103}}],
+                d: [{"from": 12, "public_key": {"$key": 110}}, {"from": 400, "public_key": {"$key": 111}}],
+                e: [{"from": 50, "public_key": {"$key": 120}}, {"from": 1001, "public_key": {"$key": 121}}],
+                f: [{"from": 90, "public_key": {"$key": 130}}],
+                g: [{"from": 95, "public_key": {"$key": 135}}],
+            },
+            "validators": listed, "consensus_set": snapshot,
+            "delegations": {e: {"validator": a, "amount": 700,
+                                "tranches": [{"level": 60, "amount": 300}, {"level": 90, "amount": 400}]}},
+            "delegation_unbonding": [
+                {"delegator": f, "validator": b, "amount": 500, "tranches": [{"level": 100, "amount": 500}],
+                 "unbonding_from": 950, "release_at": 1250},
+                {"delegator": g, "validator": a, "amount": 40, "tranches": [{"level": 96, "amount": 40}],
+                 "unbonding_from": 960, "release_at": 1260},
+            ],
+            "attestations": {
+                hex_of("a1"): {"issuer": d, "schema_id": "kyc.basic", "subject": "subject-1",
+                               "claim": {"country": "BE", "level": 2}, "bond": 1000, "issued_at": 500,
+                               "slashed": False},
+                hex_of("a2"): {"issuer": d, "schema_id": "kyc.basic", "subject": "subject-2", "claim": {},
+                               "bond": 250, "issued_at": 500, "revoked_at": 900, "slashed": False},
+                hex_of("a3"): {"issuer": d, "schema_id": "kyc.basic", "subject": "subject-1",
+                               "claim": {"country": "FR", "level": 2}, "bond": 0, "issued_at": 600, "slashed": True},
+                hex_of("a4"): {"issuer": e, "schema_id": "s", "subject": " ", "claim": {}, "bond": 0,
+                               "issued_at": 100, "revoked_at": 200, "slashed": False},
+            },
+            "consensus_slashes": [{"validator": b, "kind": "endorse", "level": 990, "round": 0},
+                                  {"validator": b, "kind": "preendorse", "level": 990, "round": 0}],
+            "governance": {
+                "protocol": [
+                    {"proposal_id": hex_of("b1"), "submitter": a, "payload": {"params": {"treasury_share_ppm": 40_000}},
+                     "submitted_at": 400, "phase": "activated", "ended_at": 800,
+                     "exploration_votes": {a: "yes", b: "yes"}, "adoption_votes": {a: "yes", b: "yes"},
+                     "double_votes": []},
+                    {"proposal_id": hex_of("b0"), "submitter": b, "payload": {"params": {"fee_floor_base": 0}},
+                     "submitted_at": 550, "phase": "rejected", "ended_at": 750,
+                     "exploration_votes": {a: "no", b: "abstain"}, "adoption_votes": {}, "double_votes": []},
+                    {"proposal_id": hex_of("b2"), "submitter": b,
+                     "payload": {"swap": "state_root_function", "to": "json"},
+                     "submitted_at": 850, "phase": "exploration",
+                     "exploration_votes": {a: "yes", b: "no"}, "adoption_votes": {},
+                     "double_votes": [{"voter": b, "phase": "exploration", "level": 960, "punished": False}],
+                     "bond": bond["protocol_bond"]},
+                    {"proposal_id": hex_of("b3"), "submitter": a,
+                     "payload": {"params": {"i_max_ppm": 70_000, "fee_floor_enabled": True}},
+                     "submitted_at": 950, "phase": "submitted", "exploration_votes": {}, "adoption_votes": {},
+                     "double_votes": [], "bond": bond["protocol_bond"]},
+                ],
+                "treasury": [
+                    {"proposal_id": hex_of("c0"), "submitter": d,
+                     "payload": {"recipients": [{"address": d, "amount": 1}]},
+                     "submitted_at": 690, "phase": "rejected", "ended_at": 990, "votes": {b: "no"}},
+                    {"proposal_id": hex_of("c1"), "submitter": d,
+                     "payload": {"recipients": [{"address": one, "amount": 1000}], "memo": "a grant"},
+                     "submitted_at": 780, "phase": "voting", "votes": {a: "yes"}, "bond": bond["treasury_bond"]},
+                    {"proposal_id": hex_of("c2"), "submitter": e,
+                     "payload": {"recipients": [{"address": two, "amount": 5}]},
+                     "submitted_at": 900, "phase": "submitted", "votes": {}, "bond": bond["treasury_bond"]},
+                    {"proposal_id": hex_of("c3"), "submitter": e,
+                     "payload": {"recipients": [{"address": two, "amount": 6}, {"address": contract, "amount": 7}]},
+                     "submitted_at": 950, "phase": "submitted", "votes": {}, "bond": bond["treasury_bond"]},
+                ],
+            },
+            "parameters": {**PARAMETERS_OF_TODAY, "treasury_share_ppm": 40_000},
+            "constants": dict(CONSTANTS_OF_THE_VECTORS),
+        })
+
+    def states(self) -> None:
+        top = INT_MAX
+        a, b, c, q = (self.account(100 + i) for i in range(4))
+        d, e, f, g = (self.account(n) for n in (110, 120, 130, 135))
+        one, two, contract, stranger = (self.address(n) for n in (1, 2, 20, 77))
+        h = lambda pair: pair * 48                                                           # noqa: E731
+        maps = ("balances", "nonces", "contracts", "keys", "delegations", "attestations")
+
+        first = self.first_state()
+        self.yes("state_first", "state", "a first state: balances, three validators with their keys, the parameters "
+                 "and the constants; two validators have everything staked and are not in `balances`",
+                 first, mutate=True, maps=maps)
+        self.yes("state_first_trie", "state", "the same state under the function trie: another object is hashed",
+                 {**first, "state_root_function": "trie"})
+
+        full = self.full_state()
+        votes = [f"governance.protocol.{i}.{name}" for i in range(4)
+                 for name in ("exploration_votes", "adoption_votes")]
+        votes += [f"governance.treasury.{i}.votes" for i in range(4)]
+        claims = tuple(f"attestations.{h(pair)}.claim" for pair in ("a1", "a2", "a3", "a4"))
+        self.yes("state_full", "state", "a state of level 1,000 in which every table holds something: a key rotated, "
+                 "a key due at the next level, a contract, a delegation in two tranches, two delegations that unbond, "
+                 "four attestations, two slashed votes, proposals in flight and proposals that are over, a double vote",
+                 full, mutate=True, maps=maps + tuple(votes), free=claims + (f"contracts.{contract}.storage",))
+        self.yes("state_full_json", "state", "the same state under the function json",
+                 {**full, "state_root_function": "json"})
+
+        def variant(name: str, what: str, **changes: Any) -> None:
+            changed = copy(full)
+            for path, new in changes.items():
+                holder, step = locate(changed, path)
+                holder[step] = new
+            self.yes(name, "state", what, changed)
+
+        # What the chain does not refuse: a part of the key of another address (note, section 6.4).
+        variant("state_part_of_another_key", "the key due for one address has the ML-DSA part of a key of another "
+                "address: only a part of an earlier key of the same address is refused",
+                **{f"keys.{e}.1.public_key": {"$key_of_parts": [110, 121]}})
+        variant("state_treasury_contract", "the treasury at the address of a contract: a contract has no key either",
+                treasury_address=contract)
+        variant("state_about_to_change", "what the block of the next level does is not done yet: a delegation that "
+                "ended 299 levels ago is still held, an attestation revoked 149 levels ago still holds its bond, a "
+                "proposal that ended 299 levels ago is still there, and so is a slashed vote 299 levels old",
+                **{"delegation_unbonding.0.unbonding_from": 701, "delegation_unbonding.0.release_at": 1001,
+                   f"attestations.{h('a2')}.revoked_at": 851, "governance.protocol.0.submitted_at": 301,
+                   "governance.protocol.0.ended_at": 701, "consensus_slashes.0.level": 701})
+
+        variant("state_just_changed", "what the block of this level did is done, and is not ahead of the state: a "
+                "tranche bonded, two delegations ended, an attestation issued and revoked, a vote slashed and a "
+                "double vote recorded at this level, a proposal submitted, one activated and one rejected at the end "
+                "of their second vote, two votes that started at it on proposals submitted at one level; a validator "
+                "that voted two ways in both phases of a proposal; and slashed votes that differ by one thing only",
+                **{f"delegations.{e}.tranches.1.level": 1000,
+                   "delegation_unbonding.0.unbonding_from": 1000, "delegation_unbonding.0.release_at": 1300,
+                   "delegation_unbonding.1.unbonding_from": 1000, "delegation_unbonding.1.release_at": 1300,
+                   f"attestations.{h('a4')}.issued_at": 1000, f"attestations.{h('a4')}.revoked_at": 1000,
+                   "consensus_slashes": [{"validator": b, "kind": "endorse", "level": 1000, "round": 0},
+                                         {"validator": b, "kind": "preendorse", "level": 1000, "round": 0},
+                                         {"validator": a, "kind": "endorse", "level": 1000, "round": 0},
+                                         {"validator": b, "kind": "endorse", "level": 1000, "round": 1},
+                                         {"validator": b, "kind": "endorse", "level": 999, "round": 0}],
+                   "governance.protocol.0.submitted_at": 600, "governance.protocol.0.ended_at": 1000,
+                   "governance.protocol.0.double_votes": [
+                       {"voter": b, "phase": "exploration", "level": 750, "punished": True},
+                       {"voter": b, "phase": "adoption", "level": 950, "punished": False}],
+                   "governance.protocol.1.submitted_at": 600, "governance.protocol.1.ended_at": 1000,
+                   "governance.protocol.2.double_votes.0.level": 1000,
+                   "governance.protocol.3.submitted_at": 1000,
+                   "governance.treasury.1.submitted_at": 800,
+                   "governance.treasury.2.submitted_at": 800, "governance.treasury.2.phase": "voting"})
+
+        # Payments: what a vote passed, and what guardians did with it. With the constants of these vectors a
+        # proposal submitted at S ends its vote at S + 300; the other guardians release from S + 350 on, and
+        # the wait ends at S + 450.
+        first, second, third = self.guardians()
+        waiting = self.full_state()
+
+        def payment(pair: str, submitted_at: int, phase: str, ended_at: int | None = None, **more: Any) -> dict:
+            out = {"proposal_id": h(pair), "submitter": d,
+                   "payload": {"recipients": [{"address": one, "amount": 1000}]}, "submitted_at": submitted_at,
+                   "phase": phase, "votes": {a: "yes", b: "yes"}, **more}
+            if ended_at is None:
+                return {**out, "bond": CONSTANTS_OF_THE_VECTORS["treasury_bond"]}
+            return {**out, "ended_at": ended_at}
+
+        waiting["governance"]["treasury"] = [
+            payment("d0", 420, "executed", 721),
+            payment("d1", 430, "executed", 880),
+            payment("d2", 440, "rejected", 890),
+            payment("d3", 450, "rejected", 751),
+            payment("d4", 460, "rejected", 760, votes={a: "abstain", b: "no"}),
+            payment("d5", 551, "passed"),
+            payment("d6", 600, "passed", released_by=second),
+            payment("d7", 650, "passed", released_by=third),
+            payment("d8", 651, "passed"),
+            payment("d9", 700, "passed"),
+            payment("da", 701, "voting", votes={a: "yes"}),
+        ]
+        waiting["keys"].update({first: [{"from": 721, "public_key": {"$key": 160}}],
+                                second: [{"from": 950, "public_key": {"$key": 161}}],
+                                third: [{"from": 1000, "public_key": {"$key": 162}}]})
+        waiting["nonces"].update({first: 3, second: 1, third: 1})
+        self.yes("state_payments", "state", "payments, at level 1,000: one the first guardian released in the block "
+                 "that followed its vote, one released in the last block of its wait, one that nobody released, one "
+                 "that the first guardian cancelled, one that its vote rejected; then five that wait: one whose wait "
+                 "ends at the next level, one that another guardian released, one released at the very level at "
+                 "which the delay of the other guardians had passed, one that only the first guardian can release "
+                 "yet, one whose vote passed at this level; and a proposal still in its vote",
+                 self.with_supply(waiting))
+        many = self.first_state()
+        many["guardians"] = {"$list": [LIMITS["guardians"], {"$account": {"$index": 160}}]}
+        self.yes("state_8_guardians", "state", "as many guardians as a treasury can have", self.with_supply(many))
+
+        bound = self.first_state()
+        bound["balances"] = {self.address(1): 1}
+        bound["validators"] = {"$list": [LIMITS["validators"], {"address": {"$account": {"$index": 1000}},
+                                                                "stake": 1_000_000}]}
+        bound["consensus_set"] = copy(bound["validators"])
+        bound["keys"] = {"$map": [LIMITS["validators"], {"$account": {"$index": 1000}},
+                                  [{"from": 0, "public_key": {"$key": {"$index": 1000}}}]]}
+        self.yes("state_1024_validators", "state", "as many validators as a network can have, each with its key",
+                 self.with_supply(bound))
+
+        lowest = self.first_state(validators=1)
+        lowest.update({"chain_id": "k", "balances": {}})
+        lowest["validators"] = lowest["consensus_set"] = [{"address": self.account(100), "stake": 1}]
+        lowest["parameters"] = {name: (type_.low if isinstance(type_, sch.Int) else False)
+                                for name, type_, _ in sch.STATE_PARAMETERS.fields}
+        lowest["constants"] = {name: (type_.inner.low if isinstance(type_, sch.Named) else type_.low)
+                               for name, type_, _ in sch.CONSTANTS.fields}
+        self.yes("state_lowest", "state", "the lowest value of every range: one validator with a stake of 1 and no "
+                 "balance at all, periods of one block, no bond, both rates of issuance at 0",
+                 self.with_supply(lowest))
+
+        x = self.account(140)
+        highest = self.first_state(validators=1)
+        highest.update({
+            "level": top, "chain_id": "k" + "0-9" * 21, "state_root_function": "trie",
+            "balances": {x: top - 1 - 5 - 7},
+            "nonces": {x: top},
+            "keys": {self.account(100): [{"from": 0, "public_key": {"$key": 100}}],
+                     x: [{"from": top, "public_key": {"$key": 140}}]},
+            "validators": [{"address": self.account(100), "stake": 1}],
+            "consensus_set": [{"address": self.account(100), "stake": 6}],
+            "delegations": {x: {"validator": self.account(100), "amount": 5,
+                                "tranches": [{"level": top, "amount": 5}]}},
+            "attestations": {h("ff"): {"issuer": x, "schema_id": "s", "subject": "~", "claim": {}, "bond": 7,
+                                       "issued_at": top, "revoked_at": top, "slashed": False}},
+            "consensus_slashes": [{"validator": self.account(100), "kind": "endorse", "level": top,
+                                   "round": ROUND_MAX}],
+        })
+        highest["parameters"] = {name: (type_.high if isinstance(type_, sch.Int) else True)
+                                 for name, type_, _ in sch.STATE_PARAMETERS.fields}
+        highest["constants"] = {name: (type_.inner.high if isinstance(type_, sch.Named) else type_.high)
+                                for name, type_, _ in sch.CONSTANTS.fields}
+        assert self.with_supply(highest)["total_supply"] == top
+        self.yes("state_highest", "state", "the highest values a state can hold together: the last level there is, a "
+                 "supply of 2^63 - 1 held almost whole by one account, whose nonce is the last one, a weight that is "
+                 "the stake and the delegation of its validator, the longest periods, the largest bonds, both rates "
+                 "of issuance at 1,000,000", highest)
+        staked = self.first_state(validators=1)
+        staked["balances"] = {}
+        staked["validators"] = staked["consensus_set"] = [{"address": self.account(100), "stake": top}]
+        assert self.with_supply(staked)["total_supply"] == top
+        self.yes("state_highest_stake", "state", "everything that exists is the stake of one validator: the largest "
+                 "stake and the largest weight there are", staked)
+
+        # -- refused: a form ------------------------------------------------
+        no = lambda rule, why, **how: self.no("state_full", rule, why, **how)               # noqa: E731
+        no("out_of_range", "a balance of 0 written out: an address that holds nothing is not in `balances`",
+           set={f"balances.{two}": 0})
+        no("out_of_range", "a nonce of 0 written out", set={f"nonces.{c}": 0})
+        no("out_of_range", "a validator with a stake of 0", set={"validators.3.stake": 0})
+        no("out_of_range", "no validator", set={"validators": [], "consensus_set": []})
+        no("out_of_range", "a tranche of 0", set={f"delegations.{e}.tranches.0.amount": 0})
+        no("out_of_range", "1,025 votes on a proposal",
+           set={"governance.treasury.1.votes": {"$map": [1025, {"$address": {"$index": 3000}}, "yes"]}})
+        no("out_of_range", "2,049 double votes on a proposal",
+           set={"governance.protocol.2.double_votes": {"$list": [2049, {"voter": b, "phase": "exploration",
+                                                                        "level": 960, "punished": False}]}})
+        no("out_of_range", "an epoch of 0 blocks", set={"constants.epoch_blocks": 0})
+        no("out_of_range", "a period of 2^32 blocks", set={"constants.treasury_vote_blocks": ROUND_MAX + 1})
+        no("out_of_range", "a parameter beyond its range, as in a proposal", set={"parameters.i_max_ppm": 1_000_001})
+        no("out_of_range", "a block size under the largest transaction", set={"parameters.max_block_bytes": 131_071})
+        no("bad_text", "a function that is neither json nor trie", set={"state_root_function": "merkle"})
+        no("bad_text", "a phase of the devnet that structure version 1 does not have: no transaction withdraws a "
+           "proposal", set={"governance.treasury.2.phase": "withdrawn"})
+        no("bad_text", "a contract without code", set={f"contracts.{contract}.code": ""})
+        no("bad_text", "an attestation under a name that is not a hash", remove=[f"attestations.{h('a4')}"],
+           set={"attestations.a4": {"issuer": e, "schema_id": "s", "subject": " ", "claim": {}, "bond": 0,
+                                    "issued_at": 100, "revoked_at": 200, "slashed": False}})
+        no("wrong_type", "a contract that holds an object in a field", set={f"contracts.{contract}.storage.count": {}})
+        no("bad_address", "a treasury that is not an address", set={"treasury_address": "kn1treasury"})
+        no("bad_address", "a balance under an address of another network",
+           set={"balances." + ref.address_from_hash(bytes(32), filler("address", 1, 48)): 1})
+        no("bad_key", "a key of another scheme in the registry",
+           set={f"keys.{f}.0.public_key": {"$concat": ["kpk2.", {"$text": [2646, "A"]}]}})
+        no("missing_field", "no treasury", remove=["treasury_address"])
+        no("missing_field", "no guardians", remove=["guardians"])
+        no("out_of_range", "two guardians: the two that release without the first would be all there is",
+           set={"guardians": [first, second]})
+        no("out_of_range", "nine guardians", set={"guardians": {"$list": [9, {"$account": {"$index": 160}}]}})
+        no("bad_address", "a guardian that is not an address", set={"guardians.1": "kn1guardian"})
+        self.no("state_payments", "bad_address", "a release by something that is not an address",
+                set={"governance.treasury.6.released_by": "kn1guardian"})
+        self.no("state_payments", "bad_text", "a phase that is not one of the five a treasury proposal has",
+                set={"governance.treasury.5.phase": "approved"})
+        no("missing_field", "no key registry", remove=["keys"])
+        no("missing_field", "a parameter without a value: the state has no default",
+           remove=["parameters.fee_floor_enabled"])
+        no("missing_field", "a constant without a value", remove=["constants.protocol_bond"])
+        no("unknown_field", "the level under its name of today, beside the level", set={"_current_level": 1000})
+        no("unknown_field", "the parameters of the issuance under their name of today",
+           set={"issuance_params": {"i_min_ppm": 2500}})
+        no("unknown_field", "an index that can be computed again", set={"attestations_by_subject": {}})
+        no("unknown_field", "a validator with its key: keys are in the registry",
+           set={"validators.0.pubkey": {"$key": 100}})
+        no("unknown_field", "a proposal with its history", set={"governance.protocol.0.phase_transitions": []})
+
+        # -- refused: a rule of the state, and that rule alone -----------------
+        supply = full["total_supply"]
+        rule = lambda breaks, why, **how: self.no("state_full", "inconsistent", why, breaks=breaks, **how)  # noqa: E731
+        rule("`validators` holds an address once", "a validator listed twice",
+             set={"validators.2.address": a, "consensus_set.2.address": a})
+        rule("`validators` holds an address once", "the snapshot in another order",
+             set={"consensus_set.0": {"address": b, "stake": 299_999_999},
+                  "consensus_set.1": {"address": a, "stake": 400_000_300}})
+        rule("`validators` holds an address once", "a snapshot that leaves a validator out", remove=["consensus_set.3"])
+        rule("is not above its stake", "a weight one above the stake of a validator and what is delegated to it",
+             set={"consensus_set.0.stake": 400_000_701})
+        rule("is not above its stake", "a weight that counts a delegation that is unbonding",
+             set={"consensus_set.1.stake": 300_000_001})
+        rule("Every validator has a key", "a validator without a key", remove=[f"keys.{q}"])
+        rule("An address of `contracts` is not in `keys`", "a contract at an address that has a key and has signed",
+             set={f"contracts.{d}": {"code": "x", "storage": {}}})
+        rule("An address of `contracts` is not in `keys`", "a contract at the address of a validator that has sent "
+             "nothing", set={f"contracts.{q}": {"code": "x", "storage": {}}})
+        rule("`treasury_address` is not in `keys`", "the treasury at the address of an account that has a key",
+             set={"treasury_address": d})
+        rule("`treasury_address` is not in `keys`", "the treasury at the address of a validator",
+             set={"treasury_address": q})
+        rule("`guardians` holds an address once", "a guardian listed twice", set={"guardians.2": second})
+        rule("A guardian is not `treasury_address`", "the treasury among its own guardians: it has no key, and "
+             "could release nothing", set={"guardians.1": self.address(9)})
+        rule("A guardian is not `treasury_address`", "a contract among the guardians", set={"guardians.2": contract})
+        rule("A guardian is not `treasury_address`", "a validator as the first guardian", set={"guardians.0": a})
+        rule("A guardian is not `treasury_address`", "a validator that has done nothing since the genesis, among "
+             "the guardians", set={"guardians.2": q})
+        rule("Every address of `nonces`", "an account that has sent a transaction and has no key",
+             set={f"nonces.{one}": 1})
+        rule("Every address of `nonces`", "a key for an address that has sent nothing and is not a validator",
+             set={f"keys.{self.account(150)}": [{"from": 10, "public_key": {"$key": 150}}]})
+        rule("the levels `from`", "two keys of an address current from the same level", set={f"keys.{d}.1.from": 12})
+        rule("the levels `from`", "a key due two levels ahead", set={f"keys.{e}.1.from": 1002})
+        rule("The first key of an address", "a first key whose hash is not the address",
+             set={f"keys.{f}.0.public_key": {"$key": 199}})
+        rule("A key stands once", "the key of one address given to another by a rotation",
+             set={f"keys.{e}.1.public_key": {"$key": 111}})
+        rule("A key stands once", "a rotation that keeps the ML-DSA part of the key it replaces",
+             set={f"keys.{d}.1.public_key": {"$key_of_parts": [110, 111]}})
+        rule("A key stands once", "a rotation that keeps the Ed25519 part of the key it replaces",
+             set={f"keys.{d}.1.public_key": {"$key_of_parts": [111, 110]}})
+        rule("`total_supply` is the sum", "a supply one above what exists", set={"total_supply": supply + 1})
+        rule("`total_supply` is the sum", "a supply one below what exists", set={"total_supply": supply - 1})
+        rule("A delegation names a validator", "a delegation to an address that is not a validator, which no "
+             "weight counts", set={f"delegations.{e}.validator": stranger, "consensus_set.0.stake": 400_000_000})
+        rule("A delegation names a validator", "a validator that delegates to itself",
+             set={f"delegations.{a}": {"validator": a, "amount": 1, "tranches": [{"level": 1, "amount": 1}]},
+                  "total_supply": supply + 1})
+        rule("A delegation names a validator", "an unbonding from an address that is not a validator",
+             set={"delegation_unbonding.1.validator": stranger})
+        rule("A delegation names a validator", "a validator whose delegation to itself unbonds",
+             set={"delegation_unbonding.1.delegator": a})
+        rule("Nothing happened after `level`", "a tranche bonded after the level of the state",
+             set={f"delegations.{e}.tranches.1.level": 1001})
+        rule("Nothing happened after `level`", "an attestation issued after the level of the state",
+             set={f"attestations.{h('a1')}.issued_at": 1001})
+        rule("Nothing happened after `level`", "a proposal that ends after the level of the state",
+             set={"governance.protocol.1.submitted_at": 801, "governance.protocol.1.ended_at": 1001})
+        rule("Nothing happened after `level`", "a double vote after the level of the state",
+             set={"governance.protocol.2.double_votes.0.level": 1001})
+        rule("Nothing happened after `level`", "a delegation that ended after the level of the state",
+             set={"delegation_unbonding.1.unbonding_from": 1001, "delegation_unbonding.1.release_at": 1301})
+        rule("Nothing happened after `level`", "a tranche of a delegation that unbonds, bonded after the level of "
+             "the state", set={"delegation_unbonding.0.tranches.0.level": 1001})
+        rule("Nothing happened after `level`", "an attestation revoked after the level of the state",
+             set={f"attestations.{h('a4')}.revoked_at": 1001})
+        rule("Nothing happened after `level`", "a slashed vote of a level after the level of the state",
+             set={"consensus_slashes.0.level": 1001})
+        rule("A delegation that is unbonding is released", "a release one level late",
+             set={"delegation_unbonding.0.release_at": 1251})
+        rule("A delegation that is unbonding is released", "a delegation that should have been released by the "
+             "block of this level", set={"delegation_unbonding.0.unbonding_from": 700,
+                                         "delegation_unbonding.0.release_at": 1000})
+        rule("A delegation that is unbonding is released", "two delegations that unbond, the later one first",
+             set={"delegation_unbonding.0.unbonding_from": 961, "delegation_unbonding.0.release_at": 1261})
+        rule("or earlier, holds no bond", "a bond that should have returned at this level",
+             set={f"attestations.{h('a2')}.revoked_at": 850})
+        rule("No two slashed votes", "the same vote slashed twice",
+             set={"consensus_slashes.1.kind": "endorse"})
+        rule("No two slashed votes", "a slashed vote 300 levels old", set={"consensus_slashes.0.level": 700})
+        rule("in the order of their submission", "two proposals of a track under one identifier",
+             set={"governance.treasury.2.proposal_id": h("c1")})
+        rule("in the order of their submission", "a proposal listed before one submitted earlier",
+             set={"governance.treasury.2.submitted_at": 960})
+        rule("The bond of a proposal", "a proposal with another bond than the one of its track",
+             set={"governance.treasury.2.bond": 1, "total_supply": supply - 10_000_000 + 1})
+        rule("in the phase of its level", "a proposal still submitted at the level at which its vote starts",
+             set={"governance.treasury.2.submitted_at": 800})
+        rule("in the phase of its level", "a proposal in its vote before its vote starts",
+             set={"governance.treasury.3.phase": "voting"})
+        rule("in the phase of its level", "a proposal submitted after the level of the state",
+             set={"governance.treasury.3.submitted_at": 1001})
+        rule("ended when a vote did", "a proposal activated one level before its adoption ends",
+             set={"governance.protocol.0.ended_at": 799})
+        rule("ended when a vote did", "a proposal activated at the end of its exploration",
+             set={"governance.protocol.1.phase": "activated"})
+        rule("ended when a vote did", "a treasury proposal rejected before its vote started",
+             set={"governance.treasury.0.ended_at": 890})
+        waits = lambda breaks, why, **how: self.no("state_payments", "inconsistent", why,   # noqa: E731
+                                                   breaks=breaks, **how)
+        waits("in the phase of its level", "a payment that still waits at the level at which its wait ends",
+              set={"governance.treasury.5.submitted_at": 550})
+        waits("in the phase of its level", "a proposal still in its vote at the level at which its vote ends",
+              set={"governance.treasury.10.submitted_at": 700})
+        waits("in the phase of its level", "a payment that waits before its vote has ended",
+              set={"governance.treasury.9.submitted_at": 701})
+        waits("`released_by` is a guardian other than the first", "a release recorded for the first guardian, who "
+              "releases alone", set={"governance.treasury.6.released_by": first})
+        waits("`released_by` is a guardian other than the first", "a release by an address that is not a guardian",
+              set={"governance.treasury.6.released_by": stranger})
+        waits("When `released_by` is present", "a release by another guardian one level before its delay had passed",
+              set={"governance.treasury.7.submitted_at": 651})
+        waits("ended when a vote did", "a payment made at the level at which its vote ended: no guardian could "
+              "release it before the next block", set={"governance.treasury.0.ended_at": 720})
+        waits("ended when a vote did", "a payment made one level after its wait ended",
+              set={"governance.treasury.1.ended_at": 881})
+        waits("ended when a vote did", "a payment rejected one level after its wait ended",
+              set={"governance.treasury.2.ended_at": 891})
+        waits("ended when a vote did", "a proposal rejected one level before its vote ended",
+              set={"governance.treasury.4.ended_at": 759})
+        rule("ended less than", "a proposal that ended 300 levels ago",
+             set={"governance.protocol.0.submitted_at": 300, "governance.protocol.0.ended_at": 700})
+        rule("are those of a validator", "the vote of an address that is not a validator",
+             set={f"governance.treasury.1.votes.{stranger}": "no"})
+        rule("are those of a validator", "a first vote on a protocol proposal by an address that is not a validator",
+             set={f"governance.protocol.2.exploration_votes.{stranger}": "yes"})
+        rule("are those of a validator", "a second vote on a protocol proposal by an address that is not a validator",
+             set={f"governance.protocol.0.adoption_votes.{stranger}": "abstain"})
+        rule("are those of a validator", "the slashed vote of an address that is not a validator",
+             set={"consensus_slashes.0.validator": stranger})
+
+        # -- refused: a rule of one table -------------------------------------
+        rule("whose levels grow", "a delegation that is not the sum of its tranches",
+             set={f"delegations.{e}.amount": 701, "total_supply": supply + 1})
+        rule("whose levels grow", "a delegation of less than its tranches",
+             set={f"delegations.{e}.amount": 699, "total_supply": supply - 1})
+        rule("whose levels grow", "two tranches of one level", set={f"delegations.{e}.tranches.1.level": 60})
+        rule("whose levels grow", "a delegation that unbonds and is not the sum of its tranches",
+             set={"delegation_unbonding.0.amount": 501, "total_supply": supply + 1})
+        rule("`revoked_at` is not lower", "an attestation revoked before it was issued",
+             set={f"attestations.{h('a4')}.revoked_at": 99})
+        rule("slashed holds no bond", "a slashed attestation that still holds a bond",
+             set={f"attestations.{h('a3')}.bond": 5, "total_supply": supply + 5})
+        rule("`activated` or `rejected`", "a proposal that is over and still holds its bond",
+             set={"governance.protocol.0.bond": 100_000_000, "total_supply": supply + 100_000_000})
+        rule("`activated` or `rejected`", "a proposal that is over and does not say since when",
+             remove=["governance.protocol.0.ended_at"])
+        rule("`executed` or `rejected`", "a proposal in its vote that holds no bond",
+             remove=["governance.treasury.1.bond"], set={"total_supply": supply - 10_000_000})
+        rule("`executed` or `rejected`", "a proposal that has ended and is still submitted",
+             set={"governance.treasury.3.ended_at": 990})
+        waits("`released_by` is present only", "a payment already made that still names who released it",
+              set={"governance.treasury.0.released_by": second})
+        waits("`released_by` is present only", "a proposal that its vote rejected and that names a guardian",
+              set={"governance.treasury.4.released_by": third})
+        waits("`executed` or `rejected`", "a payment that waits and holds no bond",
+              remove=["governance.treasury.5.bond"],
+              set={"total_supply": self.objects["state_payments"]["total_supply"] - 10_000_000})
+        waits("`executed` or `rejected`", "a payment that waits and says when it ended",
+              set={"governance.treasury.5.ended_at": 900})
+        rule("one double vote in a phase", "two double votes of a voter in one phase",
+             set={"governance.protocol.2.double_votes.1": {"voter": b, "phase": "exploration", "level": 970,
+                                                           "punished": True}})
+        rule("one double vote in a phase", "a double vote in a phase in which the voter has no vote",
+             set={"governance.protocol.2.double_votes.0.phase": "adoption"})
+        rule("`i_min_ppm` is not above", "the lowest rate of issuance above the highest",
+             set={"parameters.i_min_ppm": 60_001})
+        rule("is not lower than `epoch_blocks`", "an unbonding shorter than an epoch",
+             set={"constants.epoch_blocks": 301})
+        rule("is not above `treasury_release_blocks`", "a delay for the other guardians that ends after the wait "
+             "does: they could release nothing", set={"constants.guardian_delay_blocks": 151})
+        self.no("state_1024_validators", "out_of_range", "1,025 validators",
+                set={"validators.1024": {"address": {"$account": 99}, "stake": 1},
+                     "consensus_set.1024": {"address": {"$account": 99}, "stake": 1}})
+
+    def accounts_and_genesis(self) -> None:
+        top = INT_MAX
+        self.yes("account", "account", "the account of an address that holds a balance and has sent three "
+                 "transactions: what the state trie keeps under that address", {"balance": 1000, "nonce": 3},
+                 mutate=True)
+        self.yes("account_contract", "account", "the account of a contract: the hash of its code and the root of "
+                 "its storage", {"balance": 5, "nonce": 0, "code_hash": {"$text": [48, "c0"]},
+                                 "storage_root": {"$text": [48, "5a"]}}, mutate=True)
+        self.yes("account_highest", "account", "the highest balance and the highest nonce",
+                 {"balance": top, "nonce": top})
+        self.no("account_contract", "inconsistent", "the hash of a code without the root of a storage",
+                remove=["storage_root"], breaks="present together")
+        self.no("account_contract", "inconsistent", "the root of a storage without the hash of a code",
+                remove=["code_hash"], breaks="present together")
+        self.no("account", "unknown_field", "an account that holds its code and not its hash",
+                set={"code": "contract Counter { storage { count: int } }"})
+        self.no("account_contract", "bad_text", "a hash of 64 characters, as today",
+                set={"code_hash": {"$text": [32, "c0"]}})
+        self.no("account", "out_of_range", "a nonce below 0", set={"nonce": -1})
+
+        first = {"version": 1, "scheme": 1, "network_id": self.network_id.hex(), "timestamp": 1794000000,
+                 "state": {"$ref": "state_first"}}
+        maps = tuple("state." + name
+                     for name in ("balances", "nonces", "contracts", "keys", "delegations", "attestations"))
+        self.yes("genesis", "genesis", "a genesis: the structure version, the signature scheme, the network, the "
+                 "moment, and the first state", first, mutate=True, maps=maps)
+        self.yes("genesis_trie", "genesis", "the same genesis with a first state under the function trie: another "
+                 "state root, another block of level 0", {**first, "state": {"$ref": "state_first_trie"}})
+        self.yes("genesis_earliest", "genesis", "the lowest value of every range, at the first second there is",
+                 {**first, "timestamp": 0, "state": {"$ref": "state_lowest"}})
+        self.yes("genesis_1024_validators", "genesis", "a genesis with as many validators as a network can have",
+                 {**first, "timestamp": top, "state": {"$ref": "state_1024_validators"}})
+
+        a = self.account(100)
+        no = lambda rule, why, **how: self.no("genesis", rule, why, **how)                  # noqa: E731
+        rule = lambda breaks, why, **how: self.no("genesis", "inconsistent", why, breaks=breaks, **how)  # noqa: E731
+        no("missing_field", "a genesis without its moment: nothing takes the time of the machine in its place",
+           remove=["timestamp"])
+        no("missing_field", "a genesis without a network identifier", remove=["network_id"])
+        no("out_of_range", "another structure version", set={"version": 2})
+        no("out_of_range", "another signature scheme", set={"scheme": 2})
+        no("bad_text", "a network identifier of 62 characters", set={"network_id": {"$text": [31, "a0"]}})
+        no("bad_address", "the same genesis under the identifier of another network: no address of it is an "
+           "address of that network", set={"network_id": {"$text": [32, "00"]}})
+        no("unknown_field", "a genesis with the name of its chain beside its state", set={"chain_id": "kern-devnet"})
+        no("unknown_field", "a note for the reader", set={"_notice": "DEVNET GENESIS"})
+        no("unknown_field", "a mark of the tools of today", set={"placeholder_keys": True})
+        rule("The `level` of `state` is 0", "a first state of level 1", set={"state.level": 1})
+        rule("are empty", "a first state in which a validator has already sent a transaction",
+             set={f"state.nonces.{a}": 1})
+        rule("are empty", "a first state that holds a contract",
+             set={f"state.contracts.{self.address(20)}": {"code": "x", "storage": {}}})
+        holder, supply = self.address(1), self.objects["state_first"]["total_supply"]
+        tranches = [{"level": 0, "amount": 1}]
+        rule("are empty", "a first state that holds a delegation",
+             set={f"state.delegations.{holder}": {"validator": a, "amount": 1, "tranches": tranches},
+                  "state.total_supply": supply + 1})
+        rule("are empty", "a first state in which a delegation unbonds",
+             set={"state.delegation_unbonding.0": {"delegator": holder, "validator": a, "amount": 1,
+                                                   "tranches": tranches, "unbonding_from": 0, "release_at": 300},
+                  "state.total_supply": supply + 1})
+        rule("are empty", "a first state that holds an attestation",
+             set={"state.attestations." + "a1" * 48: {"issuer": holder, "schema_id": "s", "subject": " ", "claim": {},
+                                                      "bond": 0, "issued_at": 0, "slashed": False}})
+        rule("are empty", "a first state that holds a slashed vote",
+             set={"state.consensus_slashes.0": {"validator": a, "kind": "endorse", "level": 0, "round": 0}})
+        rule("are empty", "a first state that holds a protocol proposal",
+             set={"state.governance.protocol.0": {
+                 "proposal_id": "b1" * 48, "submitter": a, "payload": {"params": {"treasury_share_ppm": 1}},
+                 "submitted_at": 0, "phase": "submitted", "exploration_votes": {}, "adoption_votes": {},
+                 "double_votes": [], "bond": 100_000_000}, "state.total_supply": supply + 100_000_000})
+        rule("are empty", "a first state that holds a proposal",
+             set={"state.governance.treasury.0": {
+                 "proposal_id": "c1" * 48, "submitter": a, "payload": {"recipients": [{"address": a, "amount": 1}]},
+                 "submitted_at": 0, "phase": "submitted", "votes": {}, "bond": 10_000_000},
+                 "state.total_supply": self.objects["state_first"]["total_supply"] + 10_000_000})
+        rule("one key, current from level 0", "a validator whose key is current from level 1",
+             set={f"state.keys.{a}.0.from": 1})
+        rule("one key, current from level 0", "a validator with a second key, due at level 1",
+             set={f"state.keys.{a}.1": {"from": 1, "public_key": {"$key": 190}}})
+        rule("`consensus_set` is `validators`", "a snapshot that gives a validator another weight",
+             set={"state.consensus_set.0.stake": 2})
+        # The rules of a state are rules of a genesis.
+        rule("`i_min_ppm` is not above", "a genesis whose rates of issuance are crossed",
+             set={"state.parameters.i_min_ppm": 60_001})
+        rule("`total_supply` is the sum", "a genesis whose supply is not the sum of what it gives",
+             set={"state.total_supply": self.objects["state_first"]["total_supply"] + 1})
+        rule("Every validator has a key", "a genesis with a validator that has no key",
+             remove=[f"state.keys.{self.account(102)}"])
+        rule("`treasury_address` is not in `keys`", "a genesis whose treasury is the address of one of its validators",
+             set={"state.treasury_address": a})
+        self.no("genesis_1024_validators", "out_of_range", "a genesis with 1,025 validators",
+                set={"state.validators.1024": {"address": {"$account": 99}, "stake": 1},
+                     "state.consensus_set.1024": {"address": {"$account": 99}, "stake": 1}})
+
+        # A genesis is read as a text is received, without a bound on its length.
+        written, depth = {"$canonical": {"$ref": "genesis"}}, LIMITS["json_nesting"]
+        self.text("genesis", "accepted", "a genesis as a node reads it: the canonical encoding of the object", written)
+        self.text("genesis", "not_canonical", "the same text with a line feed at its end, as an editor leaves one",
+                  {"$concat": [written, "\n"]})
+        self.text("genesis", "wrong_type", "a genesis inside a list", {"$concat": ["[", written, "]"]})
+        self.text("genesis", "too_deep", "65 arrays, one inside the other: the nesting of a genesis is measured "
+                  "first, like that of any text",
+                  {"$concat": [{"$text": [depth + 1, "["]}, {"$text": [depth + 1, "]"]}]})
+        self.text("genesis", "not_canonical", f"{LIMITS['frame_bytes'] + 1:,} spaces: a frame of that length is too "
+                  "long, and a genesis has no bound on its length, so its encoding answers",
+                  {"$text": [LIMITS["frame_bytes"] + 1, " "]})
+
+    def charges(self) -> None:
+        """What a block charges: blocks of transfers on a state, valid or
+        invalid, and what they leave."""
+        proposer, treasury = self.address(40), self.address(49)
+        s1, s2, s3, r1 = (self.address(n) for n in (41, 42, 43, 44))
+        chain = "kern-devnet"
+
+        def transfer(sender: int, nonce: Any, amount: int, recipient: int = 44, fee: int = 1000, sig: Any = 1,
+                     chain_id: str = chain) -> dict:
+            tx = self.tx("transfer", nonce=nonce, sig=sig, sender={"$address": sender},
+                         recipient={"$address": recipient}, amount=amount)
+            return {**tx, "fee": fee, "chain_id": chain_id}
+
+        def block(why: str, balances: dict, nonces: dict, transactions: Any, rule: str = "", at: int | None = None,
+                  **parameters: Any) -> dict:
+            state = {"chain_id": chain, "treasury_address": treasury,
+                     "parameters": {**PARAMETERS_OF_TODAY, **parameters}, "balances": balances, "nonces": nonces}
+            result = sch.charge(state, proposer, self.expand(transactions))
+            record: dict[str, Any] = {"why": why, "state": state, "proposer": proposer, "transactions": transactions}
+            if rule:
+                assert result == ({"valid": False, "rule": rule} if at is None else
+                                  {"valid": False, "rule": rule, "at": at}), (why, result)
+                record["rule"] = rule
+                if at is not None:
+                    record["at"] = at
+            else:
+                assert result["valid"], (why, result)
+                record["then"] = {name: result[name] for name in ("balances", "nonces", "failed")}
+            self.charged.append(record)
+            return result
+
+        size = sch.transaction_size(self.expand(transfer(41, 0, 0, fee=9999)))
+        left = block("three transfers of three senders: each pays its fee to the proposer and takes its next nonce; "
+                     "the first sender has spent everything and leaves `balances`, and the recipient enters it",
+                     {s1: 1025, s2: 5000, s3: 9000}, {s2: 7},
+                     [transfer(41, 0, 25), transfer(42, 7, 100, sig=2), transfer(43, 0, 1, sig=3)])
+        assert left["balances"] == {s2: 3900, s3: 7999, r1: 126, proposer: 3000}
+        assert left["nonces"] == {s1: 1, s2: 8, s3: 1}
+        block("a transfer whose sender holds the fee and not the amount: it fails, stays in the block and has paid",
+              {s1: 1024}, {}, [transfer(41, 0, 25)])
+        assert self.charged[-1]["then"] == {"balances": {s1: 24, proposer: 1000}, "nonces": {s1: 1}, "failed": [0]}
+        block("a sender that holds exactly its fee, and moves nothing", {s1: 1000}, {}, [transfer(41, 0, 0)])
+        block("two transactions of one sender, one after the other", {s1: 5000}, {s1: 3},
+              [transfer(41, 3, 10), transfer(41, 4, 10, sig=2)])
+        block("the proposer pays a fee with a fee it received earlier in the block",
+              {s1: 1000}, {}, [transfer(41, 0, 0), transfer(40, 0, 0, sig=2)])
+        block("no transaction: a block can be empty", {s1: 5}, {s1: 2}, [])
+        block("a nonce that is not the next one: the block is invalid", {s1: 5000}, {s1: 3}, [transfer(41, 4, 10)],
+              "wrong_nonce", 0)
+        block("a nonce that is consumed", {s1: 5000}, {s1: 3}, [transfer(41, 2, 10)], "wrong_nonce", 0)
+        block("one nonce twice in a block", {s1: 5000}, {}, [transfer(41, 0, 10), transfer(41, 0, 20, sig=2)],
+              "wrong_nonce", 1)
+        block("the last transaction an account can send: its nonce becomes 2^63 - 1, the highest a state holds",
+              {s1: 5000}, {s1: INT_MAX - 1}, [transfer(41, INT_MAX - 1, 10)])
+        assert self.charged[-1]["then"]["nonces"] == {s1: INT_MAX}
+        block("a sender whose nonce is 2^63 - 1 sends nothing more: its nonce could not go up",
+              {s1: 5000}, {s1: INT_MAX}, [transfer(41, INT_MAX, 10)], "wrong_nonce", 0)
+        block("a sender one mukrn short of its fee", {s1: 999}, {}, [transfer(41, 0, 0)], "unpaid_fee", 0)
+        block("a sender that holds nothing", {}, {}, [transfer(41, 0, 0)], "unpaid_fee", 0)
+        block("a sender that could pay when the block started, and cannot when its turn comes: its first transaction "
+              "moved what it held", {s1: 2000}, {}, [transfer(41, 0, 1000), transfer(41, 1, 0, sig=2)], "unpaid_fee", 1)
+        block("a transaction that names another chain", {s1: 5000}, {}, [transfer(41, 0, 1, chain_id="kern-testnet")],
+              "wrong_chain", 0)
+        block("a transfer to the treasury: anyone can give to it", {s1: 5000, treasury: 70}, {},
+              [transfer(41, 0, 30, recipient=49)])
+        assert self.charged[-1]["then"]["balances"] == {s1: 3970, treasury: 100, proposer: 1000}
+        block("a transfer sent by the treasury address, which holds the amount and the fee: only a vote moves what "
+              "the treasury holds", {treasury: 5000}, {}, [transfer(49, 0, 10)], "sent_by_treasury", 0)
+        block("the second transaction of a block is sent by the treasury address", {s1: 5000, treasury: 5000}, {},
+              [transfer(41, 0, 10), transfer(49, 0, 10, sig=2)], "sent_by_treasury", 1)
+        floor = PARAMETERS_OF_TODAY["fee_floor_base"] + PARAMETERS_OF_TODAY["fee_floor_per_byte"] * size
+        assert (size, floor) == (4790, 9680), (size, floor)
+        block(f"the fee floor on: a transfer of {size:,} bytes pays {floor:,} at least, and this one does",
+              {s1: floor}, {}, [transfer(41, 0, 0, fee=floor)], fee_floor_enabled=True)
+        block("the fee floor on: a fee one mukrn under the floor", {s1: floor}, {}, [transfer(41, 0, 0, fee=floor - 1)],
+              "fee_under_floor", 0, fee_floor_enabled=True)
+        block("the fee floor off: a fee of 0", {s1: 7}, {}, [transfer(41, 0, 7, fee=0)])
+        many = lambda count: {"$list": [count, transfer(41, {"$index": 0}, 0, fee=0,       # noqa: E731
+                                                        sig={"$index": 600})]}
+        smallest = LIMITS["transaction_bytes"]
+        fits = max(n for n in range(1, 40) if sum(sch.transaction_size(t) for t in self.expand(many(n))) <= smallest)
+        assert fits == 27
+        block(f"the smallest `max_block_bytes`: {fits} transfers fit", {}, {}, many(fits), max_block_bytes=smallest)
+        block("one transfer more: the block is too large", {}, {}, many(fits + 1), "block_too_large",
+              max_block_bytes=smallest)
+        filled = sum(sch.transaction_size(tx) for tx in self.expand(many(fits + 1)))
+        assert filled == 134_054, filled
+        block(f"{fits + 1} transfers that fill a block of {filled:,} bytes to the byte", {}, {}, many(fits + 1),
+              max_block_bytes=filled)
+        block("the same block when `max_block_bytes` is one byte less", {}, {}, many(fits + 1), "block_too_large",
+              max_block_bytes=filled - 1)
+
+    def decisions(self) -> None:
+        """Proposals that are decided at one level: what they do, taken
+        in one order and in the other."""
+        today = PARAMETERS_OF_TODAY
+
+        def decide(why: str, protocol: list, treasury: list, then: dict, **before: Any) -> None:
+            start = {"parameters": {**today, **before.pop("parameters", {})}, "state_root_function": "json",
+                     "treasury": 1000, "protocol_bond": 100, "treasury_bond": 10, **before}
+            result = sch.decide(start, protocol, treasury)
+            expected = {"protocol": [], "treasury": [], "state_root_function": start["state_root_function"],
+                        "treasury_holds": start["treasury"], "burned": 0, **then,
+                        "parameters": {**start["parameters"], **then.get("parameters", {})}}
+            assert result == expected, (why, result)
+            self.decided.append({"why": why, "before": start, "protocol": protocol, "treasury": treasury,
+                                    "then": result})
+
+        passes = lambda **payload: {"payload": payload, "passes": True}                    # noqa: E731
+        voted = lambda passed=True: {"phase": "voting", "passes": passed}                  # noqa: E731
+        waited = {"phase": "passed"}
+        share = lambda value: passes(params={"treasury_share_ppm": value})                 # noqa: E731
+        low, high = passes(params={"i_min_ppm": 50_000}), passes(params={"i_max_ppm": 40_000})
+        wider, higher = passes(params={"i_max_ppm": 90_000}), passes(params={"i_min_ppm": 70_000})
+
+        decide("nothing ends at this level", [], [], {})
+        decide("a protocol proposal whose vote passes: its parameters replace those of the state, and its bond returns",
+               [share(10_000)], [], {"protocol": ["activated"], "parameters": {"treasury_share_ppm": 10_000}})
+        decide("a protocol proposal whose vote fails: half its bond is burned, the rest goes to the treasury",
+               [{"payload": {"params": {"treasury_share_ppm": 10_000}}, "passes": False}], [],
+               {"protocol": ["rejected"], "treasury_holds": 1050, "burned": 50})
+        decide("a bond of an odd amount: the half that is burned is rounded down",
+               [{"payload": {"params": {"treasury_share_ppm": 10_000}}, "passes": False}], [],
+               {"protocol": ["rejected"], "treasury_holds": 1051, "burned": 50}, protocol_bond=101)
+        decide("two proposals set one parameter: the later one of the list has the last word",
+               [share(10_000), share(20_000)], [],
+               {"protocol": ["activated", "activated"], "parameters": {"treasury_share_ppm": 20_000}})
+        decide("the same two in the other order: another value",
+               [share(20_000), share(10_000)], [],
+               {"protocol": ["activated", "activated"], "parameters": {"treasury_share_ppm": 10_000}})
+        decide("two proposals move one bound each and cross together: the second is rejected",
+               [low, high], [], {"protocol": ["activated", "rejected"], "parameters": {"i_min_ppm": 50_000},
+                                 "treasury_holds": 1050, "burned": 50})
+        decide("the same two in the other order: the other one is rejected",
+               [high, low], [], {"protocol": ["activated", "rejected"], "parameters": {"i_max_ppm": 40_000},
+                                 "treasury_holds": 1050, "burned": 50})
+        decide("a proposal that only fits after another one: the highest rate goes up first, then the lowest",
+               [wider, higher], [],
+               {"protocol": ["activated", "activated"], "parameters": {"i_min_ppm": 70_000, "i_max_ppm": 90_000}},
+               parameters={"i_min_ppm": 50_000, "i_max_ppm": 60_000})
+        decide("the same two in the other order: the lowest rate cannot go above the highest yet",
+               [higher, wider], [],
+               {"protocol": ["rejected", "activated"], "parameters": {"i_max_ppm": 90_000},
+                "treasury_holds": 1050, "burned": 50},
+               parameters={"i_min_ppm": 50_000, "i_max_ppm": 60_000})
+        decide("the two rates set equal", [passes(params={"i_min_ppm": 60_000})], [],
+               {"protocol": ["activated"], "parameters": {"i_min_ppm": 60_000}})
+        decide("two proposals change the function of the state root: the later one has the last word",
+               [passes(swap="state_root_function", to="trie"), passes(swap="state_root_function", to="json")], [],
+               {"protocol": ["activated", "activated"], "state_root_function": "json"}, state_root_function="trie")
+        decide("a proposal that is rejected changes nothing: neither its parameters nor its function",
+               [passes(params={"i_min_ppm": 70_000}, swap="state_root_function", to="trie")], [],
+               {"protocol": ["rejected"], "treasury_holds": 1050, "burned": 50})
+        decide("a treasury proposal whose vote passes: nothing is paid, its bond stays held, and it waits for a "
+               "guardian", [], [voted()], {"treasury": ["passed"]})
+        decide("a treasury proposal whose vote fails: half its bond is burned, the rest goes to the treasury",
+               [], [voted(False)], {"treasury": ["rejected"], "treasury_holds": 1005, "burned": 5})
+        decide("a payment that nobody released by the end of its wait: it is rejected, and its bond is lost the "
+               "same way", [], [waited], {"treasury": ["rejected"], "treasury_holds": 1005, "burned": 5})
+        decide("a bond of an odd amount on the treasury track", [], [waited],
+               {"treasury": ["rejected"], "treasury_holds": 1006, "burned": 5}, treasury_bond=11)
+        decide("a vote that passes, a vote that fails and a wait that ends, at one level: each in its turn",
+               [], [voted(), voted(False), waited],
+               {"treasury": ["passed", "rejected", "rejected"], "treasury_holds": 1010, "burned": 10})
+        decide("both tracks lose a bond at one level: the protocol track first, then the treasury track",
+               [{"payload": {"params": {"treasury_share_ppm": 1}}, "passes": False}], [voted(False), voted()],
+               {"protocol": ["rejected"], "treasury": ["rejected", "passed"], "treasury_holds": 1055, "burned": 55})
+
+    def payments(self) -> None:
+        """Payments that wait, and what the transactions of guardians do
+        to them in one block. Guardians, senders and identifiers are short
+        names here: the rules only compare them."""
+        first, second, third, stranger = "first", "second", "third", "stranger"
+
+        def guard(why: str, payments: dict, operations: list, did: list, then: dict | None = None,
+                  **before: Any) -> None:
+            start = {"level": 1000, "guardians": [first, second, third], "treasury": 1000, "treasury_bond": 10,
+                     "guardian_delay_blocks": 50, **before, "payments": payments}
+            result = sch.guard(start, operations)
+            after = {identifier: {name: value for name, value in entry.items() if name in ("phase", "released_by")}
+                     for identifier, entry in payments.items()}
+            then = dict(then or {})
+            for identifier, entry in then.pop("payments", {}).items():
+                after[identifier] = entry
+            expected = {"did": did, "treasury_holds": start["treasury"], "burned": 0, "payments": after, **then}
+            assert result == expected, (why, result)
+            self.guarded.append({"why": why, "before": start, "operations": operations, "then": result})
+
+        def waiting(total: int = 600, voted: int = 900, phase: str = "passed", **more: Any) -> dict:
+            return {"phase": phase, "voted": voted, "total": total, "to_itself": 0, **more}
+
+        release = lambda sender, name="p": {"sender": sender, "kind": "release_payment",   # noqa: E731
+                                            "proposal_id": name}
+        cancel = lambda sender, name="p": {"sender": sender, "kind": "cancel_payment",     # noqa: E731
+                                           "proposal_id": name}
+        paid, dropped = {"phase": "executed"}, {"phase": "rejected"}
+
+        guard("the first guardian releases a payment that waits: it is paid in that transaction",
+              {"p": waiting()}, [release(first)], ["paid"], {"treasury_holds": 400, "payments": {"p": paid}})
+        guard("the first guardian releases in the block that follows the end of the vote, long before the others can",
+              {"p": waiting()}, [release(first)], ["paid"], {"treasury_holds": 400, "payments": {"p": paid}},
+              level=901)
+        guard("in the block of the level at which its vote ends, a proposal is still in its vote when the "
+              "transactions are applied: nobody releases it yet",
+              {"p": waiting(voted=1000, phase="voting")}, [release(first), cancel(first)],
+              ["not_waiting", "not_waiting"])
+        guard("the first guardian cancels: the payment is rejected, half its bond is burned and the rest goes to "
+              "the treasury", {"p": waiting()}, [cancel(first)], ["cancelled"],
+              {"treasury_holds": 1005, "burned": 5, "payments": {"p": dropped}})
+        guard("a bond of an odd amount: the half that is burned is rounded down",
+              {"p": waiting()}, [cancel(first)], ["cancelled"],
+              {"treasury_holds": 1006, "burned": 5, "payments": {"p": dropped}}, treasury_bond=11)
+        guard("another guardian releases one level before its delay has passed",
+              {"p": waiting()}, [release(second)], ["too_early"], level=949)
+        guard("another guardian releases at the level at which its delay has passed: its release is recorded, and "
+              "nothing is paid", {"p": waiting()}, [release(second)], ["recorded"],
+              {"payments": {"p": {"phase": "passed", "released_by": second}}}, level=950)
+        guard("a second guardian releases a payment that another one released: it is paid",
+              {"p": waiting(released_by=second)}, [release(third)], ["paid"],
+              {"treasury_holds": 400, "payments": {"p": paid}})
+        guard("the two releases in one block", {"p": waiting()}, [release(third), release(second)],
+              ["recorded", "paid"], {"treasury_holds": 400, "payments": {"p": paid}})
+        guard("the same guardian releases twice in one block: its second release fails, and the payment still waits "
+              "for another guardian", {"p": waiting()}, [release(second), release(second)],
+              ["recorded", "released_twice"], {"payments": {"p": {"phase": "passed", "released_by": second}}})
+        guard("a guardian that released comes back in a later block: it releases once",
+              {"p": waiting(released_by=third)}, [release(third)], ["released_twice"])
+        guard("the first guardian releases a payment that another guardian released: it is paid",
+              {"p": waiting(released_by=third)}, [release(first)], ["paid"],
+              {"treasury_holds": 400, "payments": {"p": paid}})
+        guard("the first guardian cancels a payment that another guardian released",
+              {"p": waiting(released_by=second)}, [cancel(first)], ["cancelled"],
+              {"treasury_holds": 1005, "burned": 5, "payments": {"p": dropped}})
+        guard("another guardian cannot cancel, even a payment it released",
+              {"p": waiting(released_by=second)}, [cancel(second), cancel(third)],
+              ["not_the_first", "not_the_first"])
+        guard("an address that is not a guardian releases, then cancels",
+              {"p": waiting()}, [release(stranger), cancel(stranger)], ["not_a_guardian", "not_a_guardian"])
+        guard("who is first is the order of the list: with another list, the same address waits like the others",
+              {"p": waiting()}, [release(first), cancel(first), release(second)],
+              ["too_early", "not_the_first", "paid"], {"treasury_holds": 400, "payments": {"p": paid}},
+              guardians=[second, first, third], level=949)
+        guard("a proposal that does not wait is neither released nor cancelled: one already paid, one rejected, "
+              "one that is not voted yet, and one that the state does not hold",
+              {"p": waiting(phase="executed"), "q": waiting(phase="rejected"), "r": waiting(phase="submitted")},
+              [release(first, "p"), cancel(first, "q"), release(second, "r"), release(first, "s")],
+              ["not_waiting"] * 4)
+        guard("the sender is looked at first: an address that is not a guardian and names nothing that waits",
+              {"p": waiting(phase="executed")}, [release(stranger)], ["not_a_guardian"])
+        guard("then the payment: another guardian cancels a proposal that does not wait",
+              {"p": waiting(phase="rejected")}, [cancel(second)], ["not_waiting"])
+        guard("then the delay: before it has passed, a release fails for that reason, whoever is recorded",
+              {"p": waiting(released_by=second)}, [release(second), release(third)], ["too_early", "too_early"],
+              level=949)
+        guard("a payment of everything the treasury holds", {"p": waiting(1000)}, [release(first)], ["paid"],
+              {"treasury_holds": 0, "payments": {"p": paid}})
+        guard("one mukrn more than the treasury holds: the release fails, and the payment goes on waiting",
+              {"p": waiting(1001)}, [release(first)], ["unfunded"])
+        guard("the release of a second guardian that cannot be paid: the release of the first one stays recorded",
+              {"p": waiting(1001, released_by=second)}, [release(third)], ["unfunded"])
+        guard("a release that is only recorded does not look at what the treasury holds",
+              {"p": waiting(1001)}, [release(second)], ["recorded"],
+              {"payments": {"p": {"phase": "passed", "released_by": second}}})
+        guard("two payments the treasury cannot make both: the one released first is paid",
+              {"p": waiting(), "q": waiting()}, [release(first, "p"), release(first, "q")], ["paid", "unfunded"],
+              {"treasury_holds": 400, "payments": {"p": paid}})
+        guard("the same two released in the other order: the other one is paid",
+              {"p": waiting(), "q": waiting()}, [release(first, "q"), release(first, "p")], ["paid", "unfunded"],
+              {"treasury_holds": 400, "payments": {"q": paid}})
+        guard("a payment that names the treasury among its recipients: what the treasury pays itself is still "
+              "there for the payment that follows",
+              {"p": waiting(1000, to_itself=400), "q": waiting(400)}, [release(first, "p"), release(first, "q")],
+              ["paid", "paid"], {"treasury_holds": 0, "payments": {"p": paid, "q": paid}})
+        guard("the same payment is judged on its whole sum: one mukrn more than the treasury holds, and its "
+              "release fails, whoever it pays", {"p": waiting(1001, to_itself=400)}, [release(first)], ["unfunded"])
+        guard("a cancellation pays for a release: the half of the bond that the treasury keeps is there for the "
+              "payment that follows", {"p": waiting(), "q": waiting(1005)}, [cancel(first, "p"), release(first, "q")],
+              ["cancelled", "paid"], {"treasury_holds": 0, "burned": 5, "payments": {"p": dropped, "q": paid}})
+        guard("the same two in the other order: the release comes too soon",
+              {"p": waiting(), "q": waiting(1005)}, [release(first, "q"), cancel(first, "p")],
+              ["unfunded", "cancelled"], {"treasury_holds": 1005, "burned": 5, "payments": {"p": dropped}})
+        guard("a release, then a cancellation of the same payment in one block: it is already made",
+              {"p": waiting()}, [release(first), cancel(first)], ["paid", "not_waiting"],
+              {"treasury_holds": 400, "payments": {"p": paid}})
+        guard("a cancellation, then a release: nothing waits any more",
+              {"p": waiting()}, [cancel(first), release(first), release(second)],
+              ["cancelled", "not_waiting", "not_waiting"],
+              {"treasury_holds": 1005, "burned": 5, "payments": {"p": dropped}})
+
+    # -- chapter 2: the arithmetic of a block ----------------------------------
+
+    def rewards(self) -> None:
+        """The reward of a block: what is staked, the rate, what is minted
+        and who receives it. The addresses are short names: the rules only
+        compare them."""
+        top = INT_MAX
+        supply = 100_000_000_000_000                                                         # 100 million KRN
+        half = supply // 2
+
+        def reward(why: str, total: int, validators: dict, delegations: dict, staked: int, rate: int, minted: int,
+                   credits: dict, **parameters: Any) -> None:
+            before = {"total_supply": total, "treasury_address": "treasury",
+                      "parameters": {**REWARD_PARAMETERS, **parameters},
+                      "validators": [{"address": address, "stake": stake} for address, stake in validators.items()],
+                      "delegations": {delegator: {"validator": validator, "amount": amount}
+                                      for delegator, (validator, amount) in delegations.items()}}
+            result = sch.reward(before, "p")
+            assert result == {"staked": staked, "rate": rate, "reward": minted, "credits": credits,
+                              "total_supply": total + minted}, (why, result)
+            assert sum(credits.values()) == minted and total + minted <= top, why
+            self.rewarded.append({"why": why, "before": before, "proposer": "p", "then": result})
+
+        reward("half of the supply is staked, which is the target: the lowest rate. The treasury receives its share, "
+               "rounded down, and the proposer the rest",
+               supply, {"p": half}, {}, half, 2_500, 7_922, {"treasury": 396, "p": 7_526})
+        reward("almost nothing is staked: the highest rate",
+               supply, {"p": 1}, {}, 1, 60_000, 190_128, {"treasury": 9_506, "p": 180_622})
+        reward("a quarter of the supply is staked, half the target: the rate is half way",
+               supply, {"p": half // 2}, {}, half // 2, 31_250, 99_025, {"treasury": 4_951, "p": 94_074})
+        reward("a ratio one part per million under the target: the curve is rounded down to the lowest rate",
+               supply, {"p": 49_999_900_000_000}, {}, 49_999_900_000_000, 2_500, 7_922, {"treasury": 396, "p": 7_526})
+        reward("more than the target is staked: the lowest rate, and no lower",
+               supply, {"p": 80_000_000_000_000}, {}, 80_000_000_000_000, 2_500, 7_922, {"treasury": 396, "p": 7_526})
+        reward("a target of 0: the lowest rate whatever is staked",
+               supply, {"p": 1}, {}, 1, 2_500, 7_922, {"treasury": 396, "p": 7_526}, target_staking_ratio_ppm=0)
+        reward("a target of 1,000,000: everything should be staked, and half is",
+               supply, {"p": half}, {}, half, 31_250, 99_025, {"treasury": 4_951, "p": 94_074},
+               target_staking_ratio_ppm=1_000_000)
+        reward("a ratio and a target that divide into nothing round: every division is rounded down, each in its turn",
+               supply, {"p": 33_333_400_000_000}, {}, 33_333_400_000_000, 33_301, 105_524,
+               {"treasury": 5_276, "p": 100_248}, target_staking_ratio_ppm=700_000)
+        reward("a supply of 3 mukrn, 1 of them staked: the ratio is 333,333",
+               3, {"p": 1}, {}, 1, 17_407, 0, {})
+        reward("both rates at 0: nothing is minted, and nothing is written",
+               supply, {"p": 1}, {}, 1, 0, 0, {}, i_min_ppm=0, i_max_ppm=0)
+        reward("both rates at 1,000,000 and a block an hour: 8,766 blocks a year share the supply",
+               supply, {"p": 1}, {}, 1, 1_000_000, 11_407_711_613, {"treasury": 570_385_580, "p": 10_837_326_033},
+               i_min_ppm=1_000_000, i_max_ppm=1_000_000, target_block_time_ms=3_600_000)
+        reward("a block of 3,599,999 milliseconds: the blocks of a year are rounded down to 8,766 before anything is "
+               "divided by them, and the reward is the one of a block an hour",
+               supply, {"p": 1}, {}, 1, 1_000_000, 11_407_711_613, {"treasury": 570_385_580, "p": 10_837_326_033},
+               i_min_ppm=1_000_000, i_max_ppm=1_000_000, target_block_time_ms=3_599_999)
+        reward("a block a millisecond: 31,557,600,000 blocks a year",
+               supply, {"p": 1}, {}, 1, 60_000, 190, {"treasury": 9, "p": 181}, target_block_time_ms=1)
+        reward("a block every 7 milliseconds", supply, {"p": 1}, {}, 1, 60_000, 1_330, {"treasury": 66, "p": 1_264},
+               target_block_time_ms=7)
+        reward("a treasury share of 0: the proposer receives everything, and the treasury is not written",
+               supply, {"p": half}, {}, half, 2_500, 7_922, {"p": 7_922}, treasury_share_ppm=0)
+        reward("a treasury share of 1,000,000: the treasury receives everything, and the proposer is not written",
+               supply, {"p": half}, {}, half, 2_500, 7_922, {"treasury": 7_922}, treasury_share_ppm=1_000_000)
+        reward("a reward of 1 mukrn: the share of the treasury is rounded down to nothing",
+               12_623_040_000, {"p": 6_311_520_000}, {}, 6_311_520_000, 2_500, 1, {"p": 1})
+        reward("a supply too small for a reward: nothing is minted",
+               1_000_000, {"p": 1}, {}, 1, 59_999, 0, {})
+        reward("two delegators of the proposer and one of another validator. The proposer keeps a tenth of what it "
+               "receives, 752 of 7,526; the rest is shared on its stake and its two delegations. One delegator "
+               "receives 2,709, the other one a share rounded down to nothing, and the proposer keeps what they do "
+               "not receive. What is delegated to the other validator is staked, and receives nothing",
+               supply, {"p": 30_000_000_000_000, "q": 4_000_000_000_000},
+               {"d1": ("p", 20_000_000_000_000), "d2": ("p", 1), "d3": ("q", 5_999_999_999_999)},
+               60_000_000_000_000, 2_500, 7_922, {"treasury": 396, "d1": 2_709, "p": 4_817})
+        reward("a validator delegates to the proposer, and the proposer to that validator: the first receives the "
+               "share of a delegator, and what the proposer delegated elsewhere earns nothing here",
+               supply, {"p": 20_000_000_000_000, "q": 10_000_000_000_000},
+               {"q": ("p", 10_000_000_000_000), "p": ("q", 10_000_000_000_000)},
+               half, 2_500, 7_922, {"treasury": 396, "q": 2_258, "p": 5_268})
+        reward("the proposer receives 9 mukrn: a tenth of 9, rounded down, is no commission at all, and its only "
+               "delegator, which backs it almost alone, receives 8",
+               113_607_360_000, {"p": 1}, {"d1": ("p", 56_803_679_999)}, 56_803_680_000, 2_500, 9, {"d1": 8, "p": 1},
+               treasury_share_ppm=0)
+        reward("the proposer receives 10 mukrn: its commission is 1, and the same delegator still receives 8",
+               126_230_400_000, {"p": 1}, {"d1": ("p", 63_115_199_999)}, 63_115_200_000, 2_500, 10, {"d1": 8, "p": 2},
+               treasury_share_ppm=0)
+        reward("9 billion KRN, half of them staked: what is staked times 1,000,000, the supply times the rate and the "
+               "share of a delegator all pass 2^64 on the way, and nothing is cut",
+               9 * 10**18, {"p": 15 * 10**17}, {"d1": ("p", 2 * 10**18), "d2": ("p", 10**18)}, 45 * 10**17, 2_500,
+               712_981_975, {"treasury": 35_649_098, "d1": 270_933_151, "d2": 135_466_575, "p": 270_933_151})
+        reward("the same supply at a rate of 1,000,000 and a block an hour: the largest rewards there are",
+               9 * 10**18, {"p": 1}, {}, 1, 1_000_000, 1_026_694_045_174_537,
+               {"treasury": 51_334_702_258_726, "p": 975_359_342_915_811},
+               i_max_ppm=1_000_000, target_block_time_ms=3_600_000)
+        reward("a supply 100 mukrn under 2^63 - 1: the reward would be 730,969,828 and is the 100 that are left. What "
+               "is shared is what is minted: 5 to the treasury, 95 to the proposer, which keeps a commission of 9 "
+               "and gives 11 to its delegator",
+               top - 100, {"p": 4 * 10**18}, {"d1": ("p", 6 * 10**17)}, 46 * 10**17, 2_501, 100,
+               {"treasury": 5, "d1": 11, "p": 84})
+        reward("a supply of 2^63 - 1: nothing is left to mint",
+               top, {"p": 4 * 10**18}, {}, 4 * 10**18, 5_266, 0, {})
+
+    def tallies(self) -> None:
+        """Whether a vote passes: the weights, the quorum and the majority
+        of each track."""
+        def vote(why: str, track: str, weights: dict, ballots: dict, yes: int, no: int, total: int, quorum: bool,
+                 passes: bool) -> None:
+            snapshot = [{"address": address, "stake": stake} for address, stake in weights.items()]
+            result = sch.tally(snapshot, ballots, track)
+            assert result == {"yes": yes, "no": no, "total": total, "quorum": quorum, "passes": passes}, (why, result)
+            self.tallied.append({"why": why, "track": track, "consensus_set": snapshot, "ballots": ballots,
+                                 "then": result})
+
+        vote("the protocol track: exactly four fifths of what was voted says yes, and the vote passes",
+             "protocol", {"a": 80, "b": 20}, {"a": "yes", "b": "no"}, 80, 20, 100, True, True)
+        vote("one part in a hundred less: the vote fails",
+             "protocol", {"a": 79, "b": 21}, {"a": "yes", "b": "no"}, 79, 21, 100, True, False)
+        vote("exactly a quarter of the weights voted: the quorum is reached. A validator that does not vote counts "
+             "in the total",
+             "protocol", {"a": 25, "b": 75}, {"a": "yes"}, 25, 0, 100, True, True)
+        vote("one part less than a quarter: no quorum, though every vote says yes",
+             "protocol", {"a": 24, "b": 76}, {"a": "yes"}, 24, 0, 100, False, False)
+        vote("an abstention is counted nowhere: with the largest validator abstaining the quorum is not reached",
+             "protocol", {"a": 24, "b": 76}, {"a": "yes", "b": "abstain"}, 24, 0, 100, False, False)
+        vote("an abstention does not weigh against a vote either: a quarter says yes, the rest abstains, and the "
+             "vote passes",
+             "protocol", {"a": 25, "b": 75}, {"a": "yes", "b": "abstain"}, 25, 0, 100, True, True)
+        vote("nobody voted", "protocol", {"a": 1}, {}, 0, 0, 1, False, False)
+        vote("everybody says no: the quorum is reached, and the vote fails",
+             "protocol", {"a": 60, "b": 40}, {"a": "no", "b": "no"}, 0, 100, 100, True, False)
+        vote("the quorum and the majority are compared without a division: 4 of 7 voted and 3 said yes, which is "
+             "less than four fifths",
+             "protocol", {"a": 3, "b": 1, "c": 3}, {"a": "yes", "b": "no"}, 3, 1, 7, True, False)
+        vote("weights of billions of KRN: five times the yes passes 2^64, and four fifths exactly still pass",
+             "protocol", {"a": 4 * 10**18, "b": 10**18}, {"a": "yes", "b": "no"}, 4 * 10**18, 10**18, 5 * 10**18,
+             True, True)
+        vote("1 mukrn less on the yes side: the vote fails",
+             "protocol", {"a": 4 * 10**18 - 1, "b": 10**18}, {"a": "yes", "b": "no"}, 4 * 10**18 - 1, 10**18,
+             5 * 10**18 - 1, True, False)
+        vote("the treasury track: each weight is its square root, rounded down. 16 weighs 4, 9 weighs 3, 15 weighs "
+             "3 and 1 weighs 1",
+             "treasury", {"a": 16, "b": 9, "c": 15, "d": 1}, {"a": "yes", "b": "no"}, 4, 3, 11, True, True)
+        vote("square roots around a square: 24 weighs 4, 25 weighs 5, 26 weighs 5, and 2 and 3 weigh 1",
+             "treasury", {"a": 24, "b": 25, "c": 26, "d": 2, "e": 3}, {"b": "yes", "c": "yes", "a": "no", "d": "no"},
+             10, 5, 16, True, True)
+        vote("a tie on the treasury track: the yes must weigh more than half of what was voted",
+             "treasury", {"a": 16, "b": 16}, {"a": "yes", "b": "no"}, 4, 4, 8, True, False)
+        vote("one square more on the yes side: the vote passes",
+             "treasury", {"a": 25, "b": 16}, {"a": "yes", "b": "no"}, 5, 4, 9, True, True)
+        vote("the quorum of the treasury track is counted on the square roots: 1 of 4 voted",
+             "treasury", {"a": 1, "b": 9}, {"a": "yes"}, 1, 0, 4, True, True)
+        vote("1 of 5: no quorum", "treasury", {"a": 1, "b": 16}, {"a": "yes"}, 1, 0, 5, False, False)
+        small, large = 63_000_000_000, 1_000_000_000_000
+        vote("four validators of 63,000 KRN say yes and one of 1,000,000 KRN says no: on the treasury track the "
+             "four weigh 250,998 each and the one 1,000,000, and the vote passes",
+             "treasury", {"a": large, "b": small, "c": small, "d": small, "e": small},
+             {"a": "no", "b": "yes", "c": "yes", "d": "yes", "e": "yes"}, 1_003_992, 1_000_000, 2_003_992, True, True)
+        vote("the same votes on the protocol track, where a weight is counted whole: the vote fails",
+             "protocol", {"a": large, "b": small, "c": small, "d": small, "e": small},
+             {"a": "no", "b": "yes", "c": "yes", "d": "yes", "e": "yes"}, 4 * small, large, large + 4 * small,
+             True, False)
+        vote("the largest weight there is, 2^63 - 1: its square root is 3,037,000,499",
+             "treasury", {"a": INT_MAX}, {"a": "yes"}, 3_037_000_499, 0, 3_037_000_499, True, True)
+        vote("one less than a square: 2^62 - 1 weighs 2^31 - 1, where a square root taken on a number with a "
+             "fraction gives 2^31",
+             "treasury", {"a": 2**62 - 1, "b": 2**62}, {"a": "yes", "b": "no"}, 2**31 - 1, 2**31, 2**32 - 1,
+             True, False)
+
+    def slashes(self) -> None:
+        """The reports of offences in a block: what each one takes, or the
+        rule that makes it fail. Addresses, identifiers and hashes are short
+        names: the rules only compare them."""
+        def tables(**changes: Any) -> dict:
+            base = {
+                "validators": [{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}],
+                "consensus_set": [{"address": "v", "stake": 1700}, {"address": "w", "stake": 3}],
+                "delegations": {"d1": {"validator": "v", "amount": 700,
+                                       "tranches": [{"level": 60, "amount": 300}, {"level": 90, "amount": 400}]}},
+                "delegation_unbonding": [], "attestations": {}, "consensus_slashes": [],
+                "protocol": [{"proposal_id": "p1", "double_votes": [
+                    {"voter": "v", "phase": "exploration", "level": 960, "punished": False}]}],
+            }
+            return copy({**base, **changes})
+
+        def slash(why: str, operations: list, did: list, credits: dict, burned: int, after: dict | None = None,
+                  level: int = 1000, **before: Any) -> dict:
+            start = {"level": level, "delegation_unbonding_blocks": 300, **tables(**before)}
+            result = sch.slash(start, operations)
+            assert (result["did"], result["credits"], result["burned"]) == (did, credits, burned), (why, result)
+            for path, value in (after or {}).items():
+                holder, step = locate(result, path)
+                assert holder[step] == value, (why, path, holder[step])
+            if "slashed" not in did:
+                assert {name: result[name] for name in sch.SLASHED_TABLES} == tables(**before), why
+            self.slashed.append({"why": why, "before": start, "operations": operations, "then": result})
+            return result
+
+        governance = lambda sender="r", proposal="p1", voter="v": {                         # noqa: E731
+            "sender": sender, "kind": "slash_equivocation", "params": {"proposal_id": proposal, "equivocator": voter}}
+        ballot = lambda block, validator="v", kind="endorse", level=990, round_=0: {         # noqa: E731
+            "kind": kind, "level": level, "round": round_, "block_hash": block, "validator": validator}
+        consensus = lambda one, two, sender="r": {                                           # noqa: E731
+            "sender": sender, "kind": "slash_consensus_equivocation", "params": {"msg_a": one, "msg_b": two}}
+        contradiction = lambda one="x1", two="x2", sender="r": {                             # noqa: E731
+            "sender": sender, "kind": "slash_attestation_equivocation",
+            "params": {"attestation_id_1": one, "attestation_id_2": two}}
+        statement = lambda claim, bond, issued_at=500, **more: {                             # noqa: E731
+            "issuer": "i", "schema_id": "kyc.basic", "subject": "s", "claim": claim, "bond": bond,
+            "issued_at": issued_at, "slashed": False, **more}
+
+        # -- a validator ----------------------------------------------------
+        slash("a double vote of level 960 on a proposal: the validator loses 300 of its stake of 1,000, of which 30 "
+              "go to the sender and 270 are burned; both tranches of its delegator were bonded before and lose 90 "
+              "and 120, which are burned; its weight comes down to what backs it now, 700 and 490",
+              [governance()], ["slashed"], {"r": 30}, 480,
+              {"validators.0.stake": 700, "consensus_set.0.stake": 1190, "delegations.d1.amount": 490,
+               "delegations.d1.tranches": [{"level": 60, "amount": 210}, {"level": 90, "amount": 280}],
+               "protocol.0.double_votes.0.punished": True})
+        slash("a tranche bonded at the level of the offence answers for it, and one bonded the level after does not",
+              [governance()], ["slashed"], {"r": 30}, 360,
+              {"delegations.d1.amount": 610,
+               "delegations.d1.tranches": [{"level": 960, "amount": 210}, {"level": 961, "amount": 400}]},
+              delegations={"d1": {"validator": "v", "amount": 700,
+                                  "tranches": [{"level": 960, "amount": 300}, {"level": 961, "amount": 400}]}})
+        slash("a delegation to another validator is not touched",
+              [governance()], ["slashed"], {"r": 30}, 270, {"delegations.d1.amount": 700, "consensus_set.0.stake": 700},
+              delegations={"d1": {"validator": "w", "amount": 700, "tranches": [{"level": 60, "amount": 700}]}})
+        leaving = lambda ended, validator="v": {"delegator": "d2", "validator": validator, "amount": 100,  # noqa: E731
+                                                "tranches": [{"level": 50, "amount": 100}],
+                                                "unbonding_from": ended, "release_at": ended + 300}
+        slash("a delegation that ended at the level of the offence still answers for it: it loses 30 of 100",
+              [governance()], ["slashed"], {"r": 30}, 510, {"delegation_unbonding.0.amount": 70,
+                                                           "delegation_unbonding.0.tranches.0.amount": 70},
+              delegation_unbonding=[leaving(960)])
+        slash("a delegation that ended the level before the offence does not, and neither does one that unbonds "
+              "from another validator",
+              [governance()], ["slashed"], {"r": 30}, 480, {"delegation_unbonding.0.amount": 100,
+                                                           "delegation_unbonding.1.amount": 100},
+              delegation_unbonding=[leaving(959), leaving(970, "w")])
+        slash("a delegation that unbonds weighs nothing: the weight comes down to the stake and the delegations "
+              "that are not unbonding",
+              [governance()], ["slashed"], {"r": 30}, 300, {"consensus_set.0.stake": 700},
+              delegations={}, delegation_unbonding=[leaving(970)])
+        slash("a weight that is already under what backs the validator stays where it is: nothing raises a weight "
+              "before the next snapshot",
+              [governance()], ["slashed"], {"r": 30}, 480, {"consensus_set.0.stake": 1000},
+              consensus_set=[{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}])
+        slash("the sender is the validator that is slashed: it receives the tenth like anyone",
+              [governance("v")], ["slashed"], {"v": 30}, 480)
+        slash("a stake of 34: 10 are taken, 1 goes to the sender and 9 are burned",
+              [governance()], ["slashed"], {"r": 1}, 9, {"validators.0.stake": 24},
+              validators=[{"address": "v", "stake": 34}, {"address": "w", "stake": 3}], delegations={})
+        slash("a stake of 33: 9 are taken, the tenth of the sender is rounded down to nothing, and 9 are burned",
+              [governance()], ["slashed"], {}, 9, {"validators.0.stake": 24},
+              validators=[{"address": "v", "stake": 33}, {"address": "w", "stake": 3}], delegations={})
+        slash("a stake of 3 and tranches of 3 and 2: 30 parts in 100 of each is rounded down to nothing, the slash "
+              "takes nothing, and it fails",
+              [governance()], ["nothing_to_take"], {}, 0,
+              validators=[{"address": "v", "stake": 3}, {"address": "w", "stake": 3}],
+              consensus_set=[{"address": "v", "stake": 8}, {"address": "w", "stake": 3}],
+              delegations={"d1": {"validator": "v", "amount": 5,
+                                  "tranches": [{"level": 60, "amount": 3}, {"level": 90, "amount": 2}]}})
+        slash("a stake of 3 and a tranche of 4: the stake gives nothing, the tranche gives 1, and the slash is done",
+              [governance()], ["slashed"], {}, 1, {"validators.0.stake": 3, "delegations.d1.amount": 3,
+                                                  "consensus_set.0.stake": 6,
+                                                  "protocol.0.double_votes.0.punished": True},
+              validators=[{"address": "v", "stake": 3}, {"address": "w", "stake": 3}],
+              consensus_set=[{"address": "v", "stake": 7}, {"address": "w", "stake": 3}],
+              delegations={"d1": {"validator": "v", "amount": 4, "tranches": [{"level": 60, "amount": 4}]}})
+        slash("each tranche is rounded down on its own: two tranches of 3 lose nothing, where 6 in one tranche "
+              "would lose 1",
+              [governance()], ["slashed"], {"r": 30}, 270, {"delegations.d1.amount": 6},
+              delegations={"d1": {"validator": "v", "amount": 6,
+                                  "tranches": [{"level": 60, "amount": 3}, {"level": 90, "amount": 3}]}})
+
+        # -- a double vote on a proposal --------------------------------------
+        slash("the same double vote reported twice in one block: the second report finds it punished, and fails",
+              [governance(), governance("s")], ["slashed", "no_double_vote"], {"r": 30}, 480)
+        slash("a double vote that is punished already", [governance()], ["no_double_vote"], {}, 0,
+              protocol=[{"proposal_id": "p1", "double_votes": [
+                  {"voter": "v", "phase": "exploration", "level": 960, "punished": True}]}])
+        slash("a proposal that is not in the state", [governance(proposal="p9")], ["no_double_vote"], {}, 0)
+        slash("a validator that has no double vote on the proposal", [governance(voter="w")], ["no_double_vote"],
+              {}, 0)
+        two_phases = [{"proposal_id": "p0", "double_votes": []},
+                      {"proposal_id": "p1", "double_votes": [
+                          {"voter": "w", "phase": "exploration", "level": 700, "punished": False},
+                          {"voter": "v", "phase": "exploration", "level": 50, "punished": False},
+                          {"voter": "v", "phase": "adoption", "level": 960, "punished": False}]}]
+        slash("two double votes of one validator on one proposal, one in each phase, and one report: it punishes "
+              "the first one of the list alone, an offence of level 50, before any tranche was bonded, and the "
+              "other can still be reported",
+              [governance()], ["slashed"], {"r": 30}, 270,
+              {"validators.0.stake": 700, "delegations.d1.amount": 700, "consensus_set.0.stake": 1400,
+               "protocol.1.double_votes.0.punished": False, "protocol.1.double_votes.1.punished": True,
+               "protocol.1.double_votes.2.punished": False},
+              protocol=two_phases)
+        slash("two double votes of one validator on one proposal, one in each phase: a report punishes the first "
+              "one of the list, an offence of level 50, before any tranche was bonded; a second report punishes "
+              "the other, of level 960, and takes 30 parts in 100 of what the first one left",
+              [governance(), governance("s")], ["slashed", "slashed"], {"r": 30, "s": 21}, 669,
+              {"validators.0.stake": 490, "delegations.d1.amount": 490, "consensus_set.0.stake": 980,
+               "protocol.1.double_votes.1.punished": True, "protocol.1.double_votes.2.punished": True,
+               "protocol.1.double_votes.0.punished": False},
+              protocol=two_phases)
+
+        # -- two votes of the consensus --------------------------------------
+        slash("two endorsements of one validator, at one level and one round, for two blocks: the validator is "
+              "slashed for an offence of that level, and the vote is kept so that it is punished once",
+              [consensus(ballot("h1"), ballot("h2"))], ["slashed"], {"r": 30}, 480,
+              {"consensus_slashes": [{"validator": "v", "kind": "endorse", "level": 990, "round": 0}]})
+        slash("the same two votes reported twice, the second time in the other order: one offence, punished once",
+              [consensus(ballot("h1"), ballot("h2")), consensus(ballot("h2"), ballot("h1"), "s")],
+              ["slashed", "slashed_already"], {"r": 30}, 480)
+        slash("a preendorsement and an endorsement of one level and one round are two offences: each is punished",
+              [consensus(ballot("h1"), ballot("h2")),
+               consensus(ballot("h1", kind="preendorse"), ballot("h2", kind="preendorse"))],
+              ["slashed", "slashed"], {"r": 51}, 816,
+              {"validators.0.stake": 490,
+               "consensus_slashes": [{"validator": "v", "kind": "endorse", "level": 990, "round": 0},
+                                     {"validator": "v", "kind": "preendorse", "level": 990, "round": 0}]})
+        slash("the vote that is kept already is of round 0, and these two are of round 1: another offence, punished "
+              "too, and the vote that is kept names its round",
+              [consensus(ballot("h1", round_=1), ballot("h2", round_=1))], ["slashed"], {"r": 30}, 480,
+              {"consensus_slashes": [{"validator": "v", "kind": "endorse", "level": 990, "round": 0},
+                                     {"validator": "v", "kind": "endorse", "level": 990, "round": 1}]},
+              consensus_slashes=[{"validator": "v", "kind": "endorse", "level": 990, "round": 0}])
+        slash("twice the same vote: no offence", [consensus(ballot("h1"), ballot("h1"))], ["not_an_offence"], {}, 0)
+        slash("the votes of two validators", [consensus(ballot("h1"), ballot("h2", validator="w"))],
+              ["not_an_offence"], {}, 0)
+        slash("a preendorsement and an endorsement", [consensus(ballot("h1"), ballot("h2", kind="preendorse"))],
+              ["not_an_offence"], {}, 0)
+        slash("votes of two levels", [consensus(ballot("h1"), ballot("h2", level=991))], ["not_an_offence"], {}, 0)
+        slash("votes of two rounds", [consensus(ballot("h1"), ballot("h2", round_=1))], ["not_an_offence"], {}, 0)
+        slash("two votes of an address that is not a validator",
+              [consensus(ballot("h1", validator="z"), ballot("h2", validator="z"))], ["not_a_validator"], {}, 0)
+        slash("two votes of the level after the block: nothing can be reported before it happens",
+              [consensus(ballot("h1", level=1001), ballot("h2", level=1001))], ["not_yet"], {}, 0)
+        slash("two votes of the level of the block itself: they can be reported",
+              [consensus(ballot("h1", level=1000), ballot("h2", level=1000))], ["slashed"], {"r": 30}, 480)
+        slash("two votes that are `delegation_unbonding_blocks` levels old: the last block in which they can be "
+              "reported",
+              [consensus(ballot("h1", level=700), ballot("h2", level=700))], ["slashed"], {"r": 30}, 480,
+              {"consensus_slashes": [{"validator": "v", "kind": "endorse", "level": 700, "round": 0}]})
+        slash("two votes one level older: too old", [consensus(ballot("h1", level=699), ballot("h2", level=699))],
+              ["too_old"], {}, 0)
+        slash("an operation that breaks several rules names the first one of the list: these two votes are of an "
+              "address that is not a validator, and too old",
+              [consensus(ballot("h1", validator="z", level=1), ballot("h2", validator="z", level=1))],
+              ["not_a_validator"], {}, 0)
+        slash("and these two are of an address that is not a validator, and of the level after the block",
+              [consensus(ballot("h1", validator="z", level=1001), ballot("h2", validator="z", level=1001))],
+              ["not_a_validator"], {}, 0)
+        slash("votes of a validator whose stake and delegations give nothing to take: the report fails, and the "
+              "vote is not kept",
+              [consensus(ballot("h1", validator="w"), ballot("h2", validator="w"))], ["nothing_to_take"], {}, 0)
+
+        # -- two attestations ------------------------------------------------
+        pair = {"x1": statement({"country": "BE"}, 1000), "x2": statement({"country": "FR"}, 250, 600)}
+        slash("two attestations of one issuer, about one subject, that state two things: 300 are taken from the "
+              "larger bond, 30 go to the sender and 270 are burned; the issuer gets back what is left of both, 950",
+              [contradiction()], ["slashed"], {"i": 950, "r": 30}, 270,
+              {"attestations.x1.bond": 0, "attestations.x2.bond": 0, "attestations.x1.slashed": True,
+               "attestations.x2.slashed": True}, attestations=pair)
+        slash("the same pair named in the other order: the larger bond is the larger whichever comes first",
+              [contradiction("x2", "x1")], ["slashed"], {"i": 950, "r": 30}, 270, attestations=pair)
+        slash("the issuer reports itself: it receives the tenth with what is left of its bonds",
+              [contradiction(sender="i")], ["slashed"], {"i": 980}, 270, attestations=pair)
+        slash("the same pair reported twice in one block: the second report finds both slashed",
+              [contradiction(), contradiction(sender="s")], ["slashed", "slashed_before"], {"i": 950, "r": 30}, 270,
+              attestations=pair)
+        slash("two bonds of 34: 10 are taken once, and not from each",
+              [contradiction()], ["slashed"], {"i": 58, "r": 1}, 9,
+              attestations={"x1": statement(1, 34), "x2": statement(2, 34)})
+        slash("bonds of 3 and 0: nothing to take, and the report fails",
+              [contradiction()], ["nothing_to_take"], {}, 0,
+              attestations={"x1": statement(1, 3), "x2": statement(2, 0)})
+        slash("bonds of 0 and 4: 1 is taken and burned, and 3 return",
+              [contradiction()], ["slashed"], {"i": 3}, 1,
+              attestations={"x1": statement(1, 0), "x2": statement(2, 4)})
+        slash("claims that differ only as `true` differs from 1: two values of JSON, and two claims",
+              [contradiction()], ["slashed"], {"i": 70, "r": 3}, 27,
+              attestations={"x1": statement({"ok": True}, 100), "x2": statement({"ok": 1}, 0)})
+        slash("the same claim twice, its members written in another order: one claim, and no contradiction",
+              [contradiction()], ["no_contradiction"], {}, 0,
+              attestations={"x1": statement({"a": 1, "b": 2}, 100), "x2": statement({"b": 2, "a": 1}, 100)})
+        slash("an attestation named twice", [contradiction("x1", "x1")], ["not_two"], {}, 0, attestations=pair)
+        slash("an attestation that is not in the state", [contradiction("x1", "x9")], ["not_two"], {}, 0,
+              attestations=pair)
+        slash("two issuers", [contradiction()], ["no_contradiction"], {}, 0,
+              attestations={**pair, "x2": {**pair["x2"], "issuer": "j"}})
+        slash("two schemas", [contradiction()], ["no_contradiction"], {}, 0,
+              attestations={**pair, "x2": {**pair["x2"], "schema_id": "kyc.full"}})
+        slash("two subjects", [contradiction()], ["no_contradiction"], {}, 0,
+              attestations={**pair, "x2": {**pair["x2"], "subject": "t"}})
+        slash("one of the two was slashed before, with another attestation",
+              [contradiction()], ["slashed_before"], {}, 0,
+              attestations={**pair, "x2": {**pair["x2"], "bond": 0, "slashed": True}})
+        slash("the first was revoked at level 599 and the second issued at level 600: the issuer never stated both "
+              "at once",
+              [contradiction()], ["not_at_once"], {}, 0,
+              attestations={**pair, "x1": {**pair["x1"], "revoked_at": 599}})
+        slash("the first was revoked at the very level at which the second was issued: both stood at that level, "
+              "and its bond, still held, answers",
+              [contradiction()], ["slashed"], {"i": 950, "r": 30}, 270,
+              attestations={**pair, "x1": {**pair["x1"], "revoked_at": 600}})
+        slash("the second of the two was revoked before the first was issued",
+              [contradiction("x2", "x1")], ["not_at_once"], {}, 0,
+              attestations={"x1": statement(1, 100, 500, revoked_at=550), "x2": statement(2, 100, 551)})
+
+    # -- chapter 2: a whole block ------------------------------------------------
+
+    def due_state(self) -> dict:
+        """A state of level 1,199 in which something is due at the next
+        level for every step of a block: a bond to return, a delegation to
+        release, phases that end on both tracks, a proposal and a slashed
+        vote that leave, and the snapshot of an epoch."""
+        a, b, c, q = (self.account(100 + i) for i in range(4))
+        d, e, f, g, late = (self.account(n) for n in (110, 120, 130, 135, 137))
+        one, two, treasury = (self.address(n) for n in (1, 2, 9))
+        hex_of = lambda pair: pair * 48                                                      # noqa: E731
+        bond = CONSTANTS_OF_THE_VECTORS
+
+        def protocol(pair: str, submitter: str, submitted_at: int, phase: str, first: dict, second: dict,
+                     **payload: Any) -> dict:
+            return {"proposal_id": hex_of(pair), "submitter": submitter, "payload": payload,
+                    "submitted_at": submitted_at, "phase": phase, "exploration_votes": first,
+                    "adoption_votes": second, "double_votes": [], "bond": bond["protocol_bond"]}
+
+        def treasury_(pair: str, submitter: str, submitted_at: int, phase: str, votes: dict, recipient: str,
+                      amount: int, **more: Any) -> dict:
+            return {"proposal_id": hex_of(pair), "submitter": submitter,
+                    "payload": {"recipients": [{"address": recipient, "amount": amount}]},
+                    "submitted_at": submitted_at, "phase": phase, "votes": votes, **more,
+                    "bond": bond["treasury_bond"]}
+
+        def over(proposal: dict) -> dict:
+            """The same proposal, rejected at level 900: it holds no bond any more."""
+            return {**{name: value for name, value in proposal.items() if name != "bond"}, "ended_at": 900}
+
+        return self.with_supply({
+            "level": 1199, "chain_id": "kern-devnet", "state_root_function": "json", "total_supply": 0,
+            "treasury_address": treasury, "guardians": self.guardians(),
+            "balances": {a: 12_345, b: 1, d: 900_000, e: 77, f: 5_000, one: 70_000_000_000_000, two: 1,
+                         treasury: 14_000_000_000_000},
+            "nonces": {a: 6, b: 3, c: 1, d: 3, e: 5, f: 2, g: 2, late: 1},
+            "contracts": {},
+            "keys": {
+                a: [{"from": 0, "public_key": {"$key": 100}}], b: [{"from": 0, "public_key": {"$key": 101}}],
+                c: [{"from": 0, "public_key": {"$key": 102}}], q: [{"from": 0, "public_key": {"$key": 103}}],
+                d: [{"from": 12, "public_key": {"$key": 110}}], e: [{"from": 50, "public_key": {"$key": 120}}],
+                f: [{"from": 90, "public_key": {"$key": 130}}], g: [{"from": 95, "public_key": {"$key": 135}}],
+                late: [{"from": 1150, "public_key": {"$key": 137}}],
+            },
+            "validators": [{"address": a, "stake": 400_000_000}, {"address": b, "stake": 300_000_000},
+                           {"address": c, "stake": 200_000_000}, {"address": q, "stake": 1}],
+            "consensus_set": [{"address": a, "stake": 500_000_000}, {"address": b, "stake": 300_000_000},
+                              {"address": c, "stake": 200_000_000}, {"address": q, "stake": 1}],
+            "delegations": {
+                e: {"validator": a, "amount": 100_000_000,
+                    "tranches": [{"level": 60, "amount": 40_000_000}, {"level": 90, "amount": 60_000_000}]},
+                late: {"validator": c, "amount": 1_000_000_000, "tranches": [{"level": 1150, "amount": 1_000_000_000}]},
+            },
+            "delegation_unbonding": [
+                {"delegator": f, "validator": b, "amount": 500, "tranches": [{"level": 100, "amount": 500}],
+                 "unbonding_from": 900, "release_at": 1200},
+                {"delegator": g, "validator": a, "amount": 40, "tranches": [{"level": 96, "amount": 40}],
+                 "unbonding_from": 960, "release_at": 1260},
+            ],
+            "attestations": {
+                hex_of("a1"): {"issuer": d, "schema_id": "kyc.basic", "subject": "subject-1",
+                               "claim": {"country": "BE", "level": 2}, "bond": 1000, "issued_at": 500,
+                               "slashed": False},
+                hex_of("a2"): {"issuer": d, "schema_id": "kyc.basic", "subject": "subject-2", "claim": {},
+                               "bond": 250, "issued_at": 500, "revoked_at": 1050, "slashed": False},
+                hex_of("a3"): {"issuer": e, "schema_id": "kyc.basic", "subject": "subject-3", "claim": {},
+                               "bond": 70, "issued_at": 300, "revoked_at": 1100, "slashed": False},
+            },
+            "consensus_slashes": [{"validator": b, "kind": "endorse", "level": 900, "round": 0},
+                                  {"validator": b, "kind": "preendorse", "level": 990, "round": 0}],
+            "governance": {
+                "protocol": [
+                    over(protocol("b6", b, 700, "rejected", {a: "no", b: "abstain"}, {}, params={"fee_floor_base": 0})),
+                    protocol("b2", a, 800, "adoption", {a: "yes", b: "yes"}, {a: "yes", b: "yes", c: "abstain"},
+                             params={"i_max_ppm": 70_000, "treasury_share_ppm": 100_000}),
+                    protocol("b7", b, 800, "adoption", {a: "yes", b: "yes"}, {a: "yes", b: "no"},
+                             params={"target_block_time_ms": 2_000}),
+                    protocol("b5", b, 900, "cooldown", {a: "yes", b: "yes"}, {}, params={"fee_floor_enabled": True}),
+                    protocol("b1", a, 1000, "exploration", {a: "yes", b: "yes", c: "no"}, {},
+                             params={"max_block_bytes": 2_097_152}),
+                    protocol("b3", b, 1000, "exploration", {c: "yes", b: "no"}, {}, params={"i_min_ppm": 0}),
+                    protocol("b4", a, 1100, "submitted", {}, {}, params={"fee_floor_per_byte": 3}),
+                ],
+                "treasury": [
+                    over(treasury_("c5", d, 600, "rejected", {b: "no"}, one, 1)),
+                    treasury_("c3", d, 750, "passed", {a: "yes", b: "yes"}, one, 1000,
+                              released_by=self.guardians()[1]),
+                    treasury_("c1", d, 900, "voting", {b: "yes", c: "yes", a: "no"}, one, 1000),
+                    treasury_("c2", e, 900, "voting", {a: "yes", b: "no", c: "no"}, two, 5),
+                    treasury_("c4", e, 1000, "submitted", {}, two, 6),
+                ],
+            },
+            "parameters": dict(PARAMETERS_OF_TODAY), "constants": dict(CONSTANTS_OF_THE_VECTORS),
+        })
+
+    def transitions(self) -> None:
+        """Whole blocks on whole states: the eight steps of section 9.16,
+        the state each block leads to and the root its header commits to."""
+        a, b, c, q = (self.account(100 + i) for i in range(4))
+        d, e, f, g, late = (self.account(n) for n in (110, 120, 130, 135, 137))
+        one, two, treasury = (self.address(n) for n in (1, 2, 9))
+        first, second, third = self.guardians()
+        hex_of = lambda pair: pair * 48                                                      # noqa: E731
+        top = INT_MAX
+
+        def whole(why: str, base: str, proposer: str, txs: Any, *, name: str | None = None, rule: str | None = None,
+                  at: int | None = None, level: int | None = None, root: str | None = None,
+                  failed: tuple[int, ...] = ()) -> dict:
+            state = self.objects[base]
+            height = state["level"] + 1 if level is None else level
+            header = {"version": 1, "level": height, "payload_round": 0, "timestamp": 1794000000 + height,
+                      "parent_hash": {"$text": [48, "ab"]}, "state_root": {"$text": [48, "00"]},
+                      **self.roots(self.expand(txs)), "proposer": proposer, "signature": {"$sig": 900}}
+            block = {"header": header, "transactions": txs}
+            result = sch.transition(state, self.expand(block))
+            after = result.get("state", {})
+            if result["valid"]:
+                sch.check("state", after, self.network_id)
+                header["state_root"] = root or sch.state_root(self.network_id, after).hex()
+            sch.check("block", self.expand(block), self.network_id)
+            result = sch.apply(self.network_id, state, self.expand(block))
+            record: dict[str, Any] = {"why": why, "from": base, "block": block}
+            if rule:
+                assert result == ({"valid": False, "rule": rule} if at is None else
+                                  {"valid": False, "rule": rule, "at": at}), (why, result)
+                record["rule"] = rule
+                if at is not None:
+                    record["at"] = at
+                self.applied.append(record)
+                return {}
+            assert result["valid"] and result["failed"] == list(failed), (why, result)
+            remove, put = difference(state, after)
+            assert ref.canonical_json(self.edited(state, remove, put)) == ref.canonical_json(after), why
+            record["then"] = {"failed": result["failed"], "remove": remove, "set": put,
+                              "state_root": header["state_root"], **pin(ref.canonical_json(after))}
+            if name:
+                assert name not in self.objects, name
+                record["name"] = name
+                self.objects[name], self.schemas[name] = after, "state"
+            self.applied.append(record)
+            return after
+
+        def transfer(sender: str, nonce: Any, recipient: str, amount: int, sig: Any, fee: int = 1000) -> dict:
+            return {**self.tx("transfer", nonce=nonce, sig=sig, sender=sender, recipient=recipient, amount=amount),
+                    "fee": fee}
+
+        def held(state: dict, address: str) -> int:
+            return state["balances"].get(address, 0)
+
+        # -- the reward alone ------------------------------------------------
+        start = self.objects["state_first"]
+        after = whole("an empty block of level 1 on a first state: its level, the reward of the block, and nothing "
+                      "else. The treasury receives its share and the proposer the rest; `total_supply` goes up by "
+                      "what is minted, and the root is that of the function json",
+                      "state_first", a, [], name="after_first")
+        assert (after["level"], after["total_supply"] - start["total_supply"]) == (1, 163_253), after["total_supply"]
+        assert held(after, treasury) - held(start, treasury) == 8_162
+        assert held(after, a) - held(start, a) == 155_091
+        after = whole("the block of level 2, proposed by a validator that had no balance: it enters `balances`",
+                      "after_first", b, [])
+        assert held(after, b) == 155_091 and held(after, treasury) - held(start, treasury) == 2 * 8_162
+
+        # -- every step at once ----------------------------------------------
+        due = self.yes("state_due", "state", "a state of level 1,199 in which something is due at the next level for "
+                       "every step of a block: the bond of an attestation revoked 150 levels earlier, a delegation "
+                       "to release, phases that end on both tracks, a proposal of each track and a slashed vote "
+                       "that are 300 levels old, and the snapshot of an epoch", self.due_state())
+        after = whole(
+            "the block of level 1,200 on that state. Three transfers: the second fails and has paid, and the third "
+            "sends all that its sender holds, with a fee of 0, so that the sender leaves `balances`. The reward is "
+            "counted on what the transactions left, and the delegator of the proposer has its share. The bond of "
+            "the attestation returns, and the delegation is released. On the protocol track, in the order of the "
+            "list: the second vote of a proposal passes with an abstention that is counted nowhere, its parameters "
+            "replace those of the state and its bond returns; the second vote of another fails, where its first "
+            "vote had passed, and the block time it proposed is not taken; a proposal that rested enters its "
+            "second vote; a first vote passes with exactly four fifths of what was voted, by the weights of the "
+            "snapshot, where the stakes alone would fail it and the weights of the moment too, and the proposal "
+            "rests; a first vote fails, where the weights of the moment would have passed it, since 1,000,000,000 "
+            "mukrn delegated after the snapshot to the validator that says yes are not in its weight yet; a "
+            "proposal that waited enters its first vote. On the treasury track: a payment that nobody released is "
+            "rejected and loses its `released_by`; a vote passes by the square roots of the weights, where the "
+            "weights themselves would tie; a vote fails; a proposal that waited enters its vote. Four bonds are "
+            "lost, half of each burned. A proposal of each track and a slashed vote leave. The snapshot is taken "
+            "again, and the late delegation now weighs",
+            "state_due", a,
+            [transfer(d, 3, two, 100, 1), transfer(f, 2, one, 9_999_999, 2), transfer(b, 3, two, 1, 3, fee=0)],
+            name="after_due", failed=(1,))
+        assert [p["phase"] for p in after["governance"]["protocol"]] == \
+            ["activated", "rejected", "adoption", "cooldown", "rejected", "exploration"]
+        votes_of_b1 = due["governance"]["protocol"][4]["exploration_votes"]
+        assert votes_of_b1 == {a: "yes", b: "yes", c: "no"}
+        by_snapshot = sch.tally(due["consensus_set"], votes_of_b1, "protocol")
+        assert by_snapshot["passes"] and 5 * by_snapshot["yes"] == 4 * (by_snapshot["yes"] + by_snapshot["no"])
+        assert not sch.tally(due["validators"], votes_of_b1, "protocol")["passes"]
+        of_the_moment = [{"address": validator["address"],
+                          "stake": validator["stake"] + sch._delegated(due, validator["address"])}
+                         for validator in due["validators"]]
+        assert not sch.tally(of_the_moment, votes_of_b1, "protocol")["passes"]
+        assert sch.tally(of_the_moment, due["governance"]["protocol"][5]["exploration_votes"], "protocol")["passes"]
+        assert b in due["balances"] and b not in after["balances"]
+        assert [p["phase"] for p in after["governance"]["treasury"]] == ["rejected", "passed", "rejected", "voting"]
+        assert "released_by" not in after["governance"]["treasury"][0]
+        assert after["parameters"] == {**PARAMETERS_OF_TODAY, "i_max_ppm": 70_000, "treasury_share_ppm": 100_000}
+        assert after["consensus_slashes"] == [{"validator": b, "kind": "preendorse", "level": 990, "round": 0}]
+        assert [entry["stake"] for entry in after["consensus_set"]] == [500_000_000, 300_000_000, 1_200_000_000, 1]
+        assert len(after["delegation_unbonding"]) == 1 and after["attestations"][hex_of("a2")]["bond"] == 0
+        minted = 159_710
+        assert after["total_supply"] == due["total_supply"] + minted - 110_000_000
+        assert held(after, treasury) == held(due, treasury) + 7_985 + 110_000_000
+        assert held(after, e) == held(due, e) + 27_310                                       # the delegator of a
+        assert held(after, a) == held(due, a) + 2_000 + 124_415 + 100_000_000
+        assert held(after, d) == held(due, d) - 1_100 + 250 and held(after, f) == held(due, f) - 1_000 + 500
+        assert held(after, two) == held(due, two) + 101
+        after = whole("the block of level 1,201: its reward is counted with the parameters that the block before "
+                      "activated, a highest rate of 70,000 and a treasury share of 100,000, and its proposer has a "
+                      "delegator that entered its weight with the snapshot",
+                      "after_due", c, [])
+        assert after["total_supply"] - self.objects["after_due"]["total_supply"] == 186_328
+        assert held(after, treasury) - held(self.objects["after_due"], treasury) == 18_632
+        assert held(after, late) == 125_772 and held(after, c) == 41_924
+
+        # -- the function of the state root ----------------------------------
+        swap = self.first_state()
+        swap["level"] = 399
+        swap["governance"]["protocol"] = [{
+            "proposal_id": hex_of("d1"), "submitter": a, "payload": {"swap": "state_root_function", "to": "trie"},
+            "submitted_at": 0, "phase": "adoption", "exploration_votes": {a: "yes", b: "yes", c: "yes"},
+            "adoption_votes": {a: "yes", b: "yes"}, "double_votes": [],
+            "bond": CONSTANTS_OF_THE_VECTORS["protocol_bond"]}]
+        self.yes("state_swap", "state", "a state of level 399 under the function json, in which the second vote of "
+                 "a proposal that changes the function of the state root ends at the next level",
+                 self.with_supply(swap))
+        after = whole("the block of level 400 activates the change: the state it leads to names the function trie, "
+                      "and the `state_root` of its header is the root of that state by that function, the one the "
+                      "state names once every step of the block is done",
+                      "state_swap", b, [], name="after_swap")
+        assert after["state_root_function"] == "trie" and "bond" not in after["governance"]["protocol"][0]
+        as_before = sch.state_root(self.network_id, {**after, "state_root_function": "json"}).hex()
+        whole("the same block with the root that the function of the state before would give: it is invalid",
+              "state_swap", b, [], root=as_before, rule="wrong_state_root")
+        whole("the same block with a root that is no root of anything", "state_swap", b, [], root="5a" * 48,
+              rule="wrong_state_root")
+        whole("the block of level 401, under the function trie", "after_swap", c, [])
+
+        # -- reports of offences ---------------------------------------------
+        full = self.objects["state_full"]
+        vote = lambda block_hash, sig: {"kind": "endorse", "level": 995, "round": 0, "block_hash": hex_of(block_hash),  # noqa: E731
+                                        "validator": c, "signature": {"$sig": sig}}
+        offences = [
+            self.tx("slash_equivocation", nonce=3, sig=1, sender=d,
+                    params={"proposal_id": hex_of("b2"), "equivocator": b}),
+            self.tx("slash_attestation_equivocation", nonce=4, sig=2, sender=d,
+                    params={"attestation_id_1": hex_of("a1"), "attestation_id_2": hex_of("a3")}),
+            self.tx("slash_consensus_equivocation", nonce=2, sig=3, sender=f,
+                    params={"msg_a": vote("11", 801), "msg_b": vote("22", 802)}),
+        ]
+        after = whole("the block of level 1,001 on `state_full`, proposed by a validator that is slashed in it. A "
+                      "double vote of level 960 is reported: its validator loses 90,000,000 of its stake, the sender "
+                      "receives 9,000,000 and the rest is burned; the delegation that ended at level 950 does not "
+                      "answer for it, and the weight of the validator comes down to its stake. A report of two "
+                      "attestations, one of which was slashed before, fails and has paid. Two endorsements of level "
+                      "995 are reported: the proposer loses 60,000,000 and the vote is kept. The reward is counted "
+                      "after that, on a supply that 135,000,000 burned mukrn have left",
+                      "state_full", c, offences, failed=(1,))
+        assert [entry["stake"] for entry in after["validators"]] == [400_000_000, 210_000_000, 140_000_000, 1]
+        assert [entry["stake"] for entry in after["consensus_set"]] == [400_000_300, 210_000_000, 140_000_000, 1]
+        assert after["governance"]["protocol"][2]["double_votes"][0]["punished"] is True
+        assert after["consensus_slashes"][-1] == {"validator": c, "kind": "endorse", "level": 995, "round": 0}
+        assert after["delegation_unbonding"] == full["delegation_unbonding"]
+        minted = 159_707
+        assert after["total_supply"] == full["total_supply"] - 81_000_000 - 54_000_000 + minted
+        assert held(after, d) == held(full, d) - 2_000 + 9_000_000 and held(after, f) == held(full, f) - 1_000 + 6_000_000
+        assert held(after, c) == 3_000 + minted - 6_388 and held(after, treasury) == held(full, treasury) + 6_388
+
+        # -- guardians ---------------------------------------------------------
+        release = copy(self.objects["state_payments"])
+        release["balances"].update({first: 5_000, second: 5_000, third: 5_000})
+        waits = release["governance"]["treasury"]
+        assert [p["proposal_id"] for p in waits[9:]] == [hex_of("d9"), hex_of("da")]
+        waits.insert(10, {**copy(waits[9]), "proposal_id": hex_of("db"), "payload": {"recipients": [
+            {"address": two, "amount": release["balances"][treasury]}]}})
+        release = self.yes("state_release", "state", "`state_payments` with guardians that hold what the fees of "
+                           "their transactions take, and with one more payment that waits: its vote passed at "
+                           "level 1,000 too, and it pays all that the treasury holds", self.with_supply(release))
+        guardian = lambda kind, sender, nonce, pair, sig: self.tx(                          # noqa: E731
+            kind, nonce=nonce, sig=sig, sender=sender, params={"proposal_id": hex_of(pair)})
+        after = whole("the block of level 1,001 on that state. A guardian other than the first releases a payment "
+                      "whose vote passed at level 1,000: its delay runs from the end of the vote, the release "
+                      "fails, and it has paid. The first guardian releases that payment: its recipient is paid, "
+                      "its bond returns, and it is over. The first guardian releases the payment of all that the "
+                      "treasury held: the payment before it took 1,000, the treasury cannot pay any more, the "
+                      "release fails and the payment goes on waiting, though the treasury ends the block with more "
+                      "than that sum, since lost bonds and its share of the reward come after the transactions. "
+                      "Another guardian releases a payment that a second one had released: it is paid. A guardian "
+                      "other than the first releases a payment at the very level at which its delay has passed: "
+                      "the release is recorded. The first guardian cancels a payment: its bond is lost, and its "
+                      "`released_by` goes. A payment that nobody released ends its wait at this level, and the "
+                      "block rejects it after its transactions. A vote ends at this level too: the yes of the "
+                      "largest validator reaches the quorum alone, and the proposal becomes a payment that waits",
+                      "state_release", a,
+                      [guardian("release_payment", second, 1, "d9", 5), guardian("release_payment", first, 3, "d9", 1),
+                       guardian("release_payment", first, 4, "db", 6), guardian("release_payment", third, 1, "d6", 2),
+                       guardian("release_payment", second, 2, "d8", 3), guardian("cancel_payment", first, 5, "d7", 4)],
+                      failed=(0, 2))
+        payments = {p["proposal_id"][:2]: p for p in after["governance"]["treasury"]}
+        assert [payments[pair]["phase"] for pair in ("d5", "d6", "d7", "d8", "d9", "db", "da")] == \
+            ["rejected", "executed", "rejected", "passed", "executed", "passed", "passed"]
+        assert "released_by" not in payments["db"] and payments["db"]["bond"] == 10_000_000
+        assert payments["db"]["payload"]["recipients"][0]["amount"] == held(release, treasury) < held(after, treasury)
+        assert payments["d8"]["released_by"] == second and "released_by" not in payments["d7"]
+        assert all(payments[pair]["ended_at"] == 1001 and "bond" not in payments[pair]
+                   for pair in ("d5", "d6", "d7", "d9"))
+        minted = 159_707
+        assert after["total_supply"] == release["total_supply"] + minted - 10_000_000
+        assert held(after, one) == held(release, one) + 2_000
+        assert held(after, treasury) == held(release, treasury) - 2_000 + 10_000_000 + 6_388
+        assert held(after, d) == held(release, d) + 20_000_000
+
+        # -- the end of the range ---------------------------------------------
+        bound = self.first_state(validators=1)
+        bound["validators"] = bound["consensus_set"] = [{"address": a, "stake": 4 * 10**18}]
+        bound["balances"] = {one: top - 100 - 4 * 10**18}
+        bound = self.yes("state_top", "state", "a first state whose supply is 100 mukrn under 2^63 - 1",
+                         self.with_supply(bound))
+        assert bound["total_supply"] == top - 100
+        after = whole("the block of level 1 on that state: the reward would be 1,539,099,207, and the block mints the "
+                      "100 that are left: 5 to the treasury, 95 to the proposer", "state_top", a, [],
+                      name="after_top")
+        assert (after["total_supply"], held(after, treasury), held(after, a)) == (top, 5, 95)
+        after = whole("the block of level 2: nothing is left to mint, and only `level` changes", "after_top", a, [])
+        assert difference(self.objects["after_top"], after) == ([], {"level": 2})
+
+        tight = copy(self.objects["state_release"])
+        tight["constants"]["treasury_bond"] = 10_000_001
+        for proposal in tight["governance"]["treasury"]:
+            if "bond" in proposal:
+                proposal["bond"] = 10_000_001
+        tight["balances"][one] += top - 100 - sch.held(tight)
+        tight = self.yes("state_tight", "state", "`state_release` with a treasury bond of an odd amount and a supply "
+                         "100 mukrn under 2^63 - 1", self.with_supply(tight))
+        assert tight["total_supply"] == top - 100
+        after = whole("the block of level 1,001 on that state, in which the first guardian cancels a payment. Its "
+                      "transaction burns half the bond, rounded down, before the reward is counted: the reward, which "
+                      "would be far larger, is the 5,000,100 that are left under the bound then. A payment that "
+                      "nobody released is rejected later in the block (step 6): what its bond burns comes after the "
+                      "reward, and makes no room for it",
+                      "state_tight", a, [guardian("cancel_payment", first, 3, "d7", 1)])
+        assert after["total_supply"] == top - 5_000_000
+        assert held(after, treasury) == held(tight, treasury) + 2 * 5_000_001 + 200_004
+        assert held(after, e) == held(tight, e) + 7                                         # the delegator of a
+
+        # -- invalid blocks -----------------------------------------------------
+        whole("a block of level 1,002 on a state of level 1,000: a block follows the state it is applied to",
+              "state_full", a, [], level=1002, rule="wrong_level")
+        whole("a block of the level of the state itself", "state_full", a, [], level=1000, rule="wrong_level")
+        whole("a whole block whose second transaction takes a nonce that is not the next one of its sender: the "
+              "block is invalid, and leads to no state",
+              "state_full", a, [transfer(d, 3, two, 1, 1), transfer(d, 5, two, 1, 2)], rule="wrong_nonce", at=1)
+        small = copy(full)
+        small["parameters"]["max_block_bytes"] = LIMITS["transaction_bytes"]
+        self.yes("state_small_blocks", "state", "`state_full` with the smallest `max_block_bytes`", small)
+        many = lambda count: {"$list": [count, transfer(d, {"$index": 3}, two, 0, {"$index": 600}, fee=0)]}  # noqa: E731
+        whole("27 transfers fit in the smallest block: each takes the next nonce of its sender",
+              "state_small_blocks", a, many(27))
+        whole("one transfer more: the block is too large", "state_small_blocks", a, many(28), rule="block_too_large")
+
+    def exchanges(self) -> None:
+        """A connection, as the node that asks for blocks sees it."""
+        def exchange(why: str, steps: list[dict], verdicts: list[str]) -> None:
+            assert sch.exchange(steps) == verdicts, (why, sch.exchange(steps))
+            self.exchanged.append({"why": why, "steps": steps, "verdicts": verdicts})
+
+        ask = lambda first, last: {"ask": [first, last]}                                    # noqa: E731
+        got = lambda *levels: {"blocks": list(levels)}                                     # noqa: E731
+        exchange("a request, then its answer", [ask(2, 4), got(2, 3, 4)], ["accepted", "accepted"])
+        exchange("a second request while the first one waits: a node does not send it, and the first one still "
+                 "waits for its answer", [ask(2, 4), ask(5, 9), got(2, 3, 4)], ["accepted", "refused", "accepted"])
+        exchange("blocks that nobody asked for", [got(2, 3)], ["refused"])
+        exchange("an answer in two frames: the second one answers nothing, since nothing waits any more",
+                 [ask(5, 9), got(5, 6), got(7), ask(7, 9), got(7, 8, 9)],
+                 ["accepted", "accepted", "refused", "accepted", "accepted"])
+        exchange("an answer that does not start at the level asked for is refused, and the request still waits",
+                 [ask(5, 9), got(6, 7), got(5)], ["accepted", "refused", "accepted"])
+        exchange("an empty answer is an answer: the peer does not hold the first level asked for",
+                 [ask(5, 9), got(), ask(5, 9)], ["accepted", "accepted", "accepted"])
+        exchange("four bytes that announce the largest frame, then a request and its answer",
+                 [{"prefix": "01000000"}, ask(1, 1), got(1)], ["accepted", "accepted", "accepted"])
+        exchange("four bytes that announce one byte too many: the node closes the connection, and reads nothing "
+                 "that follows", [ask(1, 3), {"prefix": "01000001"}, got(1, 2, 3), ask(1, 3)],
+                 ["accepted", "refused", "closed", "closed"])
+
+        def served(why: str, held: list[list[int]], requests: list[list[int]], answers: list[list[int]]) -> None:
+            assert sch.serve(dict(map(tuple, held)), [tuple(r) for r in requests]) == answers, why
+            self.served.append({"why": why, "held": held, "requests": requests, "answers": answers})
+
+        run = [[level, 5_000] for level in range(1, 6)]
+        served("two requests received on a connection: two answers, in the order of the requests",
+               run, [[4, 5], [1, 2]], [[4, 5], [1, 2]])
+        served("the same request twice: the same answer twice", run, [[2, 3], [2, 3]], [[2, 3], [2, 3]])
+        served("a request the node cannot serve, then one it can: an empty answer first",
+               run, [[7, 9], [5, 9]], [[], [5]])
+
     # -- the vectors ------------------------------------------------------
+
+    def outside(self) -> None:
+        """Chapter 3: the four objects that are hashed outside blocks. The
+        first vector of each schema is the object of the note, which gives
+        back its digest."""
+        top, word, address = INT_MAX, str(2**256 - 1), str(2**160 - 1)
+        p = sch.BN254_P
+        note = {name: copy(self.frozen[domain]["object"]) for name, domain in (
+            ("batch", "kern.batch"), ("request", "kern.mailbox"), ("state", "kern.evm"), ("key", "kern.zk_claims.vk"))}
+        a_hash = {"$concat": [{"$text": [91, "0"]}, {"$index": 10000}]}        # 96 characters, another for each item
+        elsewhere = "kn1VwTAqJ8uFjeNr5FzW54xUbMjE9sr9g7PrYyKtyHRRvDH5QADRewCQ7Xc6w2imSEDmWnfEk2v"
+
+        # -- rollup batches (section 9.20)
+        self.yes("batch", "rollup batch", "a rollup batch: the object of the note (its vector `kern.batch`), with the "
+                 "signature of its sequencer", {**note["batch"], "signature": {"$sig": 301}}, mutate=True)
+        self.yes("batch_first", "rollup batch", "the first batch of a rollup, with no transaction: the lowest value "
+                 "of every range, and a name of one character",
+                 {**note["batch"], "rollup_id": "r", "batch_index": 0, "tx_hashes": [], "timestamp": 0,
+                  "signature": {"$sig": 302}})
+        self.yes("batch_1024", "rollup batch", "a batch of 1,024 transactions: the highest value of every range, and "
+                 "a name of 64 characters with every kind of character a name may have",
+                 {**note["batch"], "rollup_id": {"$concat": ["k", {"$text": [21, "0-9"]}]}, "batch_index": top,
+                  "tx_hashes": {"$list": [1024, a_hash]}, "timestamp": top, "signature": {"$sig": 303}})
+        no = lambda rule, why, **how: self.no("batch", rule, why, **how)                    # noqa: E731
+        no("missing_field", "a batch that nobody signed", remove=["signature"])
+        no("unknown_field", "a batch that carries the key of its sequencer, as today",
+           set={"sequencer_pubkey": {"$key": 301}})
+        no("unknown_field", "a batch with the level at which the chain took it", set={"posted_at_level": 12})
+        no("unknown_field", "a batch with what has become of it", set={"status": "pending"})
+        no("bad_text", "a rollup whose name starts with a digit", set={"rollup_id": "1-rollup"})
+        no("bad_text", "a rollup named with a capital", set={"rollup_id": "Rollup-1"})
+        no("bad_text", "a rollup without a name", set={"rollup_id": ""})
+        self.no("batch_1024", "bad_text", "a name of 65 characters",
+                set={"rollup_id": {"$concat": ["kk", {"$text": [21, "0-9"]}]}})
+        no("out_of_range", "a batch numbered -1", set={"batch_index": -1})
+        self.no("batch_1024", "out_of_range", "a batch of 1,025 transactions",
+                set={"tx_hashes.1024": {"$text": [48, "ab"]}})
+        no("bad_text", "a state root of 64 characters, as today", set={"state_root": {"$text": [32, "ab"]}})
+        no("bad_text", "the hash of a transaction in capitals", set={"tx_hashes.0": {"$text": [48, "AB"]}})
+        no("wrong_type", "the hashes of the transactions as one text", set={"tx_hashes": {"$text": [48, "ab"]}})
+        no("wrong_type", "a batch number as a text", set={"batch_index": "3"})
+        no("bad_address", "a sequencer of another network", set={"sequencer": elsewhere})
+        no("bad_signature", "a signature of another scheme",
+           set={"signature": {"$concat": ["ksig2.", {"$text": [4498, "A"]}]}})
+
+        # -- forced inclusion requests (section 9.21)
+        self.yes("request", "inclusion request", "a forced inclusion request: the object of the note (its vector "
+                 "`kern.mailbox`)", note["request"], mutate=True)
+        self.yes("request_lowest", "inclusion request", "a transaction of one byte, posted at level 0 at the first "
+                 "second there is, to include within one block",
+                 {**note["request"], "rollup_id": "r", "l2_tx_payload": "00", "posted_at_l1_level": 0,
+                  "posted_at_l1_timestamp": 0, "deadline_blocks": 1})
+        self.yes("request_highest", "inclusion request", "a transaction of 32,768 bytes and the longest delay there "
+                 "is, posted so that its deadline is the last level",
+                 {**note["request"], "l2_tx_payload": {"$text": [32768, "ff"]},
+                  "posted_at_l1_level": top - ROUND_MAX, "posted_at_l1_timestamp": top, "deadline_blocks": ROUND_MAX})
+        self.yes("request_last_level", "inclusion request", "a request posted one level before the last one",
+                 {**note["request"], "posted_at_l1_level": top - 1, "deadline_blocks": 1})
+        no = lambda rule, why, **how: self.no("request", rule, why, **how)                  # noqa: E731
+        no("missing_field", "a request without its delay: the 21,600 blocks of today are a value a request states",
+           remove=["deadline_blocks"])
+        no("out_of_range", "a delay of 0 blocks", set={"deadline_blocks": 0})
+        no("out_of_range", "a delay of 2^32 blocks", set={"deadline_blocks": ROUND_MAX + 1})
+        no("unknown_field", "a request with what has become of it", set={"status": "pending"})
+        no("unknown_field", "a request with the batch that included it", set={"included_in_batch": 3})
+        no("unknown_field", "a request that carries its own hash", set={"hash": {"$text": [48, "ab"]}})
+        no("bad_text", "a request that carries no transaction", set={"l2_tx_payload": ""})
+        self.no("request_highest", "bad_text", "a transaction of 32,769 bytes",
+                set={"l2_tx_payload": {"$text": [32769, "ff"]}})
+        no("bad_text", "half a byte", set={"l2_tx_payload": "deadbee"})
+        no("bad_text", "bytes written in capitals", set={"l2_tx_payload": "DEADBEEF"})
+        no("bad_text", "bytes written with a prefix", set={"l2_tx_payload": "0xdeadbeef"})
+        no("wrong_type", "bytes written as a list of numbers", set={"l2_tx_payload": [222, 173, 190, 239]})
+        no("bad_address", "a sender of another network", set={"sender": elsewhere})
+        self.no("request_highest", "inconsistent", "a deadline one level beyond the last one",
+                set={"posted_at_l1_level": top - ROUND_MAX + 1}, breaks="The level of the deadline")
+        self.no("request_last_level", "inconsistent", "a request posted at the last level: no level is left to "
+                "include it", set={"posted_at_l1_level": top}, breaks="The level of the deadline")
+
+        # -- states of the Mini-EVM (section 9.22)
+        self.yes("evm_state", "Mini-EVM state", "a state of the Mini-EVM: the object of the note (its vector "
+                 "`kern.evm`)", note["state"], mutate=True, maps=("storage",))
+        nothing = {"address": "0", "caller": "0", "value": "0", "calldata": "", "block_number": 0,
+                   "block_timestamp": 0}
+        self.yes("evm_state_first", "Mini-EVM state", "the state before the first instruction of a program that is "
+                 "given nothing: the lowest value of every range",
+                 {"pc": 0, "stack": [], "memory": "", "gas": 0, "halted": False, "output": "", "reverted": False,
+                  "storage": {}, "context": nothing})
+        self.yes("evm_state_returned", "Mini-EVM state", "a state that stopped and handed back 32 bytes",
+                 {**note["state"], "halted": True, "output": {"$text": [32, "2a"]}})
+        self.yes("evm_state_failed", "Mini-EVM state", "a state that stopped on a failure, and hands back nothing",
+                 {**note["state"], "halted": True, "reverted": True})
+        slot = {"$concat": ["1", {"$text": [72, "0"]}, {"$index": 10000}]}        # 78 digits, another for each slot
+        self.yes("evm_state_largest", "Mini-EVM state", "the largest state there is: 1,024 words on the stack, "
+                 "1,048,576 bytes of memory, of output and of calldata, 16,384 slots, and the highest value of every "
+                 "number",
+                 {"pc": top, "stack": {"$list": [1024, word]}, "memory": {"$text": [1048576, "ff"]}, "gas": top,
+                  "halted": True, "output": {"$text": [1048576, "ff"]}, "reverted": True,
+                  "storage": {"$map": [16384, slot, word]},
+                  "context": {"address": address, "caller": address, "value": word,
+                              "calldata": {"$text": [1048576, "ff"]}, "block_number": top, "block_timestamp": top}})
+        no = lambda rule, why, **how: self.no("evm_state", rule, why, **how)                # noqa: E731
+        rule = lambda breaks, why, **how: self.no("evm_state", "inconsistent", why, breaks=breaks, **how)  # noqa: E731
+        no("missing_field", "a state without its context", remove=["context"])
+        no("missing_field", "a context without the data of the call", remove=["context.calldata"])
+        no("unknown_field", "a state with the text of its last error, which is not hashed",
+           set={"last_error": "out of gas"})
+        no("out_of_range", "a position of -1 in the program", set={"pc": -1})
+        no("out_of_range", "a gas of -1", set={"gas": -1})
+        no("wrong_type", "a word of the stack written as a number", set={"stack.0": 1})
+        no("bad_text", "a word with a zero in front", set={"stack.0": "01"})
+        no("bad_text", "a word of 2^256", set={"stack.1": str(2**256)})
+        no("bad_text", "a word with a sign", set={"stack.0": "-1"})
+        no("bad_text", "a word in hexadecimal", set={"stack.0": "0x01"})
+        no("bad_text", "an empty word", set={"stack.0": ""})
+        self.no("evm_state_largest", "out_of_range", "a stack of 1,025 words", set={"stack.1024": "1"})
+        no("bad_text", "a memory of 33 bytes: it grows by words of 32", set={"memory": {"$text": [33, "00"]}})
+        self.no("evm_state_largest", "bad_text", "a memory of 1,048,608 bytes",
+                set={"memory": {"$text": [1048608, "ff"]}})
+        self.no("evm_state_largest", "bad_text", "an output of 1,048,577 bytes",
+                set={"output": {"$text": [1048577, "ff"]}})
+        self.no("evm_state_largest", "bad_text", "a calldata of 1,048,577 bytes",
+                set={"context.calldata": {"$text": [1048577, "ff"]}})
+        self.no("evm_state_largest", "out_of_range", "a storage of 16,385 slots", set={"storage.7": "1"})
+        no("wrong_type", "a storage written as a list of pairs, as today", set={"storage": [["0", "7"], ["9", "2"]]})
+        no("bad_text", "a slot whose number has a zero in front", set={"storage.07": "1"})
+        no("wrong_type", "a slot that holds a number", set={"storage.9": 2})
+        no("bad_text", "an address of the machine of 2^160", set={"context.address": str(2**160)})
+        no("bad_text", "a caller of 2^160", set={"context.caller": str(2**160)})
+        no("wrong_type", "a flag written as a number", set={"halted": 0})
+        rule("that is `reverted`", "a state that failed and has not stopped", set={"reverted": True})
+        rule("`output` is empty", "a state that hands something back before it stops",
+             set={"output": "2a"})
+        rule("No slot of `storage`", "a slot that holds 0: the machine keeps no such slot", set={"storage.5": "0"})
+
+        # -- verifier keys (section 9.23)
+        self.yes("verifier_key", "verifier key", "a verifier key: the object of the note (its vector "
+                 "`kern.zk_claims.vk`), for a circuit with one public input", note["key"], mutate=True)
+        zero, last = ["0", "0"], [str(p - 1), str(p - 1)]
+        self.yes("verifier_key_lowest", "verifier key", "a key for a circuit without a public input, every "
+                 "coordinate 0: a schema does not ask whether a point is on the curve",
+                 {"alpha1": zero, "beta2": [zero, zero], "gamma2": [zero, zero], "delta2": [zero, zero],
+                  "ic": [zero]})
+        self.yes("verifier_key_257", "verifier key", "a key for 256 public inputs, with coordinates of p - 1",
+                 {"alpha1": last, "beta2": [last, last], "gamma2": [last, last], "delta2": [last, last],
+                  "ic": {"$list": [257, [{"$concat": [{"$index": 1}]}, str(p - 1)]]}})
+        no = lambda rule, why, **how: self.no("verifier_key", rule, why, **how)             # noqa: E731
+        no("missing_field", "a key without `delta2`", remove=["delta2"])
+        no("unknown_field", "a key that names its curve", set={"curve": "bn254"})
+        no("out_of_range", "a key without a point in `ic`", set={"ic": []})
+        self.no("verifier_key_257", "out_of_range", "a key of 258 points", set={"ic.257": ["1", "2"]})
+        no("out_of_range", "a point of three coordinates", set={"alpha1": ["1", "2", "1"]})
+        no("out_of_range", "a point of one coordinate", set={"alpha1": ["1"]})
+        no("out_of_range", "a point of the second group with one pair", set={"beta2": [["3", "4"]]})
+        no("out_of_range", "a point of the second group with three pairs",
+           set={"delta2": [["11", "12"], ["13", "14"], ["15", "16"]]})
+        no("out_of_range", "a point of the second group written as four coordinates in a row",
+           set={"gamma2": ["7", "8", "9", "10"]})
+        no("wrong_type", "a point of the first group where one of the second group is due",
+           set={"gamma2": ["7", "8"]})
+        no("wrong_type", "a coordinate written as a number, as today", set={"alpha1.0": 1})
+        no("bad_text", "a coordinate of p", set={"ic.0.0": str(p)})
+        no("bad_text", "a coordinate with a zero in front", set={"ic.0.1": "016"})
+        no("bad_text", "a coordinate in hexadecimal", set={"delta2.0.0": "0b"})
 
     def build(self) -> dict:
         self.transactions()
@@ -342,9 +2420,30 @@ class Builder(Vectors):
         self.blocks()
         self.frames()
         self.texts()
+        self.four_bytes()
+        self.requests_and_answers()
+        self.states()
+        self.accounts_and_genesis()
+        self.charges()
+        self.decisions()
+        self.payments()
+        self.rewards()
+        self.tallies()
+        self.slashes()
+        self.transitions()
+        self.exchanges()
+        self.outside()
         return {"description": DESCRIPTION, "network_id": self.network_id.hex(), "limits": LIMITS,
-                "rules": sch.RULES, "directives": DIRECTIVES, "accepted": self.accepted, "refused": self.refused,
-                "accepted_texts": self.accepted_texts, "refused_texts": self.refused_texts}
+                "rules": sch.RULES, "block_rules": sch.BLOCK_RULES, "guardian_rules": sch.GUARDIAN_RULES,
+                "slash_rules": sch.SLASH_RULES, "whole_block_rules": sch.WHOLE_BLOCK_RULES,
+                "directives": DIRECTIVES,
+                "accepted": self.accepted, "refused": self.refused,
+                "accepted_texts": self.accepted_texts, "refused_texts": self.refused_texts,
+                "prefixes": self.prefixes, "answers": self.answers, "replies": self.replies,
+                "charges": self.charged, "decisions": self.decided, "payments": self.guarded,
+                "rewards": self.rewarded, "tallies": self.tallied, "slashes": self.slashed,
+                "transitions": self.applied,
+                "exchanges": self.exchanged, "served": self.served}
 
     def transactions(self) -> None:
         yes, no, tx, limit = self.yes, self.no, self.tx, LIMITS
@@ -399,13 +2498,13 @@ class Builder(Vectors):
         yes("propose_parameters_high", "transaction", "every parameter, each at the top of its range",
             tx("governance_propose", params={"track": "protocol", "salt": INT_MAX, "payload": {"params": {
                 "i_min_ppm": 1000000, "i_max_ppm": 1000000, "target_staking_ratio_ppm": 1000000,
-                "target_block_time_ms": 3600000, "treasury_share_ppm": 1000000, "proposer_bonus_ppm": 1000000,
+                "target_block_time_ms": 3600000, "treasury_share_ppm": 1000000,
                 "fee_floor_enabled": True, "fee_floor_base": 10**12, "fee_floor_per_byte": 10**9,
                 "max_block_bytes": limit["block_bytes"]}}}))
         yes("propose_parameters_low", "transaction", "every parameter, each at the bottom of its range",
             tx("governance_propose", params={"track": "protocol", "salt": 0, "payload": {"params": {
                 "i_min_ppm": 0, "i_max_ppm": 0, "target_staking_ratio_ppm": 0, "target_block_time_ms": 1,
-                "treasury_share_ppm": 0, "proposer_bonus_ppm": 0, "fee_floor_enabled": False, "fee_floor_base": 0,
+                "treasury_share_ppm": 0, "fee_floor_enabled": False, "fee_floor_base": 0,
                 "fee_floor_per_byte": 0, "max_block_bytes": limit["transaction_bytes"]}}}))
         proposal = self.frozen["kern.gov.id"]["object"]
         value = yes("propose_swap", "transaction", "a protocol proposal that changes the state root function: the "
@@ -442,6 +2541,10 @@ class Builder(Vectors):
             tx("governance_vote", params={"track": "treasury", "proposal_id": self.proposal, "vote": "no"}))
         yes("governance_vote_abstain", "transaction", "an abstention",
             tx("governance_vote", params={"track": "protocol", "proposal_id": self.proposal, "vote": "abstain"}))
+        yes("release_payment", "transaction", "a guardian releases a payment that waits, named by the identifier "
+            "of its proposal", tx("release_payment", params={"proposal_id": self.proposal}), mutate=True)
+        yes("cancel_payment", "transaction", "the first guardian cancels a payment that waits",
+            tx("cancel_payment", params={"proposal_id": self.proposal}), mutate=True)
         yes("slash_equivocation", "transaction", "a report of two votes of one validator on one proposal",
             tx("slash_equivocation", params={"proposal_id": self.proposal, "equivocator": {"$address": 2}}),
             mutate=True)
@@ -557,7 +2660,10 @@ class Builder(Vectors):
         no("propose_parameter", "inconsistent", "an empty set of parameters", set={"params.payload.params": {}})
         no("propose_parameter", "unknown_field", "a parameter under one of the names that take a fraction today",
            set={"params.payload.params": {"i_max": 40000}})
-        for name in ("i_min_ppm", "i_max_ppm", "target_staking_ratio_ppm", "treasury_share_ppm", "proposer_bonus_ppm"):
+        no("propose_parameter", "unknown_field", "the bonus of the proposer, a parameter of today that structure "
+           "version 1 does not have: the proposer receives all that the treasury does not",
+           set={"params.payload.params": {"proposer_bonus_ppm": 100000}})
+        for name in ("i_min_ppm", "i_max_ppm", "target_staking_ratio_ppm", "treasury_share_ppm"):
             no("propose_parameter", "out_of_range", f"{name} above a million parts per million",
                set={"params.payload.params": {name: 1000001}})
         no("propose_parameter", "out_of_range", "a block time of zero",
@@ -925,6 +3031,79 @@ class Builder(Vectors):
                       {"$text": [LIMITS[name], " "]})
             self.text(schema, "too_long", f"{what} of {LIMITS[name] + 1:,} spaces: too long, whatever it holds",
                       {"$text": [LIMITS[name] + 1, " "]})
+
+
+    def four_bytes(self) -> None:
+        """The four bytes that precede a frame: what they announce, and
+        where a node stops reading."""
+        limit = LIMITS["frame_bytes"]
+        for prefix, why in (
+            ("0000006a", "the frame hello of the texts: 106 bytes follow"),
+            ("00000100", "256 bytes follow: the most significant byte comes first, or this would read 65,536"),
+            ("00000000", "nothing follows; the empty text is then refused, since it is not canonical JSON"),
+            ("01000000", f"{limit:,} bytes follow: the largest frame, which travels as {limit + 4:,} bytes"),
+            ("01000001", f"{limit + 1:,} bytes would follow: one more than a frame holds"),
+            ("7fffffff", "2,147,483,647 bytes would follow"),
+            ("80000000", "2,147,483,648 bytes would follow: the four bytes are a number without a sign"),
+            ("ffffffff", "4,294,967,295 bytes would follow, the most four bytes can announce"),
+        ):
+            try:
+                self.prefixes.append({"prefix": prefix, "announces": sch.announced(bytes.fromhex(prefix)), "why": why})
+            except sch.Refused as refusal:
+                self.prefixes.append({"prefix": prefix, "rule": refusal.rule, "why": why})
+        assert [p.get("rule", "") for p in self.prefixes] == ["", "", "", "", "too_long", "too_long", "too_long",
+                                                              "too_long"]
+        self.text("frame", "not_canonical", "an empty frame: four bytes that announce nothing, and nothing", "")
+
+    def requests_and_answers(self) -> None:
+        """What a node answers to a `get_blocks`, and what the node that
+        asked accepts as an answer."""
+        limit, top = LIMITS["frame_bytes"], sch.INT_MAX
+        third = limit - sch.BLOCKS_FRAME_BYTES - 2 - 2 * 6_000_000        # what is left for a third block, to the byte
+
+        def answer(why: str, held: list[list[int]], first: int, last: int, levels: list[int]) -> None:
+            assert sch.answer(dict(map(tuple, held)), first, last) == levels, why
+            assert sch.answer_verdict(first, last, levels) == "accepted", why
+            self.answers.append({"held": held, "from": first, "to": last, "levels": levels, "why": why})
+
+        def run(first: int, last: int, size: int = 5_000) -> list[list[int]]:
+            return [[level, size] for level in range(first, last + 1)]
+
+        answer("every block asked for", run(1, 5), 2, 4, [2, 3, 4])
+        answer("one block asked for", run(1, 9), 7, 7, [7])
+        answer("the node holds fewer blocks than were asked for", run(1, 3), 2, 9, [2, 3])
+        answer("a level is missing: the answer stops before it, and the blocks after it are not sent",
+               run(1, 3) + run(5, 6), 2, 6, [2, 3])
+        answer("the first level asked for is missing: an empty answer, although the node holds the next ones",
+               run(3, 4), 2, 4, [])
+        answer("the node holds nothing", [], 1, 3, [])
+        answer("the node holds nothing that high", run(1, 3), 5, 9, [])
+        answer(f"three blocks that fill a frame of {limit:,} bytes, to the byte, and a fourth that is held",
+               [[10, 6_000_000], [11, 6_000_000], [12, third], [13, 5_000]], 10, 13, [10, 11, 12])
+        answer("the same with one byte more in the third block: two blocks",
+               [[10, 6_000_000], [11, 6_000_000], [12, third + 1], [13, 5_000]], 10, 13, [10, 11])
+        answer("a small block after one that does not fit is not sent in its place",
+               [[10, 13_000_000], [11, 5_000_000], [12, 5_000]], 10, 12, [10])
+        answer("the two highest levels there are", [[top - 1, 5_000], [top, 5_000]], top - 1, top, [top - 1, top])
+
+        def reply(why: str, first: int, last: int, levels: list[int], rule: str = "accepted") -> None:
+            assert sch.answer_verdict(first, last, levels) == rule, why
+            record: dict[str, Any] = {"from": first, "to": last, "levels": levels}
+            self.replies.append({**record, "why": why} if rule == "accepted" else {**record, "rule": rule, "why": why})
+
+        reply("the levels asked for", 2, 4, [2, 3, 4])
+        reply("fewer than were asked for, from the first one", 2, 9, [2, 3])
+        reply("no block", 2, 4, [])
+        reply("the one level asked for", 7, 7, [7])
+        reply("the two highest levels there are", top - 1, top, [top - 1, top])
+        reply("the first level asked for was left out", 2, 4, [3, 4], "inconsistent")
+        reply("a block below the first level asked for", 2, 4, [1, 2], "inconsistent")
+        reply("a block above the last level asked for", 2, 4, [2, 3, 4, 5], "inconsistent")
+        reply("one level was asked for, and two come", 7, 7, [7, 8], "inconsistent")
+        reply("a level is left out in the middle", 2, 6, [2, 3, 5], "inconsistent")
+        reply("the levels asked for, the highest first", 2, 4, [4, 3, 2], "inconsistent")
+        reply("a level twice", 2, 4, [2, 2, 3], "inconsistent")
+        reply("the level asked for, then the lowest level there is", top, top, [top, 0], "inconsistent")
 
 
 def build() -> dict:

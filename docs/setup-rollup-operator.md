@@ -430,6 +430,6 @@ A profitable sequencer charges L2 users enough to exceed the daily L1 posting co
 - [rollups.md](rollups.md) — full rollup protocol spec
 - [evm-fraud-proofs.md](evm-fraud-proofs.md) — bisection protocol detail
 - [forced-inclusion.md](forced-inclusion.md) — the mailbox for censorship resistance
-- [multi-frame-evm.md](multi-frame-evm.md) — the L2 execution semantics
+- [multi-frame-evm.md](multi-frame-evm.md) — calls, creations and precompiles of the Mini-EVM
 - [setup-heimdall-operator.md](setup-heimdall-operator.md) — point Heimdall at the L1 RPC your sequencer settles to; the explorer surfaces every rollup state-commitment tx and lets you correlate them with bisection events
 - Foundation grants for rollup development: [contributors-program.md](contributors-program.md)

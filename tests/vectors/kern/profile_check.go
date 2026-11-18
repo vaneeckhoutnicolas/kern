@@ -22,7 +22,10 @@
 // With -schemas it checks the vectors of the schemas of structure version 1
 // (docs/api-stability.md, section 9), which tests/schema_vectors.py builds
 // with tests/schema_reference.py: the tables of this program were written
-// from the document, and must accept and refuse the same objects.
+// from the document, and must accept and refuse the same objects, compute
+// the same roots, charge the same blocks, decide the same proposals,
+// release the same payments, mint the same rewards, count the same votes,
+// take the same slashes and lead whole blocks to the same states.
 //
 //	go run profile_check.go -schemas schemas.json
 //
@@ -1001,10 +1004,11 @@ func checkOfficial(dir string) {
 
 // ---------------------------------------------------------------- the schemas of structure version 1
 //
-// docs/api-stability.md, section 9, chapter 1: what is signed and what
-// travels. The tables below were written from that section, not from
-// tests/schema_reference.py, and the checks are not made in the same
+// docs/api-stability.md, section 9. Chapter 1 comes first: what is signed
+// and what travels. The tables below were written from that section, not
+// from tests/schema_reference.py, and the checks are not made in the same
 // order: a vector that broke two rules at once would get two answers.
+// Chapter 2, what is kept, follows the reception of a text.
 
 const (
 	maxJSONNesting           = 64
@@ -1373,8 +1377,8 @@ var aCertificate = object(map[string]field{
 var someParameters = object(map[string]field{
 	"i_min_ppm": optional(integer(0, 1000000)), "i_max_ppm": optional(integer(0, 1000000)),
 	"target_staking_ratio_ppm": optional(integer(0, 1000000)), "target_block_time_ms": optional(integer(1, 3600000)),
-	"treasury_share_ppm": optional(integer(0, 1000000)), "proposer_bonus_ppm": optional(integer(0, 1000000)),
-	"fee_floor_enabled": optional(boolean), "fee_floor_base": optional(integer(0, 1000000000000)),
+	"treasury_share_ppm": optional(integer(0, 1000000)),
+	"fee_floor_enabled":  optional(boolean), "fee_floor_base": optional(integer(0, 1000000000000)),
 	"fee_floor_per_byte": optional(integer(0, 1000000000)),
 	"max_block_bytes":    optional(integer(maxTransactionBytes, maxBlockBytes)),
 }, func(o map[string]any) string {
@@ -1438,6 +1442,8 @@ var kinds = map[string]map[string]schema{
 		"track": required(oneOf("protocol", "treasury")), "proposal_id": required(aHash),
 		"vote": required(oneOf("yes", "no", "abstain")),
 	})},
+	"release_payment": {"params": object(map[string]field{"proposal_id": required(aHash)})},
+	"cancel_payment":  {"params": object(map[string]field{"proposal_id": required(aHash)})},
 	"slash_equivocation": {"params": object(map[string]field{
 		"proposal_id": required(aHash), "equivocator": required(anAddress),
 	})},
@@ -1658,6 +1664,8 @@ var schemas = map[string]schema{
 	},
 	"transaction": aTransaction, "vote": aVote, "propose message": aProposeMessage, "certificate": aCertificate,
 	"header": aHeader, "block": aBlock, "final block": aFinalBlock, "frame": aFrame,
+	"state": aState, "account": anAccount, "genesis": aGenesis,
+	"rollup batch": aBatch, "inclusion request": aRequest, "Mini-EVM state": anEvmState, "verifier key": aVerifierKey,
 }
 
 // nestingOf reads the nesting of a JSON text on its bytes: brackets and
@@ -1686,7 +1694,8 @@ func nestingOf(text []byte) int {
 	return deepest
 }
 
-// receive is what a node does with bytes that come from outside.
+// receive is what a node does with bytes that come from outside. A genesis
+// is read the same way, and has no bound on its length.
 func receive(name string, text []byte) string {
 	if name == "frame" && len(text) > maxFrameBytes || name == "transaction" && len(text) > maxTransactionBytes {
 		return "too_long"
@@ -1700,6 +1709,1787 @@ func receive(name string, text []byte) string {
 	}
 	return schemas[name](value)
 }
+
+// ---------------------------------------------------------------- chapter 2: what is kept
+//
+// docs/api-stability.md, sections 9.12 to 9.16: the state, the account of
+// the state trie, the key registry, the genesis, and what a block does.
+// Written from that text. A rule of this chapter is a sentence of the
+// document with a check of its own. An object is refused for its form at
+// once; when its form is right every rule is looked at, the object that
+// breaks one is `inconsistent`, and `broken` names the sentences it breaks:
+// a refused vector names the one sentence it is meant to break.
+
+const maxValidators = 1024
+const maxGuardians = 8
+
+type sentence struct {
+	text  string
+	holds func(o map[string]any) bool
+}
+
+var (
+	broken    []string // the sentences the last object checked breaks
+	sentences []string // every sentence of this chapter that this program checks on an object
+)
+
+func rule(text string, holds func(o map[string]any) bool) sentence {
+	if !has(sentences, text) {
+		sentences = append(sentences, text)
+	}
+	return sentence{text, holds}
+}
+
+// judge answers for an object of a schema, with the sentences it breaks.
+func judge(name string, v any) (string, []string) {
+	broken = nil
+	verdict := schemas[name](v)
+	return verdict, broken
+}
+
+// ruled is an object of chapter 2 or 3. Its fields are checked from the last
+// name to the first, then the members that are not fields are looked for,
+// then every rule is applied, whether an earlier one was broken or not.
+func ruled(fields map[string]field, rules ...sentence) schema {
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	return func(v any) string {
+		o, ok := v.(map[string]any)
+		if !ok {
+			return "wrong_type"
+		}
+		inconsistent := false
+		for _, name := range names {
+			value, present := o[name]
+			if !present {
+				if !fields[name].optional {
+					return "missing_field"
+				}
+				continue
+			}
+			switch r := fields[name].is(value); r {
+			case "":
+			case "inconsistent":
+				inconsistent = true
+			default:
+				return r
+			}
+		}
+		for member := range o {
+			if _, known := fields[member]; !known {
+				return "unknown_field"
+			}
+		}
+		for _, rule := range rules {
+			if !rule.holds(o) {
+				broken = append(broken, rule.text)
+				inconsistent = true
+			}
+		}
+		if inconsistent {
+			return "inconsistent"
+		}
+		return ""
+	}
+}
+
+// each applies a schema to every value: a form that is refused answers at
+// once, and a rule that is broken is remembered until all have been seen.
+func each(values []any, item schema) string {
+	inconsistent := false
+	for _, value := range values {
+		switch r := item(value); r {
+		case "":
+		case "inconsistent":
+			inconsistent = true
+		default:
+			return r
+		}
+	}
+	if inconsistent {
+		return "inconsistent"
+	}
+	return ""
+}
+
+// someOf is a list of low to high items; a negative high is any number.
+func someOf(item schema, low, high int) schema {
+	return func(v any) string {
+		list, ok := v.([]any)
+		if !ok {
+			return "wrong_type"
+		}
+		if len(list) < low || high >= 0 && len(list) > high {
+			return "out_of_range"
+		}
+		return each(list, item)
+	}
+}
+
+// tableOf is a map whose names are data; a negative high is any number of
+// entries. The names are checked before the values.
+func tableOf(name, value schema, low, high int) schema {
+	return func(v any) string {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return "wrong_type"
+		}
+		if len(m) < low || high >= 0 && len(m) > high {
+			return "out_of_range"
+		}
+		values := make([]any, 0, len(m))
+		for _, member := range sortedNames(m) {
+			if r := name(member); r != "" {
+				return r
+			}
+			values = append(values, m[member])
+		}
+		return each(values, value)
+	}
+}
+
+func listAt(o map[string]any, name string) []any         { list, _ := o[name].([]any); return list }
+func mapAt(o map[string]any, name string) map[string]any { m, _ := o[name].(map[string]any); return m }
+func textAt(o map[string]any, name string) string        { s, _ := o[name].(string); return s }
+func levelAt(o map[string]any, name string) uint64       { return uint64(number(o[name])) }
+func amountAt(o map[string]any, name string) *big.Int    { return big.NewInt(number(o[name])) }
+func objectsOf(list []any) []map[string]any {
+	out := make([]map[string]any, len(list))
+	for i, item := range list {
+		out[i] = item.(map[string]any)
+	}
+	return out
+}
+
+var (
+	aPositive   = integer(1, maxInt)
+	aPeriod     = integer(1, maxRound)
+	someBallots = tableOf(anAddress, oneOf("yes", "no", "abstain"), 0, maxValidators)
+	aCode       = anyText(1, maxCodeBytes)
+	aNetwork    = hexOf(64)
+)
+
+var aContract = ruled(map[string]field{"code": required(aCode), "storage": required(someFields)})
+
+var aKeyEntry = ruled(map[string]field{"from": required(aLevel), "public_key": required(aKey)})
+
+var aValidator = ruled(map[string]field{"address": required(anAddress), "stake": required(aPositive)})
+
+var aTranche = ruled(map[string]field{"level": required(aLevel), "amount": required(aPositive)})
+
+// The tranches of a delegation: their levels grow, and they add up to it.
+var tranchesAddUp = rule("`amount` is the sum of the amounts of `tranches`, whose levels grow.",
+	func(o map[string]any) bool {
+		total := new(big.Int)
+		for i, tranche := range objectsOf(listAt(o, "tranches")) {
+			if i > 0 && levelAt(tranche, "level") <= levelAt(listAt(o, "tranches")[i-1].(map[string]any), "level") {
+				return false
+			}
+			total.Add(total, amountAt(tranche, "amount"))
+		}
+		return total.Cmp(amountAt(o, "amount")) == 0
+	})
+
+var aDelegation = ruled(map[string]field{
+	"validator": required(anAddress), "amount": required(aPositive), "tranches": required(someOf(aTranche, 1, -1)),
+}, tranchesAddUp)
+
+var anUnbonding = ruled(map[string]field{
+	"delegator": required(anAddress), "validator": required(anAddress), "amount": required(aPositive),
+	"tranches": required(someOf(aTranche, 1, -1)), "unbonding_from": required(aLevel), "release_at": required(aLevel),
+}, tranchesAddUp)
+
+var anAttestation = ruled(map[string]field{
+	"issuer": required(anAddress), "schema_id": required(aSchemaName), "subject": required(aSubject),
+	"claim": required(aClaim), "bond": required(anAmount), "issued_at": required(aLevel),
+	"revoked_at": optional(aLevel), "slashed": required(boolean),
+},
+	rule("An attestation that is slashed holds no bond.", func(o map[string]any) bool {
+		return o["slashed"] == false || number(o["bond"]) == 0
+	}),
+	rule("`revoked_at` is not lower than `issued_at`.", func(o map[string]any) bool {
+		return !hasMember(o, "revoked_at") || levelAt(o, "revoked_at") >= levelAt(o, "issued_at")
+	}))
+
+var aSlashedVote = ruled(map[string]field{
+	"validator": required(anAddress), "kind": required(oneOf("preendorse", "endorse")), "level": required(aLevel),
+	"round": required(aRound),
+})
+
+var aDoubleVote = ruled(map[string]field{
+	"voter": required(anAddress), "phase": required(oneOf("exploration", "adoption")), "level": required(aLevel),
+	"punished": required(boolean),
+})
+
+// The phases of each track before a proposal is over, with the constant
+// that gives the length of each, and the two phases in which it is over.
+var (
+	phasesOf = map[string][][2]string{
+		"protocol": {{"submitted", "protocol_proposal_blocks"}, {"exploration", "protocol_exploration_blocks"},
+			{"cooldown", "protocol_cooldown_blocks"}, {"adoption", "protocol_adoption_blocks"}},
+		"treasury": {{"submitted", "treasury_proposal_blocks"}, {"voting", "treasury_vote_blocks"},
+			{"passed", "treasury_release_blocks"}},
+	}
+	overIn = map[string][2]string{"protocol": {"activated", "rejected"}, "treasury": {"executed", "rejected"}}
+	tracks = []string{"treasury", "protocol"}
+)
+
+func isOver(track string, proposal map[string]any) bool {
+	return textAt(proposal, "phase") == overIn[track][0] || textAt(proposal, "phase") == overIn[track][1]
+}
+
+// overOrBonded: a proposal that is over says since when and holds nothing;
+// one that is not holds its bond and has no end.
+func overOrBonded(track string) sentence {
+	return rule(fmt.Sprintf("`ended_at` is present exactly when `phase` is `%s` or `%s`, and `bond` exactly when it is not.",
+		overIn[track][0], overIn[track][1]), func(o map[string]any) bool {
+		over := isOver(track, o)
+		return hasMember(o, "ended_at") == over && hasMember(o, "bond") != over
+	})
+}
+
+var aProtocolProposal = ruled(map[string]field{
+	"proposal_id": required(aHash), "submitter": required(anAddress), "payload": required(aProtocolPayload),
+	"submitted_at": required(aLevel), "ended_at": optional(aLevel), "bond": optional(anAmount),
+	"phase":             required(oneOf("submitted", "exploration", "cooldown", "adoption", "activated", "rejected")),
+	"exploration_votes": required(someBallots), "adoption_votes": required(someBallots),
+	"double_votes": required(someOf(aDoubleVote, 0, 2*maxValidators)),
+},
+	rule("A voter has one double vote in a phase at most, and a vote in that phase.", func(o map[string]any) bool {
+		seen := map[[2]string]bool{}
+		for _, double := range objectsOf(listAt(o, "double_votes")) {
+			pair := [2]string{textAt(double, "phase"), textAt(double, "voter")}
+			if seen[pair] || !hasMember(mapAt(o, pair[0]+"_votes"), pair[1]) {
+				return false
+			}
+			seen[pair] = true
+		}
+		return true
+	}),
+	overOrBonded("protocol"))
+
+var aTreasuryProposal = ruled(map[string]field{
+	"proposal_id": required(aHash), "submitter": required(anAddress), "payload": required(aTreasuryPayload),
+	"submitted_at": required(aLevel), "ended_at": optional(aLevel), "bond": optional(anAmount),
+	"phase": required(oneOf("submitted", "voting", "passed", "executed", "rejected")), "votes": required(someBallots),
+	"released_by": optional(anAddress),
+},
+	// A guardian other than the first has released a payment that still waits, and no other proposal.
+	rule("`released_by` is present only when `phase` is `passed`.", func(o map[string]any) bool {
+		return !hasMember(o, "released_by") || textAt(o, "phase") == "passed"
+	}),
+	overOrBonded("treasury"))
+
+var theGovernance = ruled(map[string]field{
+	"protocol": required(someOf(aProtocolProposal, 0, -1)), "treasury": required(someOf(aTreasuryProposal, 0, -1)),
+})
+
+// The nine parameters of a proposal, each with the range it has there, and
+// all of them present.
+var theParameters = ruled(map[string]field{
+	"i_min_ppm": required(integer(0, 1000000)), "i_max_ppm": required(integer(0, 1000000)),
+	"target_staking_ratio_ppm": required(integer(0, 1000000)), "target_block_time_ms": required(integer(1, 3600000)),
+	"treasury_share_ppm": required(integer(0, 1000000)),
+	"fee_floor_enabled":  required(boolean), "fee_floor_base": required(integer(0, 1000000000000)),
+	"fee_floor_per_byte": required(integer(0, 1000000000)),
+	"max_block_bytes":    required(integer(maxTransactionBytes, maxBlockBytes)),
+}, rule("`i_min_ppm` is not above `i_max_ppm`.", func(o map[string]any) bool {
+	return number(o["i_min_ppm"]) <= number(o["i_max_ppm"])
+}))
+
+var theConstants = ruled(map[string]field{
+	"epoch_blocks": required(aPeriod), "delegation_unbonding_blocks": required(aPeriod),
+	"attestation_unbonding_blocks": required(integer(0, maxRound)),
+	"protocol_proposal_blocks":     required(aPeriod), "protocol_exploration_blocks": required(aPeriod),
+	"protocol_cooldown_blocks": required(aPeriod), "protocol_adoption_blocks": required(aPeriod),
+	"treasury_proposal_blocks": required(aPeriod), "treasury_vote_blocks": required(aPeriod),
+	"guardian_delay_blocks": required(aPeriod), "treasury_release_blocks": required(aPeriod),
+	"protocol_bond": required(anAmount), "treasury_bond": required(anAmount),
+},
+	// Past the delay the other guardians can release a payment: the delay ends with the wait at the latest.
+	rule("`guardian_delay_blocks` is not above `treasury_release_blocks`.", func(o map[string]any) bool {
+		return number(o["guardian_delay_blocks"]) <= number(o["treasury_release_blocks"])
+	}),
+	rule("`delegation_unbonding_blocks` is not lower than `epoch_blocks`.", func(o map[string]any) bool {
+		return number(o["delegation_unbonding_blocks"]) >= number(o["epoch_blocks"])
+	}))
+
+// endsOf gives the level at which each phase of a proposal ends. A level
+// and six periods stay under 2^64, so the sums are made without a sign.
+func endsOf(track string, proposal, constants map[string]any) map[string]uint64 {
+	ends, level := map[string]uint64{}, levelAt(proposal, "submitted_at")
+	for _, phase := range phasesOf[track] {
+		level += levelAt(constants, phase[1])
+		ends[phase[0]] = level
+	}
+	return ends
+}
+
+// proposalsOf lists the proposals of a state, each with its track.
+type tracked struct {
+	track    string
+	proposal map[string]any
+}
+
+func proposalsOf(state map[string]any) []tracked {
+	var out []tracked
+	for _, track := range tracks {
+		for _, proposal := range objectsOf(listAt(mapAt(state, "governance"), track)) {
+			out = append(out, tracked{track, proposal})
+		}
+	}
+	return out
+}
+
+func validatorsOf(state map[string]any) map[string]bool {
+	listed := map[string]bool{}
+	for _, validator := range objectsOf(listAt(state, "validators")) {
+		listed[textAt(validator, "address")] = true
+	}
+	return listed
+}
+
+func keyBytes(entry any) []byte {
+	return bytesOf(entry.(map[string]any), "public_key", "kpk1.", 1984)
+}
+
+// everythingIn adds up what exists in a state: what accounts hold and what
+// is bonded. Each amount fits 63 bits and their sum may not: it is made
+// without a bound.
+func everythingIn(state map[string]any) *big.Int {
+	total := new(big.Int)
+	for _, balance := range mapAt(state, "balances") {
+		total.Add(total, big.NewInt(number(balance)))
+	}
+	for _, validator := range objectsOf(listAt(state, "validators")) {
+		total.Add(total, amountAt(validator, "stake"))
+	}
+	for _, delegation := range mapAt(state, "delegations") {
+		total.Add(total, amountAt(delegation.(map[string]any), "amount"))
+	}
+	for _, leaving := range objectsOf(listAt(state, "delegation_unbonding")) {
+		total.Add(total, amountAt(leaving, "amount"))
+	}
+	for _, attestation := range mapAt(state, "attestations") {
+		total.Add(total, amountAt(attestation.(map[string]any), "bond"))
+	}
+	for _, p := range proposalsOf(state) {
+		if hasMember(p.proposal, "bond") {
+			total.Add(total, amountAt(p.proposal, "bond"))
+		}
+	}
+	return total
+}
+
+var aState = ruled(map[string]field{
+	"level": required(aLevel), "chain_id": required(aChain), "state_root_function": required(oneOf("json", "trie")),
+	"total_supply": required(anAmount), "treasury_address": required(anAddress),
+	"guardians": required(someOf(anAddress, 3, maxGuardians)),
+	"balances":  required(tableOf(anAddress, aPositive, 0, -1)), "nonces": required(tableOf(anAddress, aPositive, 0, -1)),
+	"contracts":  required(tableOf(anAddress, aContract, 0, -1)),
+	"keys":       required(tableOf(anAddress, someOf(aKeyEntry, 1, -1), 0, -1)),
+	"validators": required(someOf(aValidator, 1, maxValidators)), "consensus_set": required(someOf(aValidator, 1, maxValidators)),
+	"delegations":          required(tableOf(anAddress, aDelegation, 0, -1)),
+	"delegation_unbonding": required(someOf(anUnbonding, 0, -1)),
+	"attestations":         required(tableOf(aHash, anAttestation, 0, -1)),
+	"consensus_slashes":    required(someOf(aSlashedVote, 0, -1)), "governance": required(theGovernance),
+	"parameters": required(theParameters), "constants": required(theConstants),
+},
+	// Votes.
+	// A double vote has no check of its own here: its voter has a vote in the same phase.
+	rule("A vote and a slashed vote are those of a validator.", func(s map[string]any) bool {
+		listed := validatorsOf(s)
+		for _, p := range proposalsOf(s) {
+			for _, votes := range []string{"votes", "exploration_votes", "adoption_votes"} {
+				for voter := range mapAt(p.proposal, votes) {
+					if !listed[voter] {
+						return false
+					}
+				}
+			}
+		}
+		for _, vote := range objectsOf(listAt(s, "consensus_slashes")) {
+			if !listed[textAt(vote, "validator")] {
+				return false
+			}
+		}
+		return true
+	}),
+	// Proposals.
+	rule("A proposal that is over ended less than `delegation_unbonding_blocks` levels before `level`.",
+		func(s map[string]any) bool {
+			for _, p := range proposalsOf(s) {
+				if isOver(p.track, p.proposal) && hasMember(p.proposal, "ended_at") &&
+					levelAt(p.proposal, "ended_at")+levelAt(mapAt(s, "constants"), "delegation_unbonding_blocks") <= levelAt(s, "level") {
+					return false
+				}
+			}
+			return true
+		}),
+	// A vote rejects a treasury proposal at the level at which it ends. A payment that passed ends later: a
+	// guardian releases or cancels it in a block that follows, or its wait ends.
+	rule("A protocol proposal that is over ended when a vote did: at the end of `adoption` if it is activated, of "+
+		"`exploration` or of `adoption` if it is rejected. A treasury proposal that is over ended at the end of "+
+		"`voting` or while it waited: after the end of `voting` if it is executed, and not after the end of `passed`.",
+		func(s map[string]any) bool {
+			for _, p := range proposalsOf(s) {
+				if !isOver(p.track, p.proposal) || !hasMember(p.proposal, "ended_at") {
+					continue
+				}
+				ends, ended := endsOf(p.track, p.proposal, mapAt(s, "constants")), levelAt(p.proposal, "ended_at")
+				rejected := textAt(p.proposal, "phase") == "rejected"
+				switch {
+				case p.track == "treasury" && ended > ends["passed"]:
+					return false
+				case p.track == "treasury" && (ended > ends["voting"] || ended == ends["voting"] && rejected):
+				case p.track == "protocol" && ended == ends["adoption"]:
+				case p.track == "protocol" && ended == ends["exploration"] && rejected:
+				default:
+					return false
+				}
+			}
+			return true
+		}),
+	// Payments that wait.
+	rule("When `released_by` is present, the end of `voting` plus `guardian_delay_blocks` is not above `level`.",
+		func(s map[string]any) bool {
+			constants := mapAt(s, "constants")
+			for _, payment := range objectsOf(listAt(mapAt(s, "governance"), "treasury")) {
+				if hasMember(payment, "released_by") &&
+					endsOf("treasury", payment, constants)["voting"]+levelAt(constants, "guardian_delay_blocks") > levelAt(s, "level") {
+					return false
+				}
+			}
+			return true
+		}),
+	rule("`released_by` is a guardian other than the first.", func(s map[string]any) bool {
+		for _, payment := range objectsOf(listAt(mapAt(s, "governance"), "treasury")) {
+			if !hasMember(payment, "released_by") {
+				continue
+			}
+			another := false
+			for i, guardian := range listAt(s, "guardians") {
+				another = another || i > 0 && guardian == payment["released_by"]
+			}
+			if !another {
+				return false
+			}
+		}
+		return true
+	}),
+	rule("A proposal that is not over is in the phase of its level: that phase started at `level` or before, and ends "+
+		"above it.", func(s map[string]any) bool {
+		for _, p := range proposalsOf(s) {
+			if isOver(p.track, p.proposal) {
+				continue
+			}
+			ends, started := endsOf(p.track, p.proposal, mapAt(s, "constants")), levelAt(p.proposal, "submitted_at")
+			for _, phase := range phasesOf[p.track] {
+				if phase[0] == textAt(p.proposal, "phase") {
+					break
+				}
+				started = ends[phase[0]]
+			}
+			if started > levelAt(s, "level") || ends[textAt(p.proposal, "phase")] <= levelAt(s, "level") {
+				return false
+			}
+		}
+		return true
+	}),
+	rule("The bond of a proposal is `protocol_bond` or `treasury_bond`, as its track says.", func(s map[string]any) bool {
+		for _, p := range proposalsOf(s) {
+			if hasMember(p.proposal, "bond") && number(p.proposal["bond"]) != number(mapAt(s, "constants")[p.track+"_bond"]) {
+				return false
+			}
+		}
+		return true
+	}),
+	rule("The proposals of a track are in the order of their submission, and no two have the same `proposal_id`.",
+		func(s map[string]any) bool {
+			for _, track := range tracks {
+				seen, last := map[string]bool{}, uint64(0)
+				for _, proposal := range objectsOf(listAt(mapAt(s, "governance"), track)) {
+					if seen[textAt(proposal, "proposal_id")] || levelAt(proposal, "submitted_at") < last {
+						return false
+					}
+					seen[textAt(proposal, "proposal_id")], last = true, levelAt(proposal, "submitted_at")
+				}
+			}
+			return true
+		}),
+	// What is due.
+	rule("No two slashed votes are of the same validator, kind, level and round, and none is "+
+		"`delegation_unbonding_blocks` levels old or more.", func(s map[string]any) bool {
+		seen := map[string]bool{}
+		for _, vote := range objectsOf(listAt(s, "consensus_slashes")) {
+			offence := string(without(vote))
+			if seen[offence] || levelAt(vote, "level")+levelAt(mapAt(s, "constants"), "delegation_unbonding_blocks") <= levelAt(s, "level") {
+				return false
+			}
+			seen[offence] = true
+		}
+		return true
+	}),
+	rule("An attestation revoked `attestation_unbonding_blocks` levels before `level`, or earlier, holds no bond.",
+		func(s map[string]any) bool {
+			for _, value := range mapAt(s, "attestations") {
+				attestation := value.(map[string]any)
+				if hasMember(attestation, "revoked_at") && number(attestation["bond"]) != 0 &&
+					levelAt(attestation, "revoked_at")+levelAt(mapAt(s, "constants"), "attestation_unbonding_blocks") <= levelAt(s, "level") {
+					return false
+				}
+			}
+			return true
+		}),
+	rule("A delegation that is unbonding is released `delegation_unbonding_blocks` levels after `unbonding_from`, at a "+
+		"level above `level`, and the list is in the order in which the delegations ended.", func(s map[string]any) bool {
+		last := uint64(0)
+		for _, leaving := range objectsOf(listAt(s, "delegation_unbonding")) {
+			from, release := levelAt(leaving, "unbonding_from"), levelAt(leaving, "release_at")
+			if from < last || release <= levelAt(s, "level") ||
+				release != from+levelAt(mapAt(s, "constants"), "delegation_unbonding_blocks") {
+				return false
+			}
+			last = from
+		}
+		return true
+	}),
+	rule("Nothing happened after `level`: the level of a tranche, `unbonding_from`, `issued_at`, `revoked_at`, the level "+
+		"of a slashed vote, `ended_at` and the level of a double vote are not above it.", func(s map[string]any) bool {
+		var levels []any
+		tranches := func(holding map[string]any) {
+			for _, tranche := range objectsOf(listAt(holding, "tranches")) {
+				levels = append(levels, tranche["level"])
+			}
+		}
+		for _, delegation := range mapAt(s, "delegations") {
+			tranches(delegation.(map[string]any))
+		}
+		for _, leaving := range objectsOf(listAt(s, "delegation_unbonding")) {
+			tranches(leaving)
+			levels = append(levels, leaving["unbonding_from"])
+		}
+		for _, attestation := range mapAt(s, "attestations") {
+			levels = append(levels, attestation.(map[string]any)["issued_at"], attestation.(map[string]any)["revoked_at"])
+		}
+		for _, vote := range objectsOf(listAt(s, "consensus_slashes")) {
+			levels = append(levels, vote["level"])
+		}
+		for _, p := range proposalsOf(s) {
+			levels = append(levels, p.proposal["ended_at"])
+			for _, double := range objectsOf(listAt(p.proposal, "double_votes")) {
+				levels = append(levels, double["level"])
+			}
+		}
+		for _, level := range levels {
+			if level != nil && number(level) > number(s["level"]) {
+				return false
+			}
+		}
+		return true
+	}),
+	// Stakes and supply.
+	rule("A delegation names a validator other than its delegator, and so does a delegation that is unbonding.",
+		func(s map[string]any) bool {
+			listed := validatorsOf(s)
+			for delegator, delegation := range mapAt(s, "delegations") {
+				if to := textAt(delegation.(map[string]any), "validator"); !listed[to] || to == delegator {
+					return false
+				}
+			}
+			for _, leaving := range objectsOf(listAt(s, "delegation_unbonding")) {
+				if to := textAt(leaving, "validator"); !listed[to] || to == textAt(leaving, "delegator") {
+					return false
+				}
+			}
+			return true
+		}),
+	rule("`total_supply` is the sum of `balances`, of the stakes of `validators`, of the amounts of `delegations` and of "+
+		"`delegation_unbonding`, of the bonds of `attestations` and of the bonds of the proposals of `governance`.",
+		func(s map[string]any) bool { return everythingIn(s).Cmp(amountAt(s, "total_supply")) == 0 }),
+	// Keys.
+	rule("A key stands once in `keys`, and no key of an address has the ML-DSA part or the Ed25519 part of an earlier "+
+		"key of that address.", func(s map[string]any) bool {
+		recorded := map[string]bool{}
+		for _, entries := range mapAt(s, "keys") {
+			first, second := map[string]bool{}, map[string]bool{}
+			for _, entry := range entries.([]any) {
+				key := keyBytes(entry)
+				mldsa, ed25519 := string(key[:1952]), string(key[1952:])
+				if recorded[string(key)] || first[mldsa] || second[ed25519] {
+					return false
+				}
+				recorded[string(key)], first[mldsa], second[ed25519] = true, true, true
+			}
+		}
+		return true
+	}),
+	rule("The first key of an address is the key whose hash is that address.", func(s map[string]any) bool {
+		for address, entries := range mapAt(s, "keys") {
+			if hashed, _ := accountAddress(schemaNetwork, keyBytes(entries.([]any)[0])); hashed != address {
+				return false
+			}
+		}
+		return true
+	}),
+	rule("In `keys`, the levels `from` of an address grow, and none is above `level` plus 1.", func(s map[string]any) bool {
+		for _, entries := range mapAt(s, "keys") {
+			for i, entry := range objectsOf(entries.([]any)) {
+				from := levelAt(entry, "from")
+				if from > levelAt(s, "level")+1 || i > 0 && from <= levelAt(entries.([]any)[i-1].(map[string]any), "from") {
+					return false
+				}
+			}
+		}
+		return true
+	}),
+	rule("Every address of `nonces` is in `keys`, and every address of `keys` is in `nonces` or is a validator.",
+		func(s map[string]any) bool {
+			listed := validatorsOf(s)
+			for address := range mapAt(s, "keys") {
+				if !hasMember(mapAt(s, "nonces"), address) && !listed[address] {
+					return false
+				}
+			}
+			for address := range mapAt(s, "nonces") {
+				if !hasMember(mapAt(s, "keys"), address) {
+					return false
+				}
+			}
+			return true
+		}),
+	// A contract has no key, and so no nonce: an address that has sent a transaction has a key.
+	rule("An address of `contracts` is not in `keys`.", func(s map[string]any) bool {
+		for address := range mapAt(s, "contracts") {
+			if hasMember(mapAt(s, "keys"), address) {
+				return false
+			}
+		}
+		return true
+	}),
+	// The guardians sign, so each is an account; none is a validator, whose key signs at every block.
+	rule("A guardian is not `treasury_address`, an address of `contracts` or a validator.", func(s map[string]any) bool {
+		listed := validatorsOf(s)
+		for _, guardian := range listAt(s, "guardians") {
+			address, _ := guardian.(string)
+			if address == textAt(s, "treasury_address") || hasMember(mapAt(s, "contracts"), address) || listed[address] {
+				return false
+			}
+		}
+		return true
+	}),
+	rule("`guardians` holds an address once.", func(s map[string]any) bool {
+		seen := map[any]bool{}
+		for _, guardian := range listAt(s, "guardians") {
+			if seen[guardian] {
+				return false
+			}
+			seen[guardian] = true
+		}
+		return true
+	}),
+	// The treasury: nobody signs for its address, so that only a payment voted and released moves what it holds.
+	rule("`treasury_address` is not in `keys`.", func(s map[string]any) bool {
+		return !hasMember(mapAt(s, "keys"), textAt(s, "treasury_address"))
+	}),
+	// Validators.
+	rule("Every validator has a key in `keys`.", func(s map[string]any) bool {
+		for address := range validatorsOf(s) {
+			if !hasMember(mapAt(s, "keys"), address) {
+				return false
+			}
+		}
+		return true
+	}),
+	rule("The weight of a validator in `consensus_set` is not above its stake plus the amounts delegated to it.",
+		func(s map[string]any) bool {
+			backing := map[string]*big.Int{}
+			for _, validator := range objectsOf(listAt(s, "validators")) {
+				if _, twice := backing[textAt(validator, "address")]; !twice {
+					backing[textAt(validator, "address")] = amountAt(validator, "stake")
+				}
+			}
+			for _, delegation := range mapAt(s, "delegations") {
+				if behind, ok := backing[textAt(delegation.(map[string]any), "validator")]; ok {
+					behind.Add(behind, amountAt(delegation.(map[string]any), "amount"))
+				}
+			}
+			for _, weighed := range objectsOf(listAt(s, "consensus_set")) {
+				if behind, ok := backing[textAt(weighed, "address")]; ok && amountAt(weighed, "stake").Cmp(behind) > 0 {
+					return false
+				}
+			}
+			return true
+		}),
+	rule("`validators` holds an address once, and `consensus_set` holds the same addresses in the same order.",
+		func(s map[string]any) bool {
+			listed, weighed := objectsOf(listAt(s, "validators")), objectsOf(listAt(s, "consensus_set"))
+			if len(listed) != len(weighed) || len(validatorsOf(s)) != len(listed) {
+				return false
+			}
+			for i := range listed {
+				if textAt(listed[i], "address") != textAt(weighed[i], "address") {
+					return false
+				}
+			}
+			return true
+		}))
+
+var anAccount = ruled(map[string]field{
+	"balance": required(anAmount), "nonce": required(integer(0, maxInt)), "code_hash": optional(aHash),
+	"storage_root": optional(aHash),
+}, rule("`code_hash` and `storage_root` are present together.", func(o map[string]any) bool {
+	return hasMember(o, "code_hash") == hasMember(o, "storage_root")
+}))
+
+var theGenesis = ruled(map[string]field{
+	"version": required(integer(1, 1)), "scheme": required(integer(1, 1)), "network_id": required(aNetwork),
+	"timestamp": required(integer(0, maxInt)), "state": required(aState),
+},
+	rule("`consensus_set` is `validators`.", func(g map[string]any) bool {
+		return bytes.Equal(without(map[string]any{"is": mapAt(g, "state")["consensus_set"]}),
+			without(map[string]any{"is": mapAt(g, "state")["validators"]}))
+	}),
+	rule("Each validator has one key, current from level 0.", func(g map[string]any) bool {
+		state := mapAt(g, "state")
+		for address := range validatorsOf(state) {
+			// Every key of a validator is current from level 0: there is then one only, since the levels grow.
+			entries, _ := mapAt(state, "keys")[address].([]any)
+			for _, entry := range objectsOf(entries) {
+				if levelAt(entry, "from") != 0 {
+					return false
+				}
+			}
+		}
+		return true
+	}),
+	rule("`nonces`, `contracts`, `delegations`, `delegation_unbonding`, `attestations`, `consensus_slashes` and the two "+
+		"lists of `governance` are empty.", func(g map[string]any) bool {
+		state := mapAt(g, "state")
+		return len(mapAt(state, "nonces"))+len(mapAt(state, "contracts"))+len(mapAt(state, "delegations"))+
+			len(listAt(state, "delegation_unbonding"))+len(mapAt(state, "attestations"))+
+			len(listAt(state, "consensus_slashes"))+len(proposalsOf(state)) == 0
+	}),
+	rule("The `level` of `state` is 0.", func(g map[string]any) bool { return number(mapAt(g, "state")["level"]) == 0 }))
+
+// aGenesis is read on the network it names: that identifier is in the
+// checksum of every address of its state, whatever network the reader
+// had in mind.
+func aGenesis(v any) string {
+	o, ok := v.(map[string]any)
+	if !ok {
+		return "wrong_type"
+	}
+	reader := schemaNetwork
+	defer func() { schemaNetwork = reader }()
+	if named, present := o["network_id"]; present {
+		if r := aNetwork(named); r != "" {
+			return r
+		}
+		schemaNetwork = unhex(named.(string))
+	}
+	return theGenesis(v)
+}
+
+// accountsOf gives the accounts of a state as the state trie holds them:
+// one for each address of balances, nonces or contracts.
+func accountsOf(network []byte, state map[string]any) map[string]any {
+	accounts := map[string]any{}
+	for _, name := range accountMaps {
+		for address := range mapAt(state, name) {
+			accounts[address] = accountObject(network, state, address)
+		}
+	}
+	return accounts
+}
+
+// firstHeader gives the nine fields of the block of level 0, which a node
+// computes from its genesis, in canonical JSON, and the hash of that block.
+func firstHeader(genesis map[string]any) ([]byte, string) {
+	network, state := unhex(textAt(genesis, "network_id")), mapAt(genesis, "state")
+	nothing := hex.EncodeToString(merkleRoot(network, nil))
+	fields, err := canonicalJSON(map[string]any{
+		"version": json.Number("1"), "level": json.Number("0"), "payload_round": json.Number("0"),
+		"timestamp": genesis["timestamp"], "parent_hash": strings.Repeat("0", 96),
+		"state_root": hex.EncodeToString(h("kern.state", network, hashedState(network, state))),
+		"txs_root":   nothing, "witness_root": nothing,
+		"proposer": textAt(listAt(state, "validators")[0].(map[string]any), "address"),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return fields, hex.EncodeToString(h("kern.block", network, fields))
+}
+
+// ------------------------------------------------- what a block charges
+
+// chargeBlock applies a block of transfers to the balances and the nonces
+// of a state, and gives what it leaves, or the rule that makes the block
+// invalid and the position of the transaction that breaks it (-1 when the
+// rule is about the block as a whole). For each transaction the fee is
+// looked at first, then the nonce, the chain, the floor and the sender,
+// which is never the treasury address, and the size of the block last: a
+// vector breaks one rule, so the order gives one answer.
+func chargeBlock(state map[string]any, proposer string, transactions []any) (map[string]any, string, int) {
+	parameters := mapAt(state, "parameters")
+	balances, nonces := map[string]*big.Int{}, map[string]uint64{}
+	for address, balance := range mapAt(state, "balances") {
+		balances[address] = big.NewInt(number(balance))
+	}
+	for address, nonce := range mapAt(state, "nonces") {
+		nonces[address] = uint64(number(nonce))
+	}
+	move := func(address string, by *big.Int) {
+		if _, holds := balances[address]; !holds {
+			balances[address] = new(big.Int)
+		}
+		balances[address].Add(balances[address], by)
+	}
+	held := func(address string) *big.Int {
+		if balance, holds := balances[address]; holds {
+			return balance
+		}
+		return new(big.Int)
+	}
+	failed, size := []any{}, 0
+	for i, raw := range transactions {
+		tx := raw.(map[string]any)
+		sender, fee, amount := textAt(tx, "sender"), amountAt(tx, "fee"), amountAt(tx, "amount")
+		if held(sender).Cmp(fee) < 0 {
+			return nil, "unpaid_fee", i
+		}
+		// The nonce is the number of transactions of the sender applied so far, and the last one a state can
+		// hold is 2^63 - 1: a sender that has reached it sends nothing more.
+		if levelAt(tx, "nonce") != nonces[sender] || nonces[sender] == maxInt {
+			return nil, "wrong_nonce", i
+		}
+		if textAt(tx, "chain_id") != textAt(state, "chain_id") {
+			return nil, "wrong_chain", i
+		}
+		floor := number(parameters["fee_floor_base"]) + number(parameters["fee_floor_per_byte"])*int64(transactionSize(tx))
+		if parameters["fee_floor_enabled"] == true && fee.Cmp(big.NewInt(floor)) < 0 {
+			return nil, "fee_under_floor", i
+		}
+		if sender == textAt(state, "treasury_address") {
+			return nil, "sent_by_treasury", i
+		}
+		size += transactionSize(tx)
+		move(sender, new(big.Int).Neg(fee))
+		move(proposer, fee)
+		nonces[sender]++
+		if held(sender).Cmp(amount) < 0 {
+			failed = append(failed, json.Number(strconv.Itoa(i))) // it stays in the block, and has paid
+			continue
+		}
+		move(sender, new(big.Int).Neg(amount))
+		move(textAt(tx, "recipient"), amount)
+	}
+	if int64(size) > number(parameters["max_block_bytes"]) {
+		return nil, "block_too_large", -1
+	}
+	left, taken := map[string]any{}, map[string]any{}
+	for address, balance := range balances {
+		if balance.Sign() != 0 { // a balance of zero is not written
+			left[address] = json.Number(balance.String())
+		}
+	}
+	for address, nonce := range nonces {
+		taken[address] = json.Number(strconv.FormatUint(nonce, 10))
+	}
+	return map[string]any{"balances": left, "nonces": taken, "failed": failed}, "", -1
+}
+
+// ------------------------------------------------- deciding proposals
+
+// decideAll settles the proposals that are decided at a level: the
+// protocol track, then the treasury track, each list in its order, and
+// each proposal entirely before the next one is looked at. Nothing is paid
+// here: a treasury proposal whose vote passes waits for a guardian.
+func decideAll(before map[string]any, protocol, treasury []any) map[string]any {
+	parameters := map[string]any{}
+	for name, value := range mapAt(before, "parameters") {
+		parameters[name] = value
+	}
+	function, holds, burned := before["state_root_function"], amountAt(before, "treasury"), new(big.Int)
+	two := big.NewInt(2)
+	lose := func(bond *big.Int) {
+		half := new(big.Int).Quo(bond, two) // rounded down
+		burned.Add(burned, half)
+		holds.Add(holds, new(big.Int).Sub(bond, half))
+	}
+	phases := map[string][]any{"protocol": {}, "treasury": {}}
+	for _, proposal := range objectsOf(protocol) {
+		payload := mapAt(proposal, "payload")
+		lowest, highest := parameters["i_min_ppm"], parameters["i_max_ppm"]
+		if set, ok := mapAt(payload, "params")["i_min_ppm"]; ok {
+			lowest = set
+		}
+		if set, ok := mapAt(payload, "params")["i_max_ppm"]; ok {
+			highest = set
+		}
+		if proposal["passes"] != true || number(lowest) > number(highest) {
+			lose(amountAt(before, "protocol_bond"))
+			phases["protocol"] = append(phases["protocol"], "rejected")
+			continue
+		}
+		for name, value := range mapAt(payload, "params") {
+			parameters[name] = value
+		}
+		if hasMember(payload, "swap") {
+			function = payload["to"]
+		}
+		phases["protocol"] = append(phases["protocol"], "activated")
+	}
+	for _, proposal := range objectsOf(treasury) {
+		// A vote that fails rejects a proposal, and so does a wait that ends: only a vote that passes is left.
+		if textAt(proposal, "phase") != "voting" || proposal["passes"] != true {
+			lose(amountAt(before, "treasury_bond"))
+			phases["treasury"] = append(phases["treasury"], "rejected")
+			continue
+		}
+		phases["treasury"] = append(phases["treasury"], "passed")
+	}
+	return map[string]any{"protocol": phases["protocol"], "treasury": phases["treasury"], "parameters": parameters,
+		"state_root_function": function, "treasury_holds": json.Number(holds.String()), "burned": json.Number(burned.String())}
+}
+
+// ------------------------------------------------- what a guardian does
+
+// guardianRules are the rules an operation of a guardian keeps, in the
+// order of the document: a vector names the first one that is broken.
+var guardianRules = []string{"not_a_guardian", "not_waiting", "not_the_first", "too_early", "released_twice", "unfunded"}
+
+// guardBlock applies the transactions of guardians of one block to the
+// payments that wait. Every rule is looked at on its own for each
+// operation; an operation that breaks one fails, and changes nothing.
+func guardBlock(before map[string]any, operations []any) map[string]any {
+	guardians := listAt(before, "guardians")
+	level, delay := levelAt(before, "level"), levelAt(before, "guardian_delay_blocks")
+	bond, holds, burned := amountAt(before, "treasury_bond"), amountAt(before, "treasury"), new(big.Int)
+	payments := map[string]map[string]any{}
+	for name, payment := range mapAt(before, "payments") {
+		copied := map[string]any{}
+		for member, value := range payment.(map[string]any) {
+			copied[member] = value
+		}
+		payments[name] = copied
+	}
+	did := []any{}
+	for _, operation := range objectsOf(operations) {
+		sender, release := textAt(operation, "sender"), textAt(operation, "kind") == "release_payment"
+		payment, known := payments[textAt(operation, "proposal_id")]
+		waits := known && textAt(payment, "phase") == "passed"
+		place := -1 // where the sender stands among the guardians: 0 is the first
+		for i, guardian := range guardians {
+			if guardian == sender && place < 0 {
+				place = i
+			}
+		}
+		another := place > 0
+		late := waits && level >= levelAt(payment, "voted")+delay
+		recorded, _ := payment["released_by"].(string)
+		// A release pays when the first guardian sends it, or when a second one of the others does.
+		pays := release && waits && (place == 0 || another && late && recorded != "" && recorded != sender)
+		breaks := map[string]bool{
+			"not_a_guardian": place < 0,
+			"not_waiting":    !waits,
+			"not_the_first":  !release && place != 0,
+			"too_early":      release && another && waits && !late,
+			"released_twice": release && another && waits && recorded == sender,
+			"unfunded":       pays && amountAt(payment, "total").Cmp(holds) > 0,
+		}
+		failed := ""
+		for _, name := range guardianRules {
+			if breaks[name] && failed == "" {
+				failed = name
+			}
+		}
+		switch {
+		case failed != "":
+			did = append(did, failed)
+		case !release: // cancelled: its bond goes where the bond of a rejected proposal goes
+			half := new(big.Int).Quo(bond, big.NewInt(2))
+			burned.Add(burned, half)
+			holds.Add(holds, new(big.Int).Sub(bond, half))
+			payment["phase"] = "rejected"
+			delete(payment, "released_by")
+			did = append(did, "cancelled")
+		case pays:
+			holds.Sub(holds, amountAt(payment, "total"))
+			holds.Add(holds, amountAt(payment, "to_itself")) // what the treasury pays itself is still there
+			payment["phase"] = "executed"
+			delete(payment, "released_by")
+			did = append(did, "paid")
+		default: // the first release of a guardian other than the first
+			payment["released_by"] = sender
+			did = append(did, "recorded")
+		}
+	}
+	after := map[string]any{}
+	for name, payment := range payments {
+		left := map[string]any{"phase": payment["phase"]}
+		if released, present := payment["released_by"]; present {
+			left["released_by"] = released
+		}
+		after[name] = left
+	}
+	return map[string]any{"did": did, "treasury_holds": json.Number(holds.String()),
+		"burned": json.Number(burned.String()), "payments": after}
+}
+
+// ------------------------------------------------- the arithmetic of a block
+
+// Every amount of a state fits 63 bits, and the products of section 9.17 do
+// not: what is staked times 1,000,000 passes 2^64 on a network of twenty
+// million KRN. Everything below is computed without a bound, and every
+// division is rounded down.
+var (
+	million     = big.NewInt(1000000)
+	yearMillis  = big.NewInt(31557600000) // 365.25 days
+	largestMass = big.NewInt(maxInt)
+)
+
+func times(first *big.Int, others ...*big.Int) *big.Int {
+	out := new(big.Int).Set(first)
+	for _, other := range others {
+		out.Mul(out, other)
+	}
+	return out
+}
+
+// over divides two numbers that are not negative, and rounds down.
+func over(a, b *big.Int) *big.Int { return new(big.Int).Quo(a, b) }
+
+func asNumber(n *big.Int) json.Number { return json.Number(n.String()) }
+
+// credits is what addresses receive. Nothing is written for nothing.
+type credits map[string]*big.Int
+
+func (c credits) add(address string, amount *big.Int) {
+	if amount.Sign() == 0 {
+		return
+	}
+	if _, known := c[address]; !known {
+		c[address] = new(big.Int)
+	}
+	c[address].Add(c[address], amount)
+}
+
+func (c credits) written() map[string]any {
+	out := map[string]any{}
+	for address, amount := range c {
+		out[address] = asNumber(amount)
+	}
+	return out
+}
+
+// rewardOf mints the reward of a block on a part of a state and shares it:
+// the treasury, the delegators of the proposer, and the proposer for all the
+// rest. The bound of the supply is applied before anything is shared.
+func rewardOf(before map[string]any, proposer string) map[string]any {
+	parameters, supply := mapAt(before, "parameters"), amountAt(before, "total_supply")
+	staked, backing := new(big.Int), new(big.Int)
+	for _, validator := range objectsOf(listAt(before, "validators")) {
+		staked.Add(staked, amountAt(validator, "stake"))
+		if textAt(validator, "address") == proposer {
+			backing.Add(backing, amountAt(validator, "stake"))
+		}
+	}
+	delegated := map[string]*big.Int{} // what each delegator of the proposer has bonded to it
+	for delegator, raw := range mapAt(before, "delegations") {
+		delegation := raw.(map[string]any)
+		staked.Add(staked, amountAt(delegation, "amount"))
+		if textAt(delegation, "validator") == proposer {
+			delegated[delegator] = amountAt(delegation, "amount")
+			backing.Add(backing, delegated[delegator])
+		}
+	}
+	ratio := over(times(staked, million), supply)
+	rate, target := amountAt(parameters, "i_min_ppm"), amountAt(parameters, "target_staking_ratio_ppm")
+	if ratio.Cmp(target) < 0 {
+		d := new(big.Int).Sub(million, over(times(ratio, million), target))
+		c := over(times(d, d, new(big.Int).Sub(big.NewInt(3000000), times(d, big.NewInt(2)))), times(million, million))
+		spread := new(big.Int).Sub(amountAt(parameters, "i_max_ppm"), rate)
+		rate.Add(rate, over(times(spread, c), million))
+	}
+	blocks := over(yearMillis, amountAt(parameters, "target_block_time_ms"))
+	reward := over(times(supply, rate), times(million, blocks))
+	if left := new(big.Int).Sub(largestMass, supply); reward.Cmp(left) > 0 {
+		reward = left // the supply never passes 2^63 - 1
+	}
+	paid := credits{}
+	toTreasury := over(times(reward, amountAt(parameters, "treasury_share_ppm")), million)
+	paid.add(textAt(before, "treasury_address"), toTreasury)
+	received := new(big.Int).Sub(reward, toTreasury)
+	shared := new(big.Int).Sub(received, over(received, big.NewInt(10))) // without the commission
+	kept := new(big.Int).Set(received)
+	for delegator, amount := range delegated {
+		share := over(times(shared, amount), backing)
+		paid.add(delegator, share)
+		kept.Sub(kept, share)
+	}
+	paid.add(proposer, kept)
+	return map[string]any{"staked": asNumber(staked), "rate": asNumber(rate), "reward": asNumber(reward),
+		"credits": paid.written(), "total_supply": asNumber(new(big.Int).Add(supply, reward))}
+}
+
+// tallyOf counts a vote: each validator of the snapshot for its weight, or
+// for the square root of it on the treasury track, and nothing for a
+// validator that abstains or says nothing.
+func tallyOf(snapshot []any, ballots map[string]any, track string) map[string]any {
+	yes, no, total := new(big.Int), new(big.Int), new(big.Int)
+	for _, entry := range objectsOf(snapshot) {
+		weight := amountAt(entry, "stake")
+		if track == "treasury" {
+			weight.Sqrt(weight) // the largest integer whose square is not above the weight
+		}
+		total.Add(total, weight)
+		switch ballots[textAt(entry, "address")] {
+		case "yes":
+			yes.Add(yes, weight)
+		case "no":
+			no.Add(no, weight)
+		}
+	}
+	voted := new(big.Int).Add(yes, no)
+	quorum := times(voted, big.NewInt(4)).Cmp(total) >= 0
+	majority := times(yes, big.NewInt(5)).Cmp(times(voted, big.NewInt(4))) >= 0
+	if track == "treasury" {
+		majority = times(yes, big.NewInt(2)).Cmp(voted) > 0
+	}
+	return map[string]any{"yes": asNumber(yes), "no": asNumber(no), "total": asNumber(total),
+		"quorum": quorum, "passes": quorum && majority}
+}
+
+// ------------------------------------------------- what a slash takes
+
+// slashRules are the rules a report of an offence keeps, in the order of
+// the document: a vector names the first one that is broken.
+var slashRules = []string{"no_double_vote", "not_an_offence", "not_a_validator", "not_yet", "too_old",
+	"slashed_already", "not_two", "no_contradiction", "slashed_before", "not_at_once", "nothing_to_take"}
+
+var slashedTables = []string{"validators", "consensus_set", "delegations", "delegation_unbonding", "attestations",
+	"consensus_slashes", "protocol"}
+
+func firstBroken(breaks map[string]bool) string {
+	for _, name := range slashRules {
+		if breaks[name] {
+			return name
+		}
+	}
+	return ""
+}
+
+// thirtyIn100 is the share a slash takes of a stake, of a tranche or of a bond.
+func thirtyIn100(of *big.Int) *big.Int { return over(times(of, big.NewInt(30)), big.NewInt(100)) }
+
+// slashValidator slashes a validator for an offence of a level: its stake,
+// and every tranche that backed it then. It gives what the sender of the
+// report receives and what is burned, or says that there was nothing to
+// take, in which case nothing has moved.
+func slashValidator(tables map[string]any, offender string, offence uint64) (*big.Int, *big.Int, bool) {
+	var validator, weight map[string]any
+	for _, entry := range objectsOf(listAt(tables, "validators")) {
+		if textAt(entry, "address") == offender {
+			validator = entry
+		}
+	}
+	for _, entry := range objectsOf(listAt(tables, "consensus_set")) {
+		if textAt(entry, "address") == offender {
+			weight = entry
+		}
+	}
+	type cut struct {
+		holding, tranche map[string]any
+		amount           *big.Int
+	}
+	var cuts []cut
+	look := func(holding map[string]any) {
+		if textAt(holding, "validator") != offender {
+			return
+		}
+		for _, tranche := range objectsOf(listAt(holding, "tranches")) {
+			if amount := thirtyIn100(amountAt(tranche, "amount")); levelAt(tranche, "level") <= offence && amount.Sign() > 0 {
+				cuts = append(cuts, cut{holding, tranche, amount})
+			}
+		}
+	}
+	for _, delegation := range mapAt(tables, "delegations") {
+		look(delegation.(map[string]any))
+	}
+	for _, leaving := range objectsOf(listAt(tables, "delegation_unbonding")) {
+		if levelAt(leaving, "unbonding_from") >= offence { // it still backed the validator at the offence
+			look(leaving)
+		}
+	}
+	taken := thirtyIn100(amountAt(validator, "stake"))
+	if taken.Sign() == 0 && len(cuts) == 0 {
+		return nil, nil, false
+	}
+	toSender := over(taken, big.NewInt(10))
+	burned := new(big.Int).Sub(taken, toSender)
+	left := new(big.Int).Sub(amountAt(validator, "stake"), taken)
+	validator["stake"] = asNumber(left)
+	for _, c := range cuts {
+		c.tranche["amount"] = asNumber(new(big.Int).Sub(amountAt(c.tranche, "amount"), c.amount))
+		c.holding["amount"] = asNumber(new(big.Int).Sub(amountAt(c.holding, "amount"), c.amount))
+		burned.Add(burned, c.amount)
+	}
+	// The weight comes down to what backs the validator now, and never goes up.
+	backs := new(big.Int).Set(left)
+	for _, raw := range mapAt(tables, "delegations") {
+		if delegation := raw.(map[string]any); textAt(delegation, "validator") == offender {
+			backs.Add(backs, amountAt(delegation, "amount"))
+		}
+	}
+	if backs.Cmp(amountAt(weight, "stake")) < 0 {
+		weight["stake"] = asNumber(backs)
+	}
+	return toSender, burned, true
+}
+
+// reportOffence applies the report of an offence to the tables of a state:
+// `slashed`, with what each address receives and what is burned, or the
+// first rule it breaks. A report that fails changes nothing.
+func reportOffence(tables map[string]any, protocol []any, level, period uint64, operation map[string]any) (string, credits, *big.Int) {
+	sender, params := textAt(operation, "sender"), mapAt(operation, "params")
+	breaks, paid := map[string]bool{}, credits{}
+	if textAt(operation, "kind") == "slash_attestation_equivocation" {
+		first, second := textAt(params, "attestation_id_1"), textAt(params, "attestation_id_2")
+		one, isOne := mapAt(tables, "attestations")[first].(map[string]any)
+		two, isTwo := mapAt(tables, "attestations")[second].(map[string]any)
+		if !isOne || !isTwo || first == second {
+			return "not_two", nil, nil
+		}
+		claimOne, _ := canonicalJSON(one["claim"])
+		claimTwo, _ := canonicalJSON(two["claim"])
+		before := func(a, b map[string]any) bool {
+			return hasMember(a, "revoked_at") && levelAt(a, "revoked_at") < levelAt(b, "issued_at")
+		}
+		larger := amountAt(one, "bond")
+		if other := amountAt(two, "bond"); other.Cmp(larger) > 0 {
+			larger = other
+		}
+		taken := thirtyIn100(larger)
+		breaks["no_contradiction"] = textAt(one, "issuer") != textAt(two, "issuer") || textAt(one, "schema_id") != textAt(two, "schema_id") ||
+			textAt(one, "subject") != textAt(two, "subject") || bytes.Equal(claimOne, claimTwo)
+		breaks["slashed_before"] = one["slashed"] == true || two["slashed"] == true
+		breaks["not_at_once"] = before(one, two) || before(two, one)
+		breaks["nothing_to_take"] = taken.Sign() == 0
+		if broken := firstBroken(breaks); broken != "" {
+			return broken, nil, nil
+		}
+		back := new(big.Int).Add(amountAt(one, "bond"), amountAt(two, "bond"))
+		paid.add(textAt(one, "issuer"), back.Sub(back, taken))
+		toSender := over(taken, big.NewInt(10))
+		paid.add(sender, toSender)
+		for _, attestation := range []map[string]any{one, two} {
+			attestation["bond"], attestation["slashed"] = json.Number("0"), true
+		}
+		return "slashed", paid, new(big.Int).Sub(taken, toSender)
+	}
+	var offender string
+	var offence uint64
+	var mark func()
+	if textAt(operation, "kind") == "slash_equivocation" {
+		breaks["no_double_vote"] = true
+		for _, proposal := range objectsOf(protocol) {
+			if textAt(proposal, "proposal_id") != textAt(params, "proposal_id") {
+				continue
+			}
+			for _, double := range objectsOf(listAt(proposal, "double_votes")) {
+				if breaks["no_double_vote"] && textAt(double, "voter") == textAt(params, "equivocator") && double["punished"] == false {
+					breaks["no_double_vote"] = false
+					offender, offence = textAt(double, "voter"), levelAt(double, "level")
+					mark = func() { double["punished"] = true }
+				}
+			}
+		}
+	} else {
+		one, two := mapAt(params, "msg_a"), mapAt(params, "msg_b")
+		offender, offence = textAt(one, "validator"), levelAt(one, "level")
+		vote := map[string]any{"validator": one["validator"], "kind": one["kind"], "level": one["level"], "round": one["round"]}
+		mine, _ := canonicalJSON(vote)
+		theirs, _ := canonicalJSON(map[string]any{"validator": two["validator"], "kind": two["kind"], "level": two["level"], "round": two["round"]})
+		breaks["not_an_offence"] = !bytes.Equal(mine, theirs) || textAt(one, "block_hash") == textAt(two, "block_hash")
+		breaks["not_a_validator"] = !validatorsOf(tables)[offender]
+		breaks["not_yet"] = offence > level
+		breaks["too_old"] = offence+period < level
+		for _, kept := range listAt(tables, "consensus_slashes") {
+			if encoding, _ := canonicalJSON(kept); bytes.Equal(encoding, mine) {
+				breaks["slashed_already"] = true
+			}
+		}
+		mark = func() { tables["consensus_slashes"] = append(listAt(tables, "consensus_slashes"), vote) }
+	}
+	if broken := firstBroken(breaks); broken != "" {
+		return broken, nil, nil
+	}
+	toSender, burned, took := slashValidator(tables, offender, offence)
+	if !took {
+		return "nothing_to_take", nil, nil
+	}
+	mark()
+	paid.add(sender, toSender)
+	return "slashed", paid, burned
+}
+
+// slashBlock applies the reports of offences of one block to the tables a
+// slash reads and writes.
+func slashBlock(before map[string]any, operations []any) map[string]any {
+	tables := map[string]any{}
+	for _, name := range slashedTables {
+		tables[name] = deepCopy(before[name])
+	}
+	did, paid, burned := []any{}, credits{}, new(big.Int)
+	for _, operation := range objectsOf(operations) {
+		outcome, received, gone := reportOffence(tables, listAt(tables, "protocol"), levelAt(before, "level"),
+			levelAt(before, "delegation_unbonding_blocks"), operation)
+		did = append(did, outcome)
+		if outcome != "slashed" {
+			continue
+		}
+		for address, amount := range received {
+			paid.add(address, amount)
+		}
+		burned.Add(burned, gone)
+	}
+	tables["did"], tables["credits"], tables["burned"] = did, paid.written(), asNumber(burned)
+	return tables
+}
+
+// ------------------------------------------------- a whole block
+
+// wholeBlockKinds are the kinds of transactions the whole blocks of the
+// vectors hold: a transfer, what a guardian sends, and a report of an offence.
+var wholeBlockKinds = []string{"transfer", "release_payment", "cancel_payment", "slash_equivocation",
+	"slash_consensus_equivocation", "slash_attestation_equivocation"}
+
+// applyBlock takes a whole state through a block, by the eight steps of
+// section 9.16, and gives the state the block leads to and the positions of
+// the transactions whose operation failed; or the rule that makes the block
+// invalid and the position of the transaction that breaks it (-1 when the
+// rule is about the block as a whole). The root of the state is looked at by
+// the caller. No signature is verified, and neither is the draw of the
+// proposer.
+func applyBlock(state, block map[string]any) (map[string]any, []any, string, int) {
+	header, transactions := mapAt(block, "header"), listAt(block, "transactions")
+	level, proposer := levelAt(header, "level"), textAt(header, "proposer")
+	if level != levelAt(state, "level")+1 {
+		return nil, nil, "wrong_level", -1
+	}
+	after := deepCopy(state).(map[string]any)
+	after["level"] = header["level"] // step 1
+	constants, parameters, nonces := mapAt(after, "constants"), mapAt(after, "parameters"), mapAt(after, "nonces")
+	treasury, governance := textAt(after, "treasury_address"), mapAt(after, "governance")
+	period := levelAt(constants, "delegation_unbonding_blocks")
+	supply := amountAt(after, "total_supply")
+	book := credits{} // what every address holds
+	for address, balance := range mapAt(after, "balances") {
+		book.add(address, big.NewInt(number(balance)))
+	}
+	holds := func(address string) *big.Int {
+		if balance, known := book[address]; known {
+			return balance
+		}
+		return new(big.Int)
+	}
+	pay := func(from, to string, amount *big.Int) {
+		book.add(from, new(big.Int).Neg(amount))
+		book.add(to, amount)
+	}
+	lose := func(bond *big.Int) { // half of a lost bond is burned, rounded down, and the rest goes to the treasury
+		half := over(bond, big.NewInt(2))
+		supply.Sub(supply, half)
+		book.add(treasury, new(big.Int).Sub(bond, half))
+	}
+	end := func(proposal map[string]any) *big.Int { // a proposal that is over holds no bond, and says since when
+		bond := amountAt(proposal, "bond")
+		delete(proposal, "bond")
+		delete(proposal, "released_by")
+		proposal["ended_at"] = header["level"]
+		return bond
+	}
+	failed, size := []any{}, 0
+	for i, raw := range transactions { // step 2
+		tx := raw.(map[string]any)
+		sender, fee := textAt(tx, "sender"), amountAt(tx, "fee")
+		size += transactionSize(tx)
+		floor := number(parameters["fee_floor_base"]) + number(parameters["fee_floor_per_byte"])*int64(transactionSize(tx))
+		taken := uint64(0)
+		if nonce, sent := nonces[sender]; sent {
+			taken = uint64(number(nonce))
+		}
+		switch {
+		case sender == treasury:
+			return nil, nil, "sent_by_treasury", i
+		case textAt(tx, "chain_id") != textAt(after, "chain_id"):
+			return nil, nil, "wrong_chain", i
+		case parameters["fee_floor_enabled"] == true && fee.Cmp(big.NewInt(floor)) < 0:
+			return nil, nil, "fee_under_floor", i
+		case levelAt(tx, "nonce") != taken || taken == maxInt:
+			return nil, nil, "wrong_nonce", i
+		case holds(sender).Cmp(fee) < 0:
+			return nil, nil, "unpaid_fee", i
+		}
+		if !has(wholeBlockKinds, textAt(tx, "kind")) || hasMember(tx, "public_key") || !hasMember(mapAt(after, "keys"), sender) {
+			panic("a transaction that the whole blocks of the vectors do not hold")
+		}
+		pay(sender, proposer, fee)
+		nonces[sender] = json.Number(strconv.FormatUint(taken+1, 10))
+		done := false
+		switch textAt(tx, "kind") {
+		case "transfer":
+			if amount := amountAt(tx, "amount"); holds(sender).Cmp(amount) >= 0 {
+				pay(sender, textAt(tx, "recipient"), amount)
+				done = true
+			}
+		case "release_payment", "cancel_payment":
+			named := textAt(mapAt(tx, "params"), "proposal_id")
+			payments := map[string]any{}
+			var payment map[string]any
+			for _, proposal := range objectsOf(listAt(governance, "treasury")) {
+				if textAt(proposal, "proposal_id") != named {
+					continue
+				}
+				payment = proposal
+				total, toItself := new(big.Int), new(big.Int)
+				for _, recipient := range objectsOf(listAt(mapAt(proposal, "payload"), "recipients")) {
+					total.Add(total, amountAt(recipient, "amount"))
+					if textAt(recipient, "address") == treasury {
+						toItself.Add(toItself, amountAt(recipient, "amount"))
+					}
+				}
+				waiting := map[string]any{"phase": proposal["phase"], "total": asNumber(total), "to_itself": asNumber(toItself),
+					"voted": json.Number(strconv.FormatUint(endsOf("treasury", proposal, constants)["voting"], 10))}
+				if hasMember(proposal, "released_by") {
+					waiting["released_by"] = proposal["released_by"]
+				}
+				payments[named] = waiting
+			}
+			guarded := guardBlock(map[string]any{"level": header["level"], "guardians": after["guardians"],
+				"treasury": asNumber(holds(treasury)), "treasury_bond": constants["treasury_bond"],
+				"guardian_delay_blocks": constants["guardian_delay_blocks"], "payments": payments},
+				[]any{map[string]any{"sender": sender, "kind": tx["kind"], "proposal_id": named}})
+			switch listAt(guarded, "did")[0] {
+			case "recorded":
+				payment["released_by"], done = sender, true
+			case "cancelled":
+				lose(end(payment))
+				payment["phase"], done = "rejected", true
+			case "paid":
+				for _, recipient := range objectsOf(listAt(mapAt(payment, "payload"), "recipients")) {
+					pay(treasury, textAt(recipient, "address"), amountAt(recipient, "amount"))
+				}
+				book.add(textAt(payment, "submitter"), end(payment))
+				payment["phase"], done = "executed", true
+			}
+		default:
+			outcome, received, burned := reportOffence(after, listAt(governance, "protocol"), level, period, tx)
+			if outcome == "slashed" {
+				for address, amount := range received {
+					book.add(address, amount)
+				}
+				supply.Sub(supply, burned)
+				done = true
+			}
+		}
+		if !done {
+			failed = append(failed, json.Number(strconv.Itoa(i))) // it stays in the block, and has paid
+		}
+	}
+	if int64(size) > number(parameters["max_block_bytes"]) {
+		return nil, nil, "block_too_large", -1
+	}
+	if !validatorsOf(after)[proposer] {
+		panic("the proposer of a whole block of the vectors is a validator")
+	}
+	after["total_supply"] = asNumber(supply) // step 3
+	minted := rewardOf(after, proposer)
+	for address, amount := range mapAt(minted, "credits") {
+		book.add(address, big.NewInt(number(amount)))
+	}
+	supply = amountAt(minted, "total_supply")
+	for _, raw := range mapAt(after, "attestations") { // step 4
+		attestation := raw.(map[string]any)
+		if hasMember(attestation, "revoked_at") && levelAt(attestation, "revoked_at")+levelAt(constants, "attestation_unbonding_blocks") == level {
+			book.add(textAt(attestation, "issuer"), amountAt(attestation, "bond"))
+			attestation["bond"] = json.Number("0")
+		}
+	}
+	held := []any{} // step 5
+	for _, leaving := range objectsOf(listAt(after, "delegation_unbonding")) {
+		if levelAt(leaving, "release_at") == level {
+			book.add(textAt(leaving, "delegator"), amountAt(leaving, "amount"))
+			continue
+		}
+		held = append(held, leaving)
+	}
+	after["delegation_unbonding"] = held
+	decided := map[string][]map[string]any{} // step 6
+	entries := map[string][]any{"protocol": {}, "treasury": {}}
+	for _, track := range []string{"protocol", "treasury"} {
+		for _, proposal := range objectsOf(listAt(governance, track)) {
+			phase := textAt(proposal, "phase")
+			if isOver(track, proposal) || endsOf(track, proposal, constants)[phase] != level {
+				continue
+			}
+			votes := "votes"
+			if track == "protocol" {
+				votes = phase + "_votes"
+			}
+			counted := phase == "exploration" || phase == "adoption" || phase == "voting"
+			passes := counted && tallyOf(listAt(after, "consensus_set"), mapAt(proposal, votes), track)["passes"] == true
+			switch {
+			case phase == "submitted" && track == "protocol":
+				proposal["phase"] = "exploration"
+			case phase == "submitted":
+				proposal["phase"] = "voting"
+			case phase == "cooldown":
+				proposal["phase"] = "adoption"
+			case phase == "exploration" && passes:
+				proposal["phase"] = "cooldown"
+			default: // a vote that decides, or a wait that ends
+				decided[track] = append(decided[track], proposal)
+				entry := map[string]any{"phase": phase, "payload": proposal["payload"]}
+				if counted {
+					entry["passes"] = passes
+				}
+				entries[track] = append(entries[track], entry)
+			}
+		}
+	}
+	settled := decideAll(map[string]any{"parameters": parameters, "state_root_function": after["state_root_function"],
+		"treasury": asNumber(holds(treasury)), "protocol_bond": constants["protocol_bond"],
+		"treasury_bond": constants["treasury_bond"]}, entries["protocol"], entries["treasury"])
+	after["parameters"], after["state_root_function"] = settled["parameters"], settled["state_root_function"]
+	book.add(treasury, new(big.Int).Sub(amountAt(settled, "treasury_holds"), holds(treasury)))
+	supply.Sub(supply, amountAt(settled, "burned"))
+	for _, track := range []string{"protocol", "treasury"} {
+		for i, proposal := range decided[track] {
+			proposal["phase"] = listAt(settled, track)[i]
+			if proposal["phase"] == "passed" {
+				continue // it waits for a guardian, and its bond stays held
+			}
+			if bond := end(proposal); proposal["phase"] == "activated" {
+				book.add(textAt(proposal, "submitter"), bond)
+			}
+		}
+	}
+	for _, track := range []string{"protocol", "treasury"} { // step 7
+		staying := []any{}
+		for _, proposal := range objectsOf(listAt(governance, track)) {
+			if !hasMember(proposal, "ended_at") || levelAt(proposal, "ended_at")+period != level {
+				staying = append(staying, proposal)
+			}
+		}
+		governance[track] = staying
+	}
+	recent := []any{}
+	for _, vote := range objectsOf(listAt(after, "consensus_slashes")) {
+		if levelAt(vote, "level")+period != level {
+			recent = append(recent, vote)
+		}
+	}
+	after["consensus_slashes"] = recent
+	if level%levelAt(constants, "epoch_blocks") == 0 { // step 8
+		snapshot := []any{}
+		for _, validator := range objectsOf(listAt(after, "validators")) {
+			weight := amountAt(validator, "stake")
+			for _, raw := range mapAt(after, "delegations") {
+				if delegation := raw.(map[string]any); textAt(delegation, "validator") == textAt(validator, "address") {
+					weight.Add(weight, amountAt(delegation, "amount"))
+				}
+			}
+			snapshot = append(snapshot, map[string]any{"address": validator["address"], "stake": asNumber(weight)})
+		}
+		after["consensus_set"] = snapshot
+	}
+	balances := map[string]any{}
+	for address, balance := range book {
+		if balance.Sign() != 0 { // a balance of zero is not written
+			balances[address] = asNumber(balance)
+		}
+	}
+	after["balances"], after["total_supply"] = balances, asNumber(supply)
+	return after, failed, "", -1
+}
+
+// ------------------------------------------------- one request at a time
+
+// exchangeOn follows a connection as the node that asks for blocks sees
+// it: a request it would send, a blocks frame it receives, or four bytes
+// it reads before a frame.
+func exchangeOn(steps []any) []string {
+	var verdicts []string
+	var waiting []int64 // the first and the last level of the request that waits
+	closed := false
+	for _, step := range objectsOf(steps) {
+		switch {
+		case closed:
+			verdicts = append(verdicts, "closed")
+		case hasMember(step, "prefix"):
+			if _, refused := announcedBy(unhex(textAt(step, "prefix"))); refused != "" {
+				closed = true
+				verdicts = append(verdicts, "refused")
+			} else {
+				verdicts = append(verdicts, "accepted")
+			}
+		case hasMember(step, "blocks"):
+			var levels []int64
+			for _, level := range listAt(step, "blocks") {
+				levels = append(levels, number(level))
+			}
+			if waiting == nil || answerRule(waiting[0], waiting[1], levels) != "" {
+				verdicts = append(verdicts, "refused")
+			} else {
+				waiting = nil
+				verdicts = append(verdicts, "accepted")
+			}
+		case waiting != nil: // a request, while one waits
+			verdicts = append(verdicts, "refused")
+		default:
+			waiting = []int64{number(listAt(step, "ask")[0]), number(listAt(step, "ask")[1])}
+			verdicts = append(verdicts, "accepted")
+		}
+	}
+	return verdicts
+}
+
+// ---------------------------------------------------------------- chapter 3: what is hashed outside blocks
+
+// Written from sections 9.19 to 9.23 of docs/api-stability.md: the four
+// objects the note gives a hash domain and that stand neither in a block
+// nor in the state. Forms and hashes, and nothing of what a rollup does.
+
+const (
+	maxBatchTransactions = 1024
+	maxPayloadBytes      = 32768
+	maxEvmStack          = 1024
+	maxEvmBytes          = 1048576
+	maxEvmStorage        = 16384
+	maxVerifierKeyPoints = 257
+)
+
+// someBytes is bytes written in hexadecimal, two characters for each
+// byte: low to high bytes, a multiple of step.
+func someBytes(low, high, step int) schema {
+	return func(v any) string {
+		s, ok := v.(string)
+		if !ok {
+			return "wrong_type"
+		}
+		if len(s)%2 != 0 || len(s)/2 < low || len(s)/2 > high || (len(s)/2)%step != 0 {
+			return "bad_text"
+		}
+		for i := 0; i < len(s); i++ {
+			if !isDigit(s[i]) && (s[i] < 'a' || s[i] > 'f') {
+				return "bad_text"
+			}
+		}
+		return ""
+	}
+}
+
+// digitsUpTo is a whole number from 0 to high written in decimal: no sign,
+// and no zero in front of another digit, so that a number has one text.
+func digitsUpTo(high *big.Int) schema {
+	longest := len(high.String())
+	return func(v any) string {
+		s, ok := v.(string)
+		if !ok {
+			return "wrong_type"
+		}
+		if s == "" || len(s) > longest || len(s) > 1 && s[0] == '0' {
+			return "bad_text"
+		}
+		for i := 0; i < len(s); i++ {
+			if !isDigit(s[i]) {
+				return "bad_text"
+			}
+		}
+		if n, _ := new(big.Int).SetString(s, 10); n.Cmp(high) > 0 {
+			return "bad_text"
+		}
+		return ""
+	}
+}
+
+func lastOf(bits uint) *big.Int {
+	return new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), bits), big.NewInt(1))
+}
+
+// The prime of the base field of the curve BN254, as section 9.2 writes it.
+var bn254Prime, _ = new(big.Int).SetString("21888242871839275222246405745257275088696311157297823662689037894645226208583", 10)
+
+var (
+	aRollup       = letters(1, 64, func(i int, c byte) bool { return isLower(c) || i > 0 && (isDigit(c) || c == '-') })
+	aWord         = digitsUpTo(lastOf(256))
+	anEvmAddress  = digitsUpTo(lastOf(160))
+	aFieldElement = digitsUpTo(new(big.Int).Sub(bn254Prime, big.NewInt(1)))
+	aPoint        = listOf(aFieldElement, 2, 2)
+	aPointOfTwo   = listOf(aPoint, 2, 2)
+)
+
+// The sentences of chapter 3, kept apart from those of chapter 2.
+var outsideSentences []string
+
+func outsideRule(text string, holds func(o map[string]any) bool) sentence {
+	outsideSentences = append(outsideSentences, text)
+	return sentence{text, holds}
+}
+
+var aBatch = ruled(map[string]field{
+	"rollup_id": required(aRollup), "batch_index": required(integer(0, maxInt)),
+	"parent_state_root": required(aHash), "state_root": required(aHash),
+	"tx_hashes": required(listOf(aHash, 0, maxBatchTransactions)), "tx_data_hash": required(aHash),
+	"timestamp": required(integer(0, maxInt)), "sequencer": required(anAddress), "signature": required(aSignature),
+})
+
+var aRequest = ruled(map[string]field{
+	"rollup_id": required(aRollup), "sender": required(anAddress),
+	"l2_tx_payload": required(someBytes(1, maxPayloadBytes, 1)), "posted_at_l1_level": required(aLevel),
+	"posted_at_l1_timestamp": required(integer(0, maxInt)), "deadline_blocks": required(aPeriod),
+}, outsideRule("The level of the deadline, `posted_at_l1_level` plus `deadline_blocks`, is at most 2^63 - 1.",
+	func(o map[string]any) bool {
+		deadline := new(big.Int).Add(amountAt(o, "posted_at_l1_level"), amountAt(o, "deadline_blocks"))
+		return deadline.Cmp(big.NewInt(maxInt)) <= 0
+	}))
+
+var anEvmContext = ruled(map[string]field{
+	"address": required(anEvmAddress), "caller": required(anEvmAddress), "value": required(aWord),
+	"calldata": required(someBytes(0, maxEvmBytes, 1)), "block_number": required(aLevel),
+	"block_timestamp": required(integer(0, maxInt)),
+})
+
+var anEvmState = ruled(map[string]field{
+	"pc": required(integer(0, maxInt)), "stack": required(listOf(aWord, 0, maxEvmStack)),
+	"memory": required(someBytes(0, maxEvmBytes, 32)), "gas": required(integer(0, maxInt)),
+	"halted": required(boolean), "output": required(someBytes(0, maxEvmBytes, 1)), "reverted": required(boolean),
+	"storage": required(mapOf(aWord, aWord, 0, maxEvmStorage)), "context": required(anEvmContext),
+},
+	outsideRule("A state that is `reverted` is `halted`.", func(o map[string]any) bool {
+		return o["halted"] == true || o["reverted"] != true
+	}),
+	outsideRule("`output` is empty unless the state is `halted`.", func(o map[string]any) bool {
+		return o["halted"] == true || textAt(o, "output") == ""
+	}),
+	outsideRule("No slot of `storage` holds `\"0\"`.", func(o map[string]any) bool {
+		for _, held := range mapAt(o, "storage") {
+			if held == "0" {
+				return false
+			}
+		}
+		return true
+	}))
+
+var aVerifierKey = ruled(map[string]field{
+	"alpha1": required(aPoint), "beta2": required(aPointOfTwo), "gamma2": required(aPointOfTwo),
+	"delta2": required(aPointOfTwo), "ic": required(listOf(aPoint, 1, maxVerifierKeyPoints)),
+})
 
 // ---------------------------------------------------------------- the vectors of the schemas
 
@@ -1772,6 +3562,19 @@ func (s *schemaVectors) directive(name string, argument any, index int64) any {
 		return textOf("ksig1.", fillerOf("signature", count(argument), 3373))
 	case "$address":
 		return addressFromHash(schemaNetwork, fillerOf("address", count(argument), 48))
+	case "$account":
+		address, _ := accountAddress(schemaNetwork, fillerOf("key", count(argument), 1984))
+		return address
+	case "$key_of_parts":
+		parts := argument.([]any)
+		first, second := fillerOf("key", count(parts[0]), 1984), fillerOf("key", count(parts[1]), 1984)
+		return textOf("kpk1.", join(first[:1952], second[1952:]))
+	case "$canonical":
+		encoding, err := canonicalJSON(s.expand(argument, index))
+		if err != nil {
+			panic(err)
+		}
+		return string(encoding)
 	case "$text":
 		parts := argument.([]any)
 		return strings.Repeat(parts[1].(string), int(number(parts[0])))
@@ -1860,20 +3663,30 @@ func putAt(v any, steps []string, value any) any {
 	panic("a path that leads nowhere")
 }
 
-// drop removes the member at a path, in a copy.
+// drop removes the member at a path, or the item at that position of a
+// list, in a copy.
 func drop(v any, path string) any {
 	holder, last := locate(v, path)
-	members := holder.(map[string]any)
-	kept := make(map[string]any, len(members))
-	for name, inner := range members {
-		if name != last {
-			kept[name] = inner
+	var left any
+	switch t := holder.(type) {
+	case []any:
+		i, _ := strconv.Atoi(last)
+		left = append(append([]any{}, t[:i]...), t[i+1:]...)
+	case map[string]any:
+		members := make(map[string]any, len(t))
+		for name, inner := range t {
+			if name != last {
+				members[name] = inner
+			}
 		}
+		left = members
+	default:
+		panic("a path that leads nowhere")
 	}
 	if !strings.Contains(path, ".") {
-		return kept
+		return left
 	}
-	return put(v, path[:strings.LastIndex(path, ".")], kept)
+	return put(v, path[:strings.LastIndex(path, ".")], left)
 }
 
 func joinPath(path, step string) string {
@@ -1955,11 +3768,93 @@ type schemaVector struct {
 	Hash      string          `json:"hash"`
 	Proposal  string          `json:"proposal_id"`
 	Attested  string          `json:"attestation_id"`
+	Breaks    string          `json:"breaks"`
+	StateRoot string          `json:"state_root"`
+	Accounts  json.RawMessage `json:"accounts"`
+	TrieRoot  string          `json:"accounts_root"`
+	Hashed    string          `json:"hashed"`
+	BlockHash string          `json:"block_hash"`
 	Mutations *struct {
 		Optional []string `json:"optional"`
 		Maps     []string `json:"maps"`
 		Free     []string `json:"free"`
 	} `json:"mutations"`
+}
+
+// ------------------------------------------- the four bytes of a frame
+
+// announcedBy reads the four bytes that precede a frame: how many bytes
+// of canonical JSON follow, and the rule that refuses them when that is
+// more than a frame holds. The four bytes are a number without a sign,
+// most significant byte first, and are not counted in the bound.
+func announcedBy(four []byte) (uint64, string) {
+	var n uint64
+	for _, b := range four {
+		n = n<<8 | uint64(b)
+	}
+	if n > maxFrameBytes {
+		return n, "too_long"
+	}
+	return n, ""
+}
+
+// ------------------------------------- a request for blocks, its answer
+
+// A blocks frame that holds no block: {"blocks":[],"kind":"blocks"}.
+const emptyBlocksFrame = 29
+
+// answerTo gives the levels of the blocks a node sends in answer to a
+// get_blocks from first to last, when it holds the final blocks whose
+// sizes held gives. The run it holds from first is found before any size
+// is added up, and the sizes are then counted from the bound downward.
+func answerTo(held map[int64]int, first, last int64) []int64 {
+	run := []int64{}
+	for level := first; ; level++ {
+		if _, ok := held[level]; !ok {
+			break
+		}
+		run = append(run, level)
+		if level == last { // no level above the last one asked for, and no level after the highest there is
+			break
+		}
+	}
+	left := maxFrameBytes - emptyBlocksFrame
+	for n, level := range run {
+		left -= held[level]
+		if n > 0 {
+			left-- // the comma before every block but the first
+		}
+		if left < 0 {
+			return run[:n]
+		}
+	}
+	return run
+}
+
+// answerRule gives the rule that refuses a blocks frame whose blocks are
+// of these levels as the answer to a get_blocks from first to last, or
+// the empty string. The end is looked at before the start, and the order
+// of the levels last.
+func answerRule(first, last int64, levels []int64) string {
+	if len(levels) == 0 {
+		return ""
+	}
+	for _, level := range levels {
+		if level > last {
+			return "inconsistent"
+		}
+	}
+	if levels[0] != first {
+		return "inconsistent"
+	}
+	// A level is never negative: one more than the highest level there is wraps
+	// around to a negative number, which is the level of no block.
+	for n := 1; n < len(levels); n++ {
+		if levels[n] != levels[n-1]+1 {
+			return "inconsistent"
+		}
+	}
+	return ""
 }
 
 // checkSchemas runs the vectors of the schemas with the tables above.
@@ -1975,6 +3870,98 @@ func checkSchemas(path string) {
 		Refused       []schemaVector `json:"refused"`
 		AcceptedTexts []schemaVector `json:"accepted_texts"`
 		RefusedTexts  []schemaVector `json:"refused_texts"`
+		Prefixes      []struct {
+			Prefix    string  `json:"prefix"`
+			Announces *uint64 `json:"announces"`
+			Rule      string  `json:"rule"`
+			Why       string  `json:"why"`
+		} `json:"prefixes"`
+		Answers []struct {
+			Held   [][2]int64 `json:"held"`
+			From   int64      `json:"from"`
+			To     int64      `json:"to"`
+			Levels []int64    `json:"levels"`
+			Why    string     `json:"why"`
+		} `json:"answers"`
+		Replies []struct {
+			From   int64   `json:"from"`
+			To     int64   `json:"to"`
+			Levels []int64 `json:"levels"`
+			Rule   string  `json:"rule"`
+			Why    string  `json:"why"`
+		} `json:"replies"`
+		BlockRules map[string]string `json:"block_rules"`
+		Charges    []struct {
+			Why          string          `json:"why"`
+			State        json.RawMessage `json:"state"`
+			Proposer     string          `json:"proposer"`
+			Transactions json.RawMessage `json:"transactions"`
+			Rule         string          `json:"rule"`
+			At           *int            `json:"at"`
+			Then         json.RawMessage `json:"then"`
+		} `json:"charges"`
+		Decisions []struct {
+			Why      string          `json:"why"`
+			Before   json.RawMessage `json:"before"`
+			Protocol json.RawMessage `json:"protocol"`
+			Treasury json.RawMessage `json:"treasury"`
+			Then     json.RawMessage `json:"then"`
+		} `json:"decisions"`
+		GuardianRules map[string]string `json:"guardian_rules"`
+		Payments      []struct {
+			Why        string          `json:"why"`
+			Before     json.RawMessage `json:"before"`
+			Operations json.RawMessage `json:"operations"`
+			Then       json.RawMessage `json:"then"`
+		} `json:"payments"`
+		Rewards []struct {
+			Why      string          `json:"why"`
+			Before   json.RawMessage `json:"before"`
+			Proposer string          `json:"proposer"`
+			Then     json.RawMessage `json:"then"`
+		} `json:"rewards"`
+		Tallies []struct {
+			Why      string          `json:"why"`
+			Track    string          `json:"track"`
+			Snapshot json.RawMessage `json:"consensus_set"`
+			Ballots  json.RawMessage `json:"ballots"`
+			Then     json.RawMessage `json:"then"`
+		} `json:"tallies"`
+		SlashRules map[string]string `json:"slash_rules"`
+		Slashes    []struct {
+			Why        string          `json:"why"`
+			Before     json.RawMessage `json:"before"`
+			Operations json.RawMessage `json:"operations"`
+			Then       json.RawMessage `json:"then"`
+		} `json:"slashes"`
+		WholeBlockRules map[string]string `json:"whole_block_rules"`
+		Transitions     []struct {
+			Why   string          `json:"why"`
+			Name  string          `json:"name"`
+			From  string          `json:"from"`
+			Block json.RawMessage `json:"block"`
+			Rule  string          `json:"rule"`
+			At    *int            `json:"at"`
+			Then  *struct {
+				Failed    json.RawMessage `json:"failed"`
+				Remove    []string        `json:"remove"`
+				Set       json.RawMessage `json:"set"`
+				StateRoot string          `json:"state_root"`
+				Bytes     int             `json:"bytes"`
+				Pin       string          `json:"pin"`
+			} `json:"then"`
+		} `json:"transitions"`
+		Exchanges []struct {
+			Why      string          `json:"why"`
+			Steps    json.RawMessage `json:"steps"`
+			Verdicts []string        `json:"verdicts"`
+		} `json:"exchanges"`
+		Served []struct {
+			Why      string     `json:"why"`
+			Held     [][2]int64 `json:"held"`
+			Requests [][2]int64 `json:"requests"`
+			Answers  [][]int64  `json:"answers"`
+		} `json:"served"`
 	}
 	if err := json.Unmarshal(raw, &file); err != nil {
 		panic(err)
@@ -1985,17 +3972,27 @@ func checkSchemas(path string) {
 		"transaction_bytes": maxTransactionBytes, "block_bytes": maxBlockBytes,
 		"certificate_signatures": maxCertificateSignatures, "code_bytes": maxCodeBytes, "value_bytes": maxValueBytes,
 		"contract_fields": maxContractFields, "claim_bytes": maxClaimBytes, "recipients": maxRecipients,
+		"validators": maxValidators, "guardians": maxGuardians,
+		"batch_transactions": maxBatchTransactions, "payload_bytes": maxPayloadBytes, "evm_stack": maxEvmStack,
+		"evm_bytes": maxEvmBytes, "evm_storage": maxEvmStorage, "verifier_key_points": maxVerifierKeyPoints,
 	}
 	check("the limits of the file are the limits of this program", fmt.Sprint(limits) == fmt.Sprint(file.Limits))
 
 	vectors := schemaVectors{objects: map[string]any{}}
 	kept := map[string]string{} // the schema of each accepted vector
-	derived := 0
+	derived, states := 0, 0
+	shown := map[string]bool{} // the sentences of chapter 2 that a refused vector breaks, alone
+	outside := 0               // the objects of chapter 3, each with its hash or its identifier
+	shownOutside := map[string]bool{}
 	for _, v := range file.Accepted {
 		object := vectors.expand(mustParse(v.Object), 0)
 		encoding, err := canonicalJSON(object)
 		check("accepted "+v.Name+": the object", err == nil && len(encoding) == v.Bytes && pinOf(encoding) == v.Pin)
-		check("accepted "+v.Name, schemas[v.Schema](object) == "")
+		verdict, breaks := judge(v.Schema, object)
+		check("accepted "+v.Name, verdict == "" && len(breaks) == 0)
+		// A frame travels after four bytes that give the length of its canonical JSON, and nothing else does.
+		four := hex.EncodeToString(binary.BigEndian.AppendUint32(nil, uint32(len(encoding))))
+		check("accepted "+v.Name+": the four bytes", (v.Schema == "frame" && v.Prefix == four) || (v.Schema != "frame" && v.Prefix == ""))
 		vectors.objects[v.Name], kept[v.Name] = object, v.Schema
 		o := object.(map[string]any)
 		switch v.Schema {
@@ -2019,12 +4016,44 @@ func checkSchemas(path string) {
 		case "vote", "propose message":
 			check(v.Name+": what is signed", string(without(o, "signature")) == v.Signed)
 			check(v.Name+": context", "kern."+o["kind"].(string) == v.Context && has(purposes, v.Context))
+		case "state":
+			check(v.Name+": state root", same(h("kern.state", schemaNetwork, hashedState(schemaNetwork, o)), v.StateRoot))
+			check(v.Name+": root of the accounts", same(accountsRoot(schemaNetwork, o), v.TrieRoot))
+			if v.Accounts != nil {
+				mine, _ := canonicalJSON(accountsOf(schemaNetwork, o))
+				theirs, _ := canonicalJSON(mustParse(v.Accounts))
+				check(v.Name+": accounts", bytes.Equal(mine, theirs))
+				for address, account := range accountsOf(schemaNetwork, o) {
+					check(v.Name+": the account of "+address, anAccount(account) == "")
+				}
+				states++
+			}
+		case "genesis":
+			hashed, hash := firstHeader(o)
+			check(v.Name+": the nine fields of the block of level 0", string(hashed) == v.Hashed)
+			check(v.Name+": the hash of the block of level 0", hash == v.BlockHash)
+		case "rollup batch":
+			// The hash is taken on the batch without its signature, which is also what the sequencer signs.
+			check(v.Name+": hash", same(h("kern.batch", schemaNetwork, without(o, "signature")), v.Hash))
+			check(v.Name+": what is signed", v.Signed == "" || string(without(o, "signature")) == v.Signed)
+			check(v.Name+": context", v.Context == "" || v.Context == "kern.batch" && has(purposes, v.Context))
+			outside++
+		case "inclusion request":
+			check(v.Name+": hash", same(h("kern.mailbox", schemaNetwork, encoding), v.Hash))
+			outside++
+		case "Mini-EVM state":
+			check(v.Name+": hash", same(h("kern.evm", schemaNetwork, encoding), v.Hash))
+			outside++
+		case "verifier key":
+			check(v.Name+": identifier", same(h("kern.zk_claims.vk", schemaNetwork, encoding), v.ID))
+			outside++
 		}
 		if v.Mutations == nil {
 			continue
 		}
 		for _, m := range mutationsOf(object, v.Mutations.Maps, v.Mutations.Free) {
-			refused := schemas[v.Schema](m.object) != ""
+			answer, _ := judge(v.Schema, m.object)
+			refused := answer != ""
 			expected := !(m.change == "remove" && has(v.Mutations.Optional, m.path))
 			check(fmt.Sprintf("%s: %s at %q", v.Name, m.change, m.path), refused == expected)
 			derived++
@@ -2050,8 +4079,29 @@ func checkSchemas(path string) {
 		}
 		encoding, err := canonicalJSON(object)
 		check("refused, "+v.Why+": the object", err == nil && len(encoding) == v.Bytes && pinOf(encoding) == v.Pin)
-		check("refused, "+v.Why+": "+schemas[name](object)+", expected "+v.Rule, schemas[name](object) == v.Rule)
+		verdict, breaks := judge(name, object)
+		check("refused, "+v.Why+": "+verdict+", expected "+v.Rule, verdict == v.Rule)
+		// A refused state names the one sentence it breaks; this program finds that sentence broken, and no other.
+		ofChapter2 := name == "state" || name == "account" || name == "genesis"
+		ofChapter3 := name == "inclusion request" || name == "Mini-EVM state"
+		check("refused, "+v.Why+": the sentence it breaks", (v.Breaks != "") == ((ofChapter2 || ofChapter3) && v.Rule == "inconsistent"))
+		if v.Breaks != "" {
+			check("refused, "+v.Why+": breaks "+fmt.Sprint(breaks), len(breaks) == 1 && breaks[0] == v.Breaks)
+			if ofChapter3 {
+				shownOutside[v.Breaks] = true
+			} else {
+				shown[v.Breaks] = true
+			}
+		}
 	}
+	for _, text := range outsideSentences {
+		check("a refused vector breaks the sentence: "+text, shownOutside[text])
+	}
+	check("the sentences of chapter 3 that a vector breaks are those this program checks", len(shownOutside) == len(outsideSentences))
+	for _, text := range sentences {
+		check("a refused vector breaks the sentence: "+text, shown[text])
+	}
+	check("the sentences of chapter 2 that a vector breaks are those this program checks", len(shown) == len(sentences) && states == 1)
 	for _, v := range file.AcceptedTexts {
 		text := []byte(vectors.expand(mustParse(v.Text), 0).(string))
 		check("text, "+v.Why+": the text", len(text) == v.Bytes && pinOf(text) == v.Pin)
@@ -2064,10 +4114,160 @@ func checkSchemas(path string) {
 		check("text, "+v.Why+": the text", len(text) == v.Bytes && pinOf(text) == v.Pin)
 		check("text, "+v.Why+": "+receive(v.Schema, text)+", expected "+v.Rule, receive(v.Schema, text) == v.Rule)
 	}
-	if failures == 0 {
-		fmt.Printf("schemas: %d objects accepted, %d refused, %d texts, %d objects one change away, as the Python reference\n",
-			len(file.Accepted), len(file.Refused), len(file.AcceptedTexts)+len(file.RefusedTexts), derived)
+	for _, v := range file.Prefixes {
+		four := unhex(v.Prefix)
+		n, rule := announcedBy(four)
+		check("four bytes "+v.Prefix+": four of them", len(four) == 4)
+		check("four bytes "+v.Prefix+": "+rule+", expected "+v.Rule, rule == v.Rule)
+		check("four bytes "+v.Prefix+": what they announce", (v.Announces == nil) == (rule != "") && (v.Announces == nil || *v.Announces == n))
 	}
+	for _, v := range file.Answers {
+		held := map[int64]int{}
+		for _, block := range v.Held {
+			held[block[0]] = int(block[1])
+		}
+		levels := answerTo(held, v.From, v.To)
+		check("answer, "+v.Why+": "+fmt.Sprint(levels), fmt.Sprint(levels) == fmt.Sprint(v.Levels))
+		check("answer, "+v.Why+": an answer to its request", answerRule(v.From, v.To, levels) == "")
+	}
+	for _, v := range file.Replies {
+		rule := answerRule(v.From, v.To, v.Levels)
+		check("reply, "+v.Why+": "+rule+", expected "+v.Rule, rule == v.Rule)
+	}
+	blockRules := []string{"block_too_large", "fee_under_floor", "wrong_chain", "wrong_nonce", "unpaid_fee", "sent_by_treasury"}
+	check("the rules of a block are those of this program", fmt.Sprint(sortedNames(asAny(file.BlockRules))) == fmt.Sprint(sortedCopy(blockRules)))
+	for _, v := range file.Charges {
+		state := mustParse(v.State).(map[string]any)
+		transactions := vectors.expand(mustParse(v.Transactions), 0).([]any)
+		for _, tx := range transactions {
+			check("block, "+v.Why+": a transfer", aTransaction(tx) == "" && tx.(map[string]any)["kind"] == "transfer")
+		}
+		then, rule, at := chargeBlock(state, v.Proposer, transactions)
+		check("block, "+v.Why+": "+rule+", expected "+v.Rule, rule == v.Rule && (rule == "" || has(blockRules, rule)))
+		if rule != "" {
+			check("block, "+v.Why+": the transaction that breaks the rule", (v.At == nil && at == -1) || (v.At != nil && *v.At == at))
+			check("block, "+v.Why+": an invalid block leaves nothing", v.Then == nil)
+			continue
+		}
+		mine, _ := canonicalJSON(then)
+		theirs, _ := canonicalJSON(mustParse(v.Then))
+		check("block, "+v.Why+": what it leaves", bytes.Equal(mine, theirs))
+	}
+	for _, v := range file.Decisions {
+		then := decideAll(mustParse(v.Before).(map[string]any), mustParse(v.Protocol).([]any), mustParse(v.Treasury).([]any))
+		mine, _ := canonicalJSON(then)
+		theirs, _ := canonicalJSON(mustParse(v.Then))
+		check("decision, "+v.Why, bytes.Equal(mine, theirs))
+		check("decision, "+v.Why+": parameters a state can hold", theParameters(then["parameters"]) == "")
+	}
+	check("the rules of a guardian are those of this program", fmt.Sprint(sortedNames(asAny(file.GuardianRules))) == fmt.Sprint(sortedCopy(guardianRules)))
+	for _, v := range file.Payments {
+		then := guardBlock(mustParse(v.Before).(map[string]any), mustParse(v.Operations).([]any))
+		mine, _ := canonicalJSON(then)
+		theirs, _ := canonicalJSON(mustParse(v.Then))
+		check("payment, "+v.Why, bytes.Equal(mine, theirs))
+	}
+	for _, v := range file.Rewards {
+		mine, _ := canonicalJSON(rewardOf(mustParse(v.Before).(map[string]any), v.Proposer))
+		theirs, _ := canonicalJSON(mustParse(v.Then))
+		check("reward, "+v.Why, bytes.Equal(mine, theirs))
+	}
+	for _, v := range file.Tallies {
+		mine, _ := canonicalJSON(tallyOf(mustParse(v.Snapshot).([]any), mustParse(v.Ballots).(map[string]any), v.Track))
+		theirs, _ := canonicalJSON(mustParse(v.Then))
+		check("vote, "+v.Why, bytes.Equal(mine, theirs) && has(tracks, v.Track))
+	}
+	check("the rules of a slash are those of this program", fmt.Sprint(sortedNames(asAny(file.SlashRules))) == fmt.Sprint(sortedCopy(slashRules)))
+	for _, v := range file.Slashes {
+		mine, _ := canonicalJSON(slashBlock(mustParse(v.Before).(map[string]any), mustParse(v.Operations).([]any)))
+		theirs, _ := canonicalJSON(mustParse(v.Then))
+		check("slash, "+v.Why, bytes.Equal(mine, theirs))
+	}
+	wholeBlockRules := []string{"wrong_level", "wrong_state_root"}
+	check("the rules of a whole block are those of this program", fmt.Sprint(sortedNames(asAny(file.WholeBlockRules))) == fmt.Sprint(sortedCopy(wholeBlockRules)))
+	for _, v := range file.Transitions {
+		state, known := vectors.objects[v.From].(map[string]any)
+		check("whole block, "+v.Why+": the state it is applied to", known)
+		block := vectors.expand(mustParse(v.Block), 0).(map[string]any)
+		form, _ := judge("block", block)
+		check("whole block, "+v.Why+": a block", form == "")
+		after, failed, rule, at := applyBlock(state, block)
+		root := ""
+		if rule == "" {
+			// A header commits to the state its block leads to, by the function that state names.
+			root = hex.EncodeToString(h("kern.state", schemaNetwork, hashedState(schemaNetwork, after)))
+			if root != textAt(mapAt(block, "header"), "state_root") {
+				rule = "wrong_state_root"
+			}
+		}
+		check("whole block, "+v.Why+": "+rule+", expected "+v.Rule, rule == v.Rule && (rule == "" || has(wholeBlockRules, rule) || has(blockRules, rule)))
+		if rule != "" {
+			check("whole block, "+v.Why+": the transaction that breaks the rule", (v.At == nil && at == -1) || (v.At != nil && *v.At == at))
+			check("whole block, "+v.Why+": an invalid block leads to no state", v.Then == nil && v.Name == "")
+			continue
+		}
+		expected := any(state)
+		for _, path := range v.Then.Remove {
+			expected = drop(expected, path)
+		}
+		values := mustParse(v.Then.Set).(map[string]any)
+		for _, path := range sortedNames(values) {
+			expected = put(expected, path, values[path])
+		}
+		mine, _ := canonicalJSON(after)
+		theirs, _ := canonicalJSON(expected)
+		check("whole block, "+v.Why+": the state it leads to", bytes.Equal(mine, theirs) && len(mine) == v.Then.Bytes && pinOf(mine) == v.Then.Pin)
+		verdict, breaks := judge("state", after)
+		check("whole block, "+v.Why+": a state that keeps every rule", verdict == "" && len(breaks) == 0)
+		check("whole block, "+v.Why+": the root of its header", root == v.Then.StateRoot)
+		mine, _ = canonicalJSON(failed)
+		theirs, _ = canonicalJSON(mustParse(v.Then.Failed))
+		check("whole block, "+v.Why+": the operations that failed", bytes.Equal(mine, theirs))
+		if v.Name != "" {
+			vectors.objects[v.Name] = after
+		}
+	}
+	for _, v := range file.Exchanges {
+		verdicts := exchangeOn(mustParse(v.Steps).([]any))
+		check("exchange, "+v.Why+": "+fmt.Sprint(verdicts), fmt.Sprint(verdicts) == fmt.Sprint(v.Verdicts))
+	}
+	for _, v := range file.Served {
+		held := map[int64]int{}
+		for _, block := range v.Held {
+			held[block[0]] = int(block[1])
+		}
+		// One answer for each request, in the order in which the requests came.
+		answers := make([][]int64, len(v.Requests))
+		for i, request := range v.Requests {
+			answers[i] = answerTo(held, request[0], request[1])
+		}
+		check("served, "+v.Why+": "+fmt.Sprint(answers), fmt.Sprint(answers) == fmt.Sprint(v.Answers))
+	}
+	if failures == 0 {
+		fmt.Printf("schemas: %d objects accepted, %d refused, %d texts, %d objects one change away, %d prefixes, %d answers and %d replies, as the Python reference\n",
+			len(file.Accepted), len(file.Refused), len(file.AcceptedTexts)+len(file.RefusedTexts), derived,
+			len(file.Prefixes), len(file.Answers), len(file.Replies))
+		fmt.Printf("what is kept: %d sentences each broken alone, %d blocks charged, %d decisions, %d blocks of guardians, %d exchanges and %d connections served, as the Python reference\n",
+			len(sentences), len(file.Charges), len(file.Decisions), len(file.Payments), len(file.Exchanges), len(file.Served))
+		fmt.Printf("the arithmetic of a block: %d rewards, %d votes, %d blocks of reports and %d whole blocks, as the Python reference\n",
+			len(file.Rewards), len(file.Tallies), len(file.Slashes), len(file.Transitions))
+		fmt.Printf("what is hashed outside blocks: %d objects with their hash or their identifier, %d sentences each broken alone, as the Python reference\n",
+			outside, len(outsideSentences))
+	}
+}
+
+func asAny(m map[string]string) map[string]any {
+	out := make(map[string]any, len(m))
+	for name, value := range m {
+		out[name] = value
+	}
+	return out
+}
+
+func sortedCopy(names []string) []string {
+	out := append([]string{}, names...)
+	sort.Strings(out)
+	return out
 }
 
 // ---------------------------------------------------------------- the check

@@ -205,7 +205,9 @@ def distribute_baker_pool(
     the pool. The remainder is distributed to endorsers in proportion to
     stake, iterated in list order (the validator-set order, which is part
     of consensus state and identical on every node). Rounding leftover
-    goes to the proposer. Returns a {address: mukrn} dict."""
+    goes to the proposer, and so does the whole remainder when the
+    endorsers hold no stake of their own: the pool is always given out
+    whole. Returns a {address: mukrn} dict."""
     rewards: Dict[str, int] = {}
     if baker_pool <= 0 or not endorsers:
         return rewards
@@ -216,6 +218,11 @@ def distribute_baker_pool(
     remainder = baker_pool - bonus
     total_stake = sum(v["stake"] for v in endorsers)
     if total_stake <= 0:
+        # No stake to share by: a proposer whose weight is all delegated
+        # receives the remainder, and shares it with its delegators like
+        # any reward (chain._apply_block_rewards). It used to receive the
+        # bonus alone, and the supply counted the rest, which nobody held.
+        rewards[proposer_addr] += remainder
         return rewards
 
     distributed = 0

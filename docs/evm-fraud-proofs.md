@@ -16,11 +16,11 @@ The trick: by **bisection**, the cost of proving fraud is `O(log n)` L1 transact
 
 ### Mini-EVM (`kern/evm/vm.py`)
 
-A deliberately small subset of the EVM — STOP, ADD/SUB/MUL/DIV/MOD/EXP, LT/GT/EQ/ISZERO, AND/OR/XOR/NOT, PUSH1..32, DUP1..4, SWAP1..3, POP, MLOAD/MSTORE, JUMP/JUMPI/JUMPDEST, PC/MSIZE, RETURN, REVERT. Opcode values match the Ethereum Yellow Paper, so any real EVM bytecode using only this subset runs unchanged.
+A deliberately small subset of the EVM: 44 instructions and the PUSH, DUP and SWAP families, listed in [section 2.8 of the API stability page](api-stability.md#28-kvm-evm-rollup-opcode-set). Opcode values are those of the Ethereum Yellow Paper. The machine is not the EVM of Ethereum: it runs one program at a time, and its gas rules and its `SHA3` are its own (sections 2.8 and 2.9 of the same page).
 
-The defining property: **every executed instruction produces a state commitment**. A state commitment is the blake2b-256 hash of the canonical JSON encoding of `(pc, stack, memory, gas, halted, output, reverted)`. The full trace of a program execution is a sequence of these commitments — one per step.
+The defining property: **every executed instruction produces a state commitment**. A state commitment is the blake2b-256 hash of the canonical JSON encoding of the nine fields of a state: `pc`, `stack`, `memory`, `gas`, `halted`, `output`, `reverted`, `storage` and `context`. The full trace of a program execution is a sequence of these commitments — one per step. [Section 9.22](api-stability.md#922-states-of-the-mini-evm) writes the form these states will take in structure version 1.
 
-The full EVM (storage, calls, logs, precompiles) is the natural extension; the v0.3 implementation includes everything needed to demonstrate the protocol end-to-end. Adding more opcodes is independent of the protocol design.
+Calls between programs and logs are not part of the machine ([multi-frame-evm.md](multi-frame-evm.md)). Adding more opcodes is independent of the protocol design.
 
 ### Bisection (`kern/evm/bisection.py`)
 
@@ -102,22 +102,24 @@ For a 1-million-instruction EVM batch with a 7-day challenge window:
 
 ## What's in the reference implementation
 
-The implementation in [`kern/evm/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/kern/evm) (~750 lines) provides:
+The implementation in [`kern/evm/`](https://github.com/vaneeckhoutnicolas/kern/tree/main/kern/evm) provides:
 
-- ✅ Mini-EVM with 30+ opcodes (arithmetic, comparison, stack, memory, control flow, termination)
+- ✅ Mini-EVM with 44 instructions and the PUSH, DUP and SWAP families (arithmetic, comparison, hash, context, stack, memory, storage, control flow, termination)
+- ✅ Storage of one program (SSTORE / SLOAD), and limits on what a state holds
+- ✅ Gas rules of its own, with the constants of the Yellow Paper ([api-stability.md, section 2.9](api-stability.md#29-gas-pricing))
 - ✅ Per-step state commitments via blake2b-256
 - ✅ Trace generation (`execute`)
 - ✅ Bisection state machine (`BisectionState`, `bisection_round`)
 - ✅ Full bisection driver for testing (`run_full_bisection`)
-- ✅ Single-step verifier (`single_step_verify`)
-- ✅ 19 tests covering the EVM subset, commitment determinism, bisection convergence, and end-to-end fraud-proof scenarios
+- ✅ Single-step verifier (`single_step_verify`), which refuses what is not a state of the machine
+- ✅ Tests in `tests/test_evm.py`, `tests/test_evm_extended.py`, `tests/test_evm_return_gas.py`, `tests/test_evm_limits.py`, `tests/test_evm_referee.py` and `tests/test_evm_pages.py`
 
 What it does **not** include:
 
-- ❌ Full EVM opcode set (only the subset needed for the protocol demo). Adding more opcodes is mechanical — extend `kern/evm/opcodes.py` and `kern/evm/vm.py` with the same step-then-commit pattern.
-- ❌ Storage (SSTORE / SLOAD) — single-contract execution only; cross-contract storage is the v0.4 extension.
+- ❌ Full EVM opcode set (only a subset). Adding more opcodes is mechanical — extend `kern/evm/opcodes.py` and `kern/evm/vm.py` with the same step-then-commit pattern.
 - ❌ Calls (CALL / DELEGATECALL / STATICCALL) — single-frame execution only.
-- ❌ Gas metering that exactly matches Ethereum's dynamic gas costs. The current model uses static per-opcode costs.
+- ❌ Logs (LOG0 to LOG4).
+- ❌ Gas metering that exactly matches Ethereum's dynamic gas costs.
 - ❌ The on-chain bisection contract in Skald (the python `BisectionState` is the protocol model; a Skald contract implementing it is straightforward but not yet shipped).
 
 These are all natural extensions on top of an already-working protocol skeleton.

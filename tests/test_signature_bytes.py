@@ -148,6 +148,7 @@ def _transfer_and_damaged_copy():
 def test_a_damaged_copy_of_a_transaction_does_not_hide_the_real_one(tmp_path):
     keys, chain, proposer, me, node, storage = _setup(tmp_path)
     tx, damaged = _transfer_and_damaged_copy()
+    chain.state["balances"][tx.sender] = 10_000_000     # a node takes a transaction whose sender can pay its fee
     relayed = _gossip(node, damaged, tx.to_dict(), tx.to_dict())
     assert [t.to_dict() for t in storage.drain_mempool()] == [tx.to_dict()]
     assert relayed == [tx.to_dict()]                    # the real one, once
@@ -157,6 +158,7 @@ def test_a_damaged_copy_of_a_transaction_does_not_hide_the_real_one(tmp_path):
 def test_control_a_damaged_transaction_alone_is_neither_kept_nor_relayed(tmp_path):
     keys, chain, proposer, me, node, storage = _setup(tmp_path)
     tx, damaged = _transfer_and_damaged_copy()
+    chain.state["balances"][tx.sender] = 10_000_000
     assert _gossip(node, damaged, damaged) == []
     assert storage.mempool_size() == 0
     storage.close()

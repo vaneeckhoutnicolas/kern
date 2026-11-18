@@ -88,9 +88,22 @@ propagation/validation load per block.
               "fee_floor_per_byte": 2, "max_block_bytes": 1048576 } }
 ```
 
-A block proposer should filter its mempool with the same rule
-(`kern.chain.check_fee_rules`) so it never builds a block that validators will
-reject; honest validators enforce it in `validate_block` regardless.
+Set through governance, each of the four values has a type and a range
+(see [`governance.md`](governance.md), "Values of a protocol payload").
+
+## The proposer and the mempool follow the rule
+
+The proposer of this node applies the rule when it fills a block
+(`propose_block`): it leaves out a transaction that pays under the floor, and
+removes it from its mempool; it stops at `max_block_bytes`. A node refuses such
+a transaction at the door of its mempool, from a peer as from a client (see
+[`mempool-rpc-hardening.md`](mempool-rpc-hardening.md), section 4). Validators
+enforce the rule in `validate_block` whoever built the block.
+
+Until this was written the proposer did not look at the floor. With the floor
+on, one transaction under the floor in its mempool, or more transactions than
+`max_block_bytes` holds, made it build a block that every validator refused,
+itself included.
 
 ## What it does *not* do
 

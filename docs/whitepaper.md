@@ -16,7 +16,7 @@ Kern combines five primitives that together support this thesis. None of them is
 
 We describe the protocol architecture, the four application verticals it enables (compliance-by-construction Security Token Offerings, public goods funding, generic data oracle networks, and ZK-claims-based identity), and the operational path from the v1.1-rc reference implementation to the Midgard mainnet. We are explicit about what Kern is not, what audits are required before launch, and which design decisions are deliberate trade-offs.
 
-The reference implementation is open-source under Apache-2.0 and ships with 1279 passing tests, none skipped. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.
+The reference implementation is open-source under Apache-2.0 and ships with 2622 passing tests, none skipped. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.
 
 ### Table of contents
 
@@ -82,13 +82,13 @@ These five constraints, in conjunction, produce the rest of the protocol mechani
 
 What Kern ships, concretely:
 
-1. A **Layer-1 blockchain protocol** with the design above, running with Python reference implementation (Apache-2.0, ~33,000 LOC, 1279 passing tests).
+1. A **Layer-1 blockchain protocol** with the design above, running with Python reference implementation (Apache-2.0, ~33,000 LOC, 2622 passing tests).
 2. **KRN**, the native token, with a 100M genesis supply distributed per the Ethereum 2014 template.
 3. **Skald**, a contract language with first-class runtime-enforced invariants, plus a static type system, plus a deterministic interpreter (the Kern Virtual Machine).
 4. **A dual-track governance system** (protocol amendments + treasury) with equivocation slashing.
 5. **A slashable attestation registry** as a protocol primitive, generalizing equivocation accountability beyond consensus to any signed claim.
 6. **A ZK-claims infrastructure** built on BN254 pairing precompiles for privacy-preserving compliance attestations, with four reference circuits described.
-7. **An Optimistic Smart Rollup framework** with multi-frame EVM, bisection-based fraud proofs, and forced inclusion.
+7. **An Optimistic Smart Rollup framework**, as a model off the chain, with a Mini-EVM that runs one program at a time, bisection-based fraud proofs, and forced inclusion.
 8. **Ten reference Skald contracts** spanning compliance-by-construction STOs (3 templates), public goods funding (QF + RPGF), oracle networks (generic + DeFi prices + schema marketplace), and didactic examples (vault, counter).
 9. **A complete documentation set** of 68 markdown files, including this whitepaper, nine role-specific setup guides (see §13), the four vertical specification documents, the API stability specification, the tokenomics specification, the governance specification, and the operational roadmap to mainnet.
 10. **An internal security review** documenting seven findings (two Critical, two Major, two Medium, one Minor) all fixed prior to engaging the mandatory professional audit.
@@ -151,7 +151,7 @@ Kern's reference implementation provides (a) through (f) as a coherent design. T
 **Kern is not**:
 - A general-purpose high-throughput chain. The L1 is throughput-limited in service of finality and verifiability. High-throughput applications live in rollups.
 - A privacy-by-default protocol. ZK-claims allow attestations to be privacy-preserving; bare transfers are visible on-chain.
-- A drop-in Ethereum competitor. Solidity contracts run on Kern's EVM rollup, not the L1. Native Kern contracts are written in Skald.
+- A drop-in Ethereum competitor. Solidity contracts are meant for a rollup that settles to Kern, not for the L1, and that rollup is not built yet (§7). Native Kern contracts are written in Skald.
 - Audited yet. The reference implementation has had an internal security review only. Professional audit is mandatory before Midgard mainnet launch — see §12.
 - Production-ready for value custody. Until Midgard launches, Kern remains a reference implementation.
 
@@ -442,7 +442,7 @@ In v1.1-rc the rewarded endorser set is the proposer alone, so the proposer rece
 
 At the 50% target staking ratio, the reward is ~0.079 KRN/block (79 220 mukrn). The proposer additionally keeps the *fees* of every successful transaction it includes; failed-transaction fees are burned. Delegators share their baker's rewards after the per-validator commission; their bonds are held by the protocol, not by the baker.
 
-The L1 transaction fee is a flat sender-chosen `tx.fee` paid in mukrn (Skald executes loop-free and non-recursive, so termination is structural and per-tx compute metering is not required at the L1 layer; the Yellow Paper-compliant gas metering applies inside the rollup Mini-EVM, §7). An **optional, governance-gated fee floor and per-block size cap** can be activated to add a compute-proportional fee component and a spam bound; it is off by default and detailed in [`fee-floor.md`](fee-floor.md).
+The L1 transaction fee is a flat sender-chosen `tx.fee` paid in mukrn (Skald executes loop-free and non-recursive, so termination is structural and per-tx compute metering is not required at the L1 layer; gas metering, with constants from the Yellow Paper, applies inside the rollup Mini-EVM, §7). An **optional, governance-gated fee floor and per-block size cap** can be activated to add a compute-proportional fee component and a spam bound; it is off by default and detailed in [`fee-floor.md`](fee-floor.md).
 
 > An interactive, animated walk-through of the block lifecycle, the gas/fee flow, the reward split, the adaptive-issuance curve, and the attestation lifecycle is published at **kern_site/how-it-works.html**.
 
@@ -519,16 +519,17 @@ The KVM is intentionally narrow: no dynamic dispatch in the EVM sense, no implic
 
 ## 7. EVM compatibility via Optimistic Smart Rollups
 
-Kern does not natively run Solidity contracts on L1. The L1 runs Skald, optimized for the institutional-legibility properties described above. Solidity contracts run on **Optimistic Smart Rollups** whose state commitments are posted to Kern as data.
+Kern does not natively run Solidity contracts on L1. The L1 runs Skald, optimized for the institutional-legibility properties described above. The design gives Solidity contracts a home on **Optimistic Smart Rollups** whose state commitments are posted to Kern as data.
 
-The rollup framework supports:
+That home is a target, not a product. What the repository holds today is a model of the rollup, off the chain:
 
-- A multi-frame EVM execution layer (CALL, STATICCALL, DELEGATECALL, CREATE, CREATE2 frames)
-- Bisection-based fraud proofs (the classical Arbitrum-style mechanism, simplified)
-- Forced inclusion (anti-censorship), so users can submit transactions directly to L1 if the rollup operator censors them
-- 6 EVM precompiles (ECRECOVER, SHA256, RIPEMD160, IDENTITY, MODEXP, BLAKE2F) plus BN254 pairing
+- A Mini-EVM that runs one program at a time and executes a subset of the instructions of Ethereum: no call from inside a program, no event, and a hash that is not Keccak-256
+- Bisection-based fraud proofs (the classical Arbitrum-style mechanism, simplified), with a referee that executes the one disputed step
+- Forced inclusion (anti-censorship): a mailbox with a deadline, for a user whom the rollup operator censors
+- Nine precompiles, among them SHA-256, RIPEMD-160, modular exponentiation and the BN254 pairing check; the signature precompile verifies Ed25519
+- A Skald template of the bridge contract, and a queue of withdrawals
 
-Developers use Hardhat, Foundry, MetaMask, and existing Ethereum toolchains. The rollup's bridge handles asset and message passing in both directions. Settlement to L1 (with fraud-proof challenge windows) brings Kern's finality and BFT properties to EVM applications without compromising the L1's design.
+Running existing Ethereum contracts with Hardhat, Foundry, MetaMask and the other Ethereum toolchains needs an execution layer that is the EVM of Ethereum, and a bridge that carries assets and messages in both directions. Neither is built. Settlement to L1, with fraud-proof challenge windows, is what would bring Kern's finality and BFT properties to EVM applications without compromising the L1's design.
 
 This is architecturally the same pattern Tezos uses with Etherlink. The pattern works.
 
@@ -838,7 +839,7 @@ Quick start to run Kern locally:
 git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
 cd kern
 pip install -e ".[dev,explorer,docs]"
-pytest tests/                # 1279 tests should pass in about 2 minutes
+pytest tests/                # 2622 tests should pass in about 3 minutes
 python networks/devnet_bootstrap.py    # local 3-validator devnet
 python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 ```
@@ -903,7 +904,7 @@ The Kern reference implementation is open-source under Apache-2.0. As of v1.1-rc
 - 43 Python modules (protocol, explorer, tools)
 - 68 markdown specifications and guides
 - 10 Skald example contracts (vault, counter, 3 STOs, QF, RPGF, 3 oracle/marketplace)
-- **1279 passing tests**, none skipped
+- **2622 passing tests**, none skipped
 - 4 internal originality checks pass (no copied code, all files SPDX-licensed, founder attribution on all modules)
 
 The repository is at https://github.com/vaneeckhoutnicolas/kern (or wherever the Foundation chooses to host it post-incorporation).
@@ -928,7 +929,7 @@ python networks/devnet_bootstrap.py
 This work draws on, and explicitly acknowledges, intellectual debt to:
 
 - **Tezos** for baking delegation without liquid staking tokens, on-chain self-amendment, and Tenderbake consensus design
-- **Ethereum** for the BN254 precompiles, the rollup architecture pattern, the foundational ideas of "decentralized applications," and the Yellow Paper that we use for EVM compatibility
+- **Ethereum** for the BN254 precompiles, the rollup architecture pattern, the foundational ideas of "decentralized applications," and the Yellow Paper, from which the Mini-EVM takes its instruction numbers and its gas constants
 - **Optimism** for the Retroactive Public Goods Funding mechanism and the trusted-setup approach to ZK infrastructure
 - **Vitalik Buterin, Zoë Hitzig, and Glen Weyl** for Quadratic Funding (Liberal Radicalism, 2018)
 - **The Gitcoin team** for demonstrating QF works in practice

@@ -4,28 +4,34 @@
 kern.evm.dynamic_gas
 ====================
 
-Dynamic gas costs matching the Ethereum Yellow Paper.
+The part of the price of an instruction that depends on what it does.
 
-The v0.3 Mini-EVM used static per-opcode gas (e.g., SSTORE = 5000 always).
-Real Ethereum charges variable costs depending on:
+Each instruction of the Mini-EVM has a static price in
+`kern.evm.opcodes.GAS_COST`. `kern.evm.vm` adds, from this module, what
+depends on the state and on the operands:
 
-- Memory expansion: quadratic above 724 words
-- SSTORE: depends on (current_value, new_value, original_value) → set/reset/clear cases
-- CALL: depends on value transfer, account creation, cold/warm access
-- LOG: 8 gas per byte of log data, plus 375 base + 375 per topic
-- SHA3: 6 gas per 32-byte word of input
-- COPY operations: 3 gas per 32-byte word copied
-- EXP: variable based on exponent byte length
+- the memory an instruction reaches: `memory_expansion_cost`, 3 gas for
+  each word and the square of the number of words divided by 512
+- SSTORE: `sstore_cost`, read from the slot and from the value written
+- SHA3: `sha3_cost`, 6 gas for each 32-byte word of input
+- EXP: `exp_cost`, from the length of the exponent
+- LOG0 to LOG4: `log_cost`. The machine prices them and halts on them: it
+  emits no event
 
-This module computes the dynamic cost for each operation that has one,
-given the pre-execution VM state and the operation parameters. It is
-called from `kern.evm.vm.step()` before the static cost is applied.
+Section 2.9 of docs/api-stability.md says where the rules of this
+machine are its own and not those of Ethereum: no gas is refunded, a
+read of the storage costs the same each time, and a write is priced
+from the slot and the value written.
+
+`call_cost`, `call_stipend`, `copy_cost` and `create_cost` are called by
+nothing in `kern`: the machine executes neither a call, nor a creation,
+nor a copy instruction.
 
 Pricing constants
 -----------------
 
-Yellow Paper section H.1 ("Fee schedule") gives the canonical values.
-We expose them as named constants here for auditability.
+The constants are those of the fee schedule of the Ethereum Yellow
+Paper. We expose them as named constants here for auditability.
 """
 
 from __future__ import annotations
@@ -43,8 +49,7 @@ G_MEMORY_QUAD_DENOM = 512 # quadratic memory denominator
 
 # SSTORE
 G_SSTORE_SET = 20_000     # storing non-zero to a previously-zero slot
-G_SSTORE_RESET = 5_000    # any other modification
-G_SSTORE_CLEAR_REFUND = 15_000  # clearing a slot — gets refunded (capped)
+G_SSTORE_RESET = 5_000    # any other write
 
 # CALL family
 G_CALL_BASE = 700
@@ -112,32 +117,25 @@ def memory_expansion_cost(current_bytes: int, new_end_bytes: int) -> int:
 # SSTORE cost (EIP-2200 simplified)
 # ---------------------------------------------------------------------------
 
-def sstore_cost(current: int, new: int, original: int) -> int:
-    """Compute SSTORE cost given the current value, the value being
-    written, and the original value at the start of the transaction.
+def sstore_cost(current: int, new: int) -> int:
+    """The price of writing `new` in a slot that holds `current`: what the
+    machine takes for the instruction, its static price included.
 
-    Simplified version of EIP-2200's three-case model:
-    - SET:   original=0, current=0, new≠0  → G_SSTORE_SET (20 000)
-    - RESET: any other write where it actually changes  → G_SSTORE_RESET (5000)
-    - NOOP:  current = new  → small cost (warm-storage read)
+    Two prices, read from the slot and from the value written, and from
+    nothing else:
+    - SET:   current = 0, new ≠ 0   → G_SSTORE_SET (20 000)
+    - RESET: any other write        → G_SSTORE_RESET (5 000), a write that
+             changes nothing included
+
+    EIP-2200 also reads what the slot held when the transaction started,
+    prices a write that changes nothing lower, and refunds gas. This
+    machine does none of the three: the value at the start is not in the
+    state the two parties of a dispute commit to, and the price of a step
+    is a function of the committed state.
     """
-    if current == new:
-        return G_WARM_SLOAD       # no-op write costs warm-read
-    if original == current:
-        # First write in this transaction.
-        if original == 0:
-            return G_SSTORE_SET   # zero-to-nonzero: full set price
-        return G_SSTORE_RESET     # other: reset price
-    # Subsequent write in same tx — cheaper because the slot is already warm
-    return G_WARM_SLOAD
-
-
-def sstore_refund(current: int, new: int, original: int) -> int:
-    """Gas refunded for clearing a slot (new = 0). Capped by the EVM
-    at half the transaction gas spent — we just return the gross."""
-    if current != 0 and new == 0:
-        return G_SSTORE_CLEAR_REFUND
-    return 0
+    if current == 0 and new != 0:
+        return G_SSTORE_SET       # zero-to-nonzero: full set price
+    return G_SSTORE_RESET         # any other write, one that changes nothing included
 
 
 # ---------------------------------------------------------------------------

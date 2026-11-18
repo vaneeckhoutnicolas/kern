@@ -4,59 +4,60 @@
 kern.evm.frames
 ===============
 
-Multi-frame EVM execution: CALL / STATICCALL / DELEGATECALL, contract
-creation via CREATE / CREATE2, event LOGs, and the EVM precompiles.
+Calls, creations and precompiles around the Mini-EVM.
 
-The single-frame `kern.evm.vm` handles one EVM execution context — a
-single contract, called once. The frame manager here handles the
-recursive case: a contract calling another contract calling another,
-each with its own VM state (stack, memory, storage, gas), but sharing a
-global world state (account balances + code).
+`kern.evm.vm` executes one program. This module runs one program for a
+call (`call_contract`) or for a creation (`create_contract`), on a world
+of accounts (`WorldState`), and it serves the precompiles. It is a
+library of the rollup framework: nothing in the node calls it.
 
-Design
-------
+One program at a time
+---------------------
 
-A `Frame` is a single VM execution context: code, calldata, caller,
-value, gas budget, and a `VmState`. The `FrameStack` holds active
-frames; the top frame is what's currently executing. When a CALL
-opcode fires, we push a new frame; when a RETURN/STOP/REVERT fires in
-the top frame, we pop it and propagate the outcome (success+return
-data, or revert+reason) back to the caller frame's stack and memory.
+A call comes from outside the machine. `call_contract` runs the code of
+one account once, in one of three kinds:
 
-`WorldState` holds the global EVM state: account balances and code,
-keyed by address (256-bit). Calls atomically update balances; reverts
-roll them back via snapshots.
+    CALL          the storage of the contract; the value moves to it
+    DELEGATECALL  the storage of the caller; the value does not move
+    STATICCALL    the storage of the contract, which the program cannot
+                  write; a value is refused
 
-For v0.5, frame execution is **batched**: we run the top frame to
-completion (or until it CALLs), then advance. The step-wise per-
-instruction commitment scheme of `kern.evm.vm` still applies *within*
-each frame — so the bisection fraud-proof protocol from
-`docs/evm-fraud-proofs.md` extends naturally: a fraud proof now
-identifies (frame_index, step_index) and the single-step verifier
-re-runs that one instruction in that frame.
+A static call runs its program with `run(..., static=True)`: the program
+halts, reverted, on the first SSTORE it reaches, and the call fails. It
+moves no value: a CALL marked static, or a STATICCALL, that carries one
+does not run. A DELEGATECALL moves none: marked static, it runs.
 
-Multi-frame fraud proofs are handled by hashing the entire frame stack
-into the state commitment, so any divergence — within any frame, in
-any returned value, in any storage update — is detectable.
+A program cannot call another program: the machine does not execute
+CALL, CALLCODE, DELEGATECALL, STATICCALL, CREATE or CREATE2, and halts on
+them, reverted, as on an unknown instruction. There are no nested frames
+and no stack of frames in the commitment of a state: a fraud proof is
+about one program. `Frame` below is a dataclass of an earlier design,
+which nothing builds.
+
+`WorldState` holds the accounts (balance, code, storage, nonce) by
+address. A call first checks the code and the storage it would run on:
+what does not make a state of the machine is refused before the world is
+copied and before any value moves. Then it takes a snapshot: a call that
+reverts, or that the step limit of the machine cuts, leaves the world as
+it was.
 
 Precompiles
 -----------
 
-Addresses 0x01..0x09 are reserved for built-in functions:
-    0x01: ECRECOVER  (signature recovery)
-    0x02: SHA256
-    0x03: RIPEMD160
-    0x04: IDENTITY   (memcpy)
-    0x05: MODEXP     (modular exponentiation)
-    0x06: BN_ADD     (elliptic curve add)
-    0x07: BN_MUL
-    0x08: BN_PAIRING
-    0x09: BLAKE2F
+Addresses 0x01 to 0x09 run a built-in function instead of a program:
 
-This module implements 0x01 (ECRECOVER, using Ed25519 instead of the
-secp256k1 used by Ethereum — a Kern-specific choice), 0x02 (SHA256),
-and 0x04 (IDENTITY). The others are stubs that revert; adding them is
-mechanical.
+    0x01: signature check, Ed25519 (not the secp256k1 recovery of Ethereum)
+    0x02: SHA-256
+    0x03: RIPEMD-160
+    0x04: identity
+    0x05: modular exponentiation
+    0x06: BN254 point addition
+    0x07: BN254 scalar multiplication
+    0x08: BN254 pairing check
+    0x09: BLAKE2F, a placeholder (a BLAKE2b hash of its input)
+
+docs/multi-frame-evm.md says the same with examples, and lists what this
+library does not do.
 """
 
 from __future__ import annotations
@@ -67,7 +68,10 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 from .opcodes import Op
-from .vm import ExecContext, ExecutionTrace, VmState, execute
+from .vm import (
+    MAX_CALLDATA_BYTES, MAX_STORAGE_SLOTS, ExecContext, ExecutionTrace, VmState,
+    require_program, require_state, run,
+)
 
 
 # Precompile address range.
@@ -439,14 +443,66 @@ def call_contract(
 
     Handles value transfer, precompile dispatch, frame creation,
     execution, and snapshot/revert semantics. Returns a CallResult.
+
+    `ValueError` when the calldata, the gas, the value, the addresses and
+    the block of the call do not make the context of a state of the
+    machine, or when the code or the storage the call would run on does
+    not make one: the call does not start. All of it is checked before
+    the world is copied and before any value moves, the size of that
+    storage first: nothing is copied, and the accounts of the world are
+    the objects they were.
+
+    A call whose run is cut by the step limit of the machine before it
+    halts fails as a call that reverts: the world is as it was.
+
+    A static call (`STATICCALL`, or any kind with `is_static`) cannot
+    write: its program halts, reverted, on the first SSTORE it reaches,
+    and the call fails. A call gives back the gas its program had left
+    when it stopped, whether it succeeds or fails.
+
+    A static call moves no value. A `CALL` marked static, or a
+    `STATICCALL`, that carries one does not run, and gives back all its
+    gas, like a call whose caller does not hold the value. A
+    `DELEGATECALL` moves none: marked static, it runs with the value it
+    is given, which its program reads.
     """
-    # 1. Static-call propagation: STATICCALL forces is_static for its subcalls.
+    # 0. A call carries no more calldata than a state of the machine holds,
+    # whether it goes to a contract or to a precompile, and its context is
+    # the context of a state of the machine.
+    if type(calldata) is not bytes:
+        raise ValueError("calldata is not bytes")
+    if len(calldata) > MAX_CALLDATA_BYTES:
+        raise ValueError("calldata is beyond the limit of the Mini-EVM")
+    require_state(VmState(gas=gas, context=ExecContext(
+        address=address, caller=caller, value=value, calldata=calldata,
+        block_number=block_number, block_timestamp=block_timestamp,
+    )))
+    # The storage the call would run on is read for its size before the
+    # world is copied.
+    holder = world.accounts.get(caller if kind == FrameKind.DELEGATECALL else address)
+    if holder is not None and type(holder.storage) is not dict:
+        raise ValueError("not a state of the Mini-EVM: its storage is not a dict")
+    if holder is not None and len(holder.storage) > MAX_STORAGE_SLOTS:
+        raise ValueError("not a state of the Mini-EVM: its storage is beyond the limit")
+    # So are the program the call would run and every slot of that storage:
+    # a call that cannot start copies nothing and moves nothing.
+    callee = world.accounts.get(address)
+    if callee is not None and not is_precompile(address):
+        require_program(callee.code)
+        if callee.code:
+            require_state(VmState(gas=gas, storage={} if holder is None else holder.storage, context=ExecContext(
+                address=address, caller=caller, value=value, calldata=calldata,
+                block_number=block_number, block_timestamp=block_timestamp,
+            )))
+
+    # 1. A STATICCALL is static, whatever `is_static` says.
     if kind == FrameKind.STATICCALL:
         is_static = True
 
-    # 2. Reject value transfer in static calls.
-    if is_static and value != 0:
-        return CallResult(success=False, return_data=b"", gas_remaining=0)
+    # 2. A static call moves no value: a CALL or a STATICCALL that carries
+    # one does not run, and has all its gas left. A DELEGATECALL moves none.
+    if is_static and value != 0 and kind != FrameKind.DELEGATECALL:
+        return CallResult(success=False, return_data=b"", gas_remaining=gas)
 
     # 3. Snapshot for potential rollback.
     snap = world.snapshot()
@@ -473,8 +529,8 @@ def call_contract(
         return CallResult(success=True, return_data=b"", gas_remaining=gas)
 
     # 7. Set up the execution frame.
-    # For DELEGATECALL: storage_address = caller, value = preserved from
-    # caller frame, caller stays the same as the outer caller.
+    # For DELEGATECALL: the program runs on the storage of the caller, and
+    # reads the value and the caller of the call as they are.
     if kind == FrameKind.DELEGATECALL:
         storage_address = caller
         effective_value = value      # caller passes through current msg.value
@@ -494,22 +550,31 @@ def call_contract(
         block_timestamp=block_timestamp,
     )
 
-    # 8. Execute. We pass in current storage as a copy; if the call
-    # succeeds we merge it back, otherwise we discard.
-    trace = execute(
-        callee.code, gas=gas, context=ctx,
-        initial_storage=dict(storage_account.storage),
-    )
-    final = trace.states[-1]
+    # 8. Execute. The machine runs on a copy of the current storage; if the
+    # call succeeds we merge it back, otherwise we discard. A static call
+    # halts on the first write its program reaches.
+    try:
+        final = run(
+            callee.code, gas=gas, context=ctx,
+            initial_storage=storage_account.storage,
+            static=is_static,
+        )
+    except ValueError:
+        # The code or the storage of the account does not make a state of
+        # the machine: the call does not start, and the value goes back.
+        world.revert_to(snap)
+        raise
 
-    if final.reverted:
+    if final.reverted or not final.halted:
+        # A run that the step limit cut before it halted is not a success.
         world.revert_to(snap)
         return CallResult(
             success=False, return_data=final.output,
             gas_remaining=final.gas,
         )
 
-    # 9. Success. Merge storage changes back if not static.
+    # 9. Success. Keep the storage the program leaves. A static call wrote
+    # nothing: there is nothing to keep.
     if not is_static:
         # SSTORE writes by the VM update its `storage` dict; final.storage
         # has the latest values. Replace the account's storage atomically.
@@ -561,7 +626,17 @@ def create_contract(
     from init_code are the runtime code stored at the new address.
 
     Returns (deployed_address or None, CallResult).
+
+    `ValueError` when `init_code` is not a program of the machine, or when
+    the creator, the value, the gas and the block do not make the context
+    of a state of the machine: nothing is created, and the world is as it
+    was. A run that the step limit cuts before it halts fails as a run
+    that reverts.
     """
+    require_program(init_code)
+    require_state(VmState(gas=gas, context=ExecContext(
+        caller=creator, value=value, block_number=block_number, block_timestamp=block_timestamp,
+    )))
     creator_account = world.get(creator)
 
     # Compute deterministic address.
@@ -586,10 +661,9 @@ def create_contract(
         address=addr, caller=creator, value=value, calldata=b"",
         block_number=block_number, block_timestamp=block_timestamp,
     )
-    trace = execute(init_code, gas=gas, context=ctx)
-    final = trace.states[-1]
+    final = run(init_code, gas=gas, context=ctx)
 
-    if final.reverted:
+    if final.reverted or not final.halted:
         world.revert_to(snap)
         return None, CallResult(success=False, return_data=final.output,
                                 gas_remaining=final.gas)

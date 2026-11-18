@@ -1,5 +1,7 @@
 # Adaptive Issuance — implementation
 
+> **Structure version 1.** What a block of structure version 1 computes, the reward of a block and who receives it, whether a vote passes and what a slash takes, is written in section 9.17 of [`api-stability.md`](api-stability.md), with its vectors. This page is about the node of today, and is not a reference for structure version 1.
+
 The token economy document ([`tokenomics.md`](tokenomics.md)) describes adaptive issuance as a design property. This document describes the v0.3 implementation in [`kern/issuance.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/issuance.py), with the actual formulas, parameter choices, and per-block accounting.
 
 ---
