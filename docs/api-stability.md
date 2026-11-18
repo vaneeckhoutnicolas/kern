@@ -373,7 +373,7 @@ The standard `kern.governance` workflow handles cases 3 and 4 cleanly: the valid
 
 ## 9. Structure version 1
 
-> **Status.** Draft for review, chapters 1 and 2 of three: what is signed and what travels, and what is kept. Nothing in this section is implemented. The node writes the formats of sections 2.1 to 2.7, and no network uses the schemas below.
+> **Status.** Draft for review, in three chapters: what is signed and what travels, what is kept, and what is hashed outside blocks. Nothing in this section is implemented. The node writes the formats of sections 2.1 to 2.7, and no network uses the schemas below.
 
 Structure version 1 is not version 1.0 of the software. It is the value of the field `version` of a block header in release 1.2, the release that implements the [signature profile](hybrid-signatures.md), called the note in this section. The note fixes what every object shares: canonical JSON, the hash function `H`, Merkle trees, the text forms of keys and signatures, addresses. It leaves one thing to this document (its section 4.3): the fields of each object, their types and their bounds, written before any format is implemented, each with its vectors, and reviewed as the note was.
 
@@ -381,7 +381,7 @@ Three chapters, reviewed one after the other:
 
 1. **What is signed and what travels** (sections 9.2 to 9.11): transactions, consensus messages, certificates, block headers, blocks, the frames peers exchange, the body of an injection request.
 2. **What is kept** (sections 9.12 to 9.18): the state, the account of the state trie, the key registry, the genesis and the block of level 0, what a block does to the state, the arithmetic of a block, and a whole block.
-3. The objects hashed outside blocks: rollup batches, forced inclusion requests, states of the Mini-EVM, verifier keys.
+3. **What is hashed outside blocks** (sections 9.19 to 9.23): rollup batches, forced inclusion requests, states of the Mini-EVM, verifier keys.
 
 Structure version 1 migrates nothing. No network beyond the devnet exists, and a network of structure version 1 starts from a genesis of its own (section 9.15): how a state written in the formats of today would be carried over is not defined.
 
@@ -441,11 +441,18 @@ A table lists the fields of an object.
 | `fields` | object | map of `name` to `value`, 0 to 256 entries |
 | `positive amount` | integer | 1 to 2^63 - 1, in mukrn |
 | `period` | integer | 1 to 2^32 - 1, in blocks |
+| `rollup` | string | 1 to 64 characters: the letters a to z, the digits and the hyphen, the first one a letter |
+| `bytes` | string | two characters for each byte: the digits and the letters a to f |
+| `word` | string | 1 to 78 digits, without a zero in front: a number from 0 to 2^256 - 1 |
+| `field element` | string | 1 to 77 digits, without a zero in front: a number from 0 to p - 1 |
 
 - An `address` is an address of the network on which the object is read: the same text fails its checksum on any other. The type says nothing of what the address designates, an account or a contract.
 - A `key` and a `signature` are checked as texts. A schema verifies no signature, and does not check that a key passes rule 2 of section 2.5 of the note: that is done when a key is recorded and each time a signature is verified.
 - A `value` is what a contract holds in a field of its storage or takes as a parameter. Skald has four types, and an address is written as a string. The same type bounds what a contract stores (section 9.12).
 - A `claim` is what an attestation states. The protocol compares two claims and hashes them, and never reads inside one.
+- A `rollup` names a rollup as a `chain` names a network. The two types have the same form, and nothing compares one with the other.
+- `bytes` are written in hexadecimal, in lower case, with no prefix. A table gives how many bytes there can be, not how many characters: `bytes`, 1 to 32,768, is a text of 2 to 65,536 characters.
+- A `word` is a word of the Mini-EVM, 256 bits, and a `field element` a coordinate of a point of the curve BN254: a number below p = 21888242871839275222246405745257275088696311157297823662689037894645226208583, the prime of its base field. Both are written in decimal, as the note writes them (its section 4.1), so that no number of JSON passes 64 bits. One number has one text: `0` is the number 0, and no other text starts with a zero. Where a table narrows a `word`, it gives the range.
 
 ### 9.3 Limits
 
@@ -468,6 +475,12 @@ Every text has a bound, and so has every object that travels, with every list an
 | `recipients` | 64 | The recipients of a treasury proposal |
 | `validators` | 1,024 | The validators of a network |
 | `guardians` | 8 | The guardians of its treasury |
+| `batch_transactions` | 1,024 | The transactions a rollup batch names |
+| `payload_bytes` | 32,768 | The transaction a forced inclusion request carries |
+| `evm_stack` | 1,024 | The words on the stack of a state of the Mini-EVM |
+| `evm_bytes` | 1,048,576 | Its memory, its output and the calldata of its context, each |
+| `evm_storage` | 16,384 | The slots of its storage |
+| `verifier_key_points` | 257 | The points of `ic` in a verifier key |
 
 Where they come from:
 
@@ -478,6 +491,9 @@ Where they come from:
 - **1,024 signatures per certificate** is a bound of the format of a certificate. That a network of structure version 1 has at most 1,024 validators is another rule, of the validator set, which chapter 2 states (section 9.12): the two go together, and neither follows from the other. The note measures up to 100 validators and projects beyond; these bounds are limits of the format, not a claim about performance.
 - **65,536 bytes of code, 4,096 bytes per text, 256 fields.** The example contracts declare 32 fields at most, and their longest name has 39 characters.
 - **16,384 bytes per claim, 64 recipients, 256 bytes of memo**: room for what exists, with a margin.
+- **1,024 transactions per batch, 32,768 bytes per request.** A batch that names 1,024 transactions weighs 106,490 bytes: it fits in the size of a transaction. The tests of the repository post batches of two transactions and requests of four bytes.
+- **1,024 words, 1,048,576 bytes, 16,384 slots** are the sizes the Mini-EVM applies to its state (section 2.9): the stack is the one of Ethereum, and the largest state weighs 9,029,047 bytes, which fit in a frame.
+- **257 points** make a key for 256 public inputs. The tests of the repository use three points at most.
 
 ### 9.4 Receiving a text
 
@@ -975,6 +991,18 @@ With one request waiting at most, the answer to a request is the next `blocks` f
 | The commission of a validator | `commission_rates`, a table of the state | A tenth, a rule of the structure version | The state has no table that no transaction writes |
 | The weights of a vote | The stake and the delegations of the moment | The weights of `consensus_set` | One weight for the consensus and for a vote |
 | The numbers of a reward, of a vote and of a slash | Integers of Python, which have no bound | Integers that no client cuts to 64 bits | `total_supply` times a rate passes 2^64 |
+| The hash of a rollup batch, of a forced inclusion request and of a state of the Mini-EVM | BLAKE2b, 64 characters | `H` under `kern.batch`, `kern.mailbox` and `kern.evm`, 96 characters | Note, 4.1 and 4.2 |
+| The key of the sequencer | `sequencer_pubkey`, a signed field of every batch | Not in a batch: read in the key registry | Note, 6.1 |
+| The signature of a batch | Optional | Required | A schema states what an object holds, and a batch is signed |
+| What a rollup notes about a batch | `posted_at_level` and `status`, written in the batch | Not fields of the batch | They are not hashed, and the sequencer does not sign them |
+| What a rollup notes about a request | `status`, `included_in_batch` and `hash`, written in the request | Not fields of the request | They are not hashed |
+| `rollup_id` and `tx_hashes` | Any text, and any number of hashes | A `rollup`, and 1,024 hashes at most | Every text and every list has a bound |
+| `l2_tx_payload` | Any text, said to be hexadecimal | `bytes`, 1 to 32,768 | Every text has an alphabet and a bound |
+| `deadline_blocks` | 21,600 when the request does not say | Required | No field has a default value |
+| The integers of these objects | Integers of Python, which have no bound | Within 64 bits: `batch_index`, `pc`, `gas`, the levels and the moments | Note, 4.1 |
+| The storage of a state of the Mini-EVM | A list of pairs, sorted by slot | An object that maps a slot to what it holds | Note, 4.1 |
+| The coordinates of a verifier key | Integers of JSON, beyond 64 bits | Strings of digits, each below p | Note, 4.1 |
+| The identifier of a verifier key | BLAKE2b, 128 bits | `H` under `kern.zk_claims.vk`, 384 bits | Note, 4.1 |
 
 ### 9.10 Another signature scheme, later
 
@@ -1016,6 +1044,12 @@ For chapter 2 it holds:
 - **reports of offences** (`slashes`): the tables a slash reads and the reports of one block, with what each one does or the rule that makes it fail (`slash_rules`), what each address receives, what is burned and the tables afterwards;
 - **whole blocks** (`transitions`): a state, a block, and the state the block leads to, with its root; or the rule that makes the block invalid, one of `whole_block_rules` or of `block_rules`;
 - **exchanges** (`exchanges`, `served`): what happens on a connection as the node that asks for blocks sees it, step by step, and what a node sends when two requests reach it.
+
+For chapter 3 it holds:
+
+- **the four objects of the note**: its vectors `kern.batch`, `kern.mailbox`, `kern.evm` and `kern.zk_claims.vk` are objects of these schemas, the batch once it is signed, and each gives back the digest the note gives. The batch comes with the text its sequencer signs and its context;
+- **accepted objects** at both ends of every range: the first batch of a rollup and one of 1,024 transactions, a request of one byte and one of 32,768 whose deadline is the last level, the state before the first instruction and the largest state there is, a key without a public input and one for 256, with coordinates of 0 and of p - 1. Each comes with its hash, or its identifier;
+- **refused objects**: a batch that nobody signed or that carries a key, an object with what a rollup notes about it, each bound passed by one, bytes in capitals or with a prefix, a word with a zero in front, a storage written as a list, a coordinate of p or written as a number; and, for each of the four sentences of sections 9.21 and 9.22, an object that breaks that sentence and no other.
 
 Keys and signatures are written by rule in the file and are not real ones: no signature in these vectors verifies, since a schema verifies none. The signatures of the profile have vectors of their own (note, section 17).
 
@@ -1564,6 +1598,108 @@ The state a block leads to keeps every rule of section 9.12, the one that ties `
 Each vector gives a state, a block, and the state the block leads to: the members that leave the state and the values put in place, the root of that state, and the pin of its encoding; or the rule that makes the block invalid. The vectors hold an empty block on a first state; the block of a level at which every step has something to do, and the block after it, whose reward reads the parameters the first one activated; a block that changes the function of the state root, and the same block under the root of the old function, which is invalid; reports of offences in the block of a proposer they slash; transactions of guardians; a supply 100 mukrn under the end of its range, on a first state and in a block that burns before it mints; and blocks that are invalid.
 
 The blocks of these vectors hold transfers, the transactions of guardians and the reports of offences, sent by accounts whose key the state holds. The other kinds of transactions, and the first transaction of an account, which records its key, come with their implementation. Like every vector of this section they verify no signature, and they do not check what the consensus checks of a block: its parent, its moment, and that its proposer is the one the draw names. Their proposer is a validator.
+
+### 9.19 What is hashed outside blocks
+
+Four objects have a hash domain in the note (its section 4.1) and stand neither in a block nor in the state: a rollup batch, a forced inclusion request, a state of the Mini-EVM and a verifier key. The note names their fields and gives one vector for each. This chapter gives each field its type and its bounds, so that two clients accept the same objects before they hash them.
+
+It states forms and hashes, and nothing of what a rollup does with them. How a batch is posted, the challenge window, the bisection of a dispute, what happens when a request passes its deadline and withdrawals are not rules of structure version 1: no operation of a rollup is one of the fifteen kinds of transactions (section 9.5), and no rule of chapter 2 reads one of these objects.
+
+What section 9.2 says of every object holds for these four: canonical JSON, exactly the members of the table, none of them `null`, no default value. None nests deeper than three levels. A rollup keeps more about a batch or a request than these tables hold, where it stands for instance: that is not part of the object, and is neither hashed nor signed.
+
+### 9.20 Rollup batches
+
+A batch commits a rollup to a state: the state before, the state after, and the transactions that lead from one to the other, named by their hashes.
+
+#### Rollup batch
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `rollup_id` | `rollup` | required | The rollup the batch belongs to |
+| `batch_index` | integer, 0 to 2^63 - 1 | required | Its number in that rollup, from 0 |
+| `parent_state_root` | `hash` | required | The state of the rollup before the batch |
+| `state_root` | `hash` | required | Its state after the batch |
+| `tx_hashes` | list of 0 to 1,024 `hash` | required | The transactions of the batch, in their order |
+| `tx_data_hash` | `hash` | required | `H("kern.rollup.program", ...)` of the program the batch executed (note, section 4.1) |
+| `timestamp` | `time` | required | The moment the sequencer gives the batch |
+| `sequencer` | `address` | required | The address of the sequencer |
+| `signature` | `signature` | required | The signature of the sequencer |
+
+The hash of a batch is `H("kern.batch", ...)` of the canonical JSON of the batch without its `signature`, and that text is what the sequencer signs, in the context `kern.batch` (note, sections 4.1 and 6.2). The key is the one the registry holds for `sequencer` (section 9.14): a batch carries no key. Like every schema, this one verifies no signature.
+
+The protocol does not read the transactions of a rollup. `tx_hashes` keeps their order and the schema says nothing more of them, and `tx_data_hash` is a hash the schema does not compute again: the program is not in the batch.
+
+### 9.21 Forced inclusion requests
+
+A request asks a rollup to take a transaction that its sequencer leaves out. It is posted on the chain, and the sequencer has a number of blocks to include it.
+
+#### Inclusion request
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `rollup_id` | `rollup` | required | The rollup the transaction is for |
+| `sender` | `address` | required | Who posts the request |
+| `l2_tx_payload` | `bytes`, 1 to 32,768 | required | The transaction, as the rollup encodes it |
+| `posted_at_l1_level` | `level` | required | The level of the block that holds the request |
+| `posted_at_l1_timestamp` | `time` | required | The moment of that block |
+| `deadline_blocks` | `period` | required | How many blocks the sequencer has |
+
+- The level of the deadline, `posted_at_l1_level` plus `deadline_blocks`, is at most 2^63 - 1.
+
+The hash of a request is `H("kern.mailbox", ...)` of its canonical JSON (note, section 4.1). A request carries at least one byte, and states its delay: the 21,600 blocks the devnet takes when a request says nothing are a value like another.
+
+### 9.22 States of the Mini-EVM
+
+The Mini-EVM is the machine of the fraud proofs of a rollup (note, section 8). A dispute over a batch ends on one instruction: the state before it, on which both sides agree, is given whole, and its hash is what both had committed to. That state is this object.
+
+#### Mini-EVM state
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `pc` | integer, 0 to 2^63 - 1 | required | The position of the next instruction in the program |
+| `stack` | list of 0 to 1,024 `word` | required | The stack, its top last |
+| `memory` | `bytes`, 0 to 1,048,576, a multiple of 32 | required | The memory, which grows by words of 32 bytes |
+| `gas` | `gas` | required | The gas that is left |
+| `halted` | `true` or `false` | required | Whether the machine has stopped |
+| `output` | `bytes`, 0 to 1,048,576 | required | What the program handed back when it stopped |
+| `reverted` | `true` or `false` | required | Whether it stopped on a failure |
+| `storage` | map of `word` to `word`, 0 to 16,384 entries | required | For each slot that holds something, what it holds |
+| `context` | `Mini-EVM context` | required | What the execution was given |
+
+- A state that is `reverted` is `halted`.
+- `output` is empty unless the state is `halted`.
+- No slot of `storage` holds `"0"`.
+
+#### Mini-EVM context
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `address` | `word`, 0 to 2^160 - 1 | required | The contract that runs |
+| `caller` | `word`, 0 to 2^160 - 1 | required | The address that called it |
+| `value` | `word` | required | What the call carries |
+| `calldata` | `bytes`, 0 to 1,048,576 | required | The data of the call |
+| `block_number` | `level` | required | The level the execution is given |
+| `block_timestamp` | `time` | required | The moment it is given |
+
+The hash of a state is `H("kern.evm", ...)` of its canonical JSON (note, section 4.1). An address inside the machine is a number below 2^160, written like a word (note, section 4.2): it is not an `address` of the network.
+
+A slot that would hold 0 is not kept, so that one storage has one text, and a state that failed has stopped. The sizes are the ones the machine applies today (section 2.9): an instruction that would take the stack, the memory or the storage beyond them halts instead. The program is not in the state: a batch names it by `tx_data_hash`.
+
+### 9.23 Verifier keys
+
+A verifier key is what the verifier of Groth16 proofs holds for one circuit: four points, and one point more than the circuit has public inputs.
+
+#### Verifier key
+
+| Field | Type | Presence | Meaning |
+|---|---|---|---|
+| `alpha1` | list of 2 `field element` | required | A point of the first group: its two coordinates |
+| `beta2` | list of 2 lists of 2 `field element` | required | A point of the second group: two pairs of coordinates |
+| `gamma2` | list of 2 lists of 2 `field element` | required | A point of the second group |
+| `delta2` | list of 2 lists of 2 `field element` | required | A point of the second group |
+| `ic` | list of 1 to 257 lists of 2 `field element` | required | Points of the first group, one more than the public inputs |
+
+The identifier of a key is `H("kern.zk_claims.vk", ...)` of its canonical JSON (note, section 4.1). The schema checks the form and the range of each coordinate. Whether a point is on the curve, and in the right subgroup, is checked where a proof is verified, as a signature is: a schema verifies neither.
 
 ---
 

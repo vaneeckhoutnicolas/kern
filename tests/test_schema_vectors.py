@@ -93,7 +93,7 @@ def test_the_file_is_what_its_builder_writes():
 
 
 def test_every_accepted_object_is_accepted_and_is_the_object_the_file_pins(read):
-    assert len(read["accepted"]) == 106
+    assert len(read["accepted"]) == 121
     for record, value in read["accepted"]:
         assert sch.verdict(record["schema"], value, NETWORK) == "accepted", record["name"]
         encoding = ref.canonical_json(value)
@@ -104,7 +104,7 @@ def test_every_accepted_object_is_accepted_and_is_the_object_the_file_pins(read)
 
 
 def test_every_refused_object_is_refused_by_the_rule_the_file_names(read):
-    assert len(read["refused"]) == 325
+    assert len(read["refused"]) == 396
     for record, schema, value in read["refused"]:
         assert sch.verdict(schema, value, NETWORK) == record["rule"], record["why"]
         assert sv.pin(ref.canonical_json(value)) == {"bytes": record["bytes"], "pin": record["pin"]}, record["why"]
@@ -114,7 +114,7 @@ def test_a_refused_object_is_a_change_or_two_away_from_an_accepted_one(read):
     """So that it is refused for the reason it gives: what it is made
     from is accepted, and it differs by what its vector says."""
     edited = [record for record in FILE["refused"] if "from" in record]
-    assert len(edited) == 324
+    assert len(edited) == 395
     for record in edited:
         assert 1 <= len(record.get("remove", [])) + len(record.get("set", {})) <= 3, record["why"]
     alone = [record for record in FILE["refused"] if "from" not in record]
@@ -305,7 +305,7 @@ def test_the_document_ties_an_answer_to_its_request():
 
 
 def test_one_change_away_from_an_accepted_object_is_refused(read):
-    """The mutations the file asks for: 2,782 objects, each one change
+    """The mutations the file asks for: 2,894 objects, each one change
     away from an accepted one. All are refused but an accepted object
     without one of its optional members."""
     count = 0
@@ -318,7 +318,7 @@ def test_one_change_away_from_an_accepted_object_is_refused(read):
             answer = sch.verdict(record["schema"], changed, NETWORK)
             assert (answer == "accepted") == (expected == "accepted"), (record["name"], change, path, answer)
             count += 1
-    assert count == 2773
+    assert count == 2894
     optional = {(record["name"], path) for record, _ in read["accepted"] if "mutations" in record
                 for path in record["mutations"]["optional"]}
     revoked = [f"attestations.{pair * 48}.revoked_at" for pair in ("a2", "a4")]
@@ -357,7 +357,7 @@ def test_what_the_vectors_cover():
     shown = {record["rule"] for record in FILE["refused"] + FILE["refused_texts"]}
     assert shown == set(sch.RULES)
     # Most accepted objects ask for their mutations; the ones that do not are the large ones and the variants.
-    assert sum("mutations" in record for record in FILE["accepted"]) == 41
+    assert sum("mutations" in record for record in FILE["accepted"]) == 45
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +688,8 @@ PARTS = _parts()
 
 def test_the_section_says_what_it_is():
     opening = SECTION.split("\n### ", 1)[0]
-    assert "> **Status.** Draft for review, chapters 1 and 2 of three" in opening
+    assert "> **Status.** Draft for review, in three chapters: what is signed and what travels, what is kept, "\
+        "and what is hashed outside blocks." in opening
     assert "Structure version 1 migrates nothing." in opening
     assert "Nothing in this section is implemented." in opening
     assert "Structure version 1 is not version 1.0 of the software." in opening
@@ -706,7 +707,7 @@ def test_the_section_says_what_it_is():
 
 def test_every_table_of_the_document_is_the_table_of_the_reference():
     tables = sch.tables()
-    assert len(tables) == 51
+    assert len(tables) == 56
     for name, rows in tables.items():
         assert name in PARTS, f"no heading {name!r} in the document"
         written = _table(PARTS[name])
@@ -722,7 +723,7 @@ def test_every_table_of_the_document_is_the_table_of_the_reference():
 
 def test_every_rule_of_the_reference_is_a_sentence_of_the_document():
     rules = sch.rules()
-    assert sum(len(sentences) for sentences in rules.values()) == 125
+    assert sum(len(sentences) for sentences in rules.values()) == 129
     for name, sentences in rules.items():
         listed = [line[2:] for line in PARTS[name].splitlines() if line.startswith("- ")]
         assert listed[:len(sentences)] == sentences, name
@@ -752,7 +753,7 @@ def test_the_document_names_every_kind_every_frame_and_every_limit():
         assert f"| `{name}` | {value:,} |" in PARTS["Limits"]
     # What the node writes today is named where it changes, so that a reader of sections 2.1 to 2.7 finds it.
     differences = PARTS["9.9 What changes from the formats of the devnet"]
-    assert len(_table(differences)) == 53
+    assert len(_table(differences)) == 65
     assert "`release_payment` and `cancel_payment`, two of the fifteen kinds of transactions" in differences
     for gone in ("`commits`", "`endorsements`", "`cert_round`", "`null`", "`valid_round`", "`_current_level`",
                  "`issuance_params`", "`fee_params`", "`withdrawn`", "`equivocations`"):
@@ -770,9 +771,9 @@ def test_the_document_and_the_ci_name_the_command_that_runs_the_go_program():
     assert 'os.Args[1] == "-schemas"' in program and "go run profile_check.go -schemas schemas.json" in program
     # The release guide says what the command prints: one line for each chapter of vectors.
     printed = re.findall(r'fmt\.Printf\("([a-z ]+): [^"]*, as the Python reference\\n"', program.split("func checkSchemas(")[1])
-    assert printed == ["schemas", "what is kept", "the arithmetic of a block"]
+    assert printed == ["schemas", "what is kept", "the arithmetic of a block", "what is hashed outside blocks"]
     guide = (ROOT / "docs" / "release-tagging.md").read_text(encoding="utf-8")
-    assert f"(cd tests/vectors/kern && {command})\n# Expected: three lines, each ending with \"as the Python reference\"\n" in guide
+    assert f"(cd tests/vectors/kern && {command})\n# Expected: four lines, each ending with \"as the Python reference\"\n" in guide
     # The Go program has the limits of the reference, written out on its side.
     for name, value in sch.LIMITS.items():
         assert re.search(rf"=\s*{value}\b", program), name
@@ -783,6 +784,7 @@ def test_the_document_and_the_ci_name_the_command_that_runs_the_go_program():
 # ---------------------------------------------------------------------------
 
 KEPT = ("state", "account", "genesis")
+OUTSIDE = ("rollup batch", "inclusion request", "Mini-EVM state", "verifier key")
 
 
 def _kept(read, schema: str) -> dict:
@@ -856,6 +858,8 @@ def test_every_rule_of_chapter_2_is_broken_alone_by_a_refused_object(read):
     assert len(sentences) == 41 and len(set(sentences)) == 40          # two tables share the sentence on tranches
     broken: collections.Counter = collections.Counter()
     for record, schema, value in read["refused"]:
+        if schema in OUTSIDE:
+            continue                                                       # chapter 3 has a test of its own
         if schema not in KEPT or record["rule"] != "inconsistent":
             assert "breaks" not in record, record["why"]
             continue
@@ -1391,7 +1395,7 @@ def test_the_document_says_what_is_kept_and_what_a_block_does():
     assert [name for name in PARTS if name.startswith("9.1") and name[3].isdigit()] == [
         "9.10 Another signature scheme, later", "9.11 Vectors", "9.12 The state", "9.13 Accounts and the state trie",
         "9.14 The key registry", "9.15 The genesis and the block of level 0", "9.16 What a block does to the state",
-        "9.17 The arithmetic of a block", "9.18 A whole block"]
+        "9.17 The arithmetic of a block", "9.18 A whole block", "9.19 What is hashed outside blocks"]
     state = PARTS["9.12 The state"]
     assert [line.split("**")[1] for line in state.splitlines() if line.startswith("- **")] == \
         ["No default.", "No derived index, no separate history.", "No zero written."]
@@ -1839,3 +1843,159 @@ def test_a_whole_block_leads_to_a_state_that_keeps_every_rule(read):
                  "Deciding proposals"):
         assert "staking.md" not in PARTS[part] and "governance.md" not in PARTS[part], part
         assert "adaptive-issuance.md" not in PARTS[part], part
+
+
+# ---------------------------------------------------------------------------
+# Chapter 3: what is hashed outside blocks
+# ---------------------------------------------------------------------------
+
+def _outside(read, schema: str) -> dict:
+    return {record["name"]: value for record, value in read["accepted"] if record["schema"] == schema}
+
+
+def test_the_four_objects_of_the_note_are_objects_of_chapter_3_and_give_back_its_digests(read):
+    """The note gives each of the four objects one vector. Each is an
+    object of its schema, the batch once it is signed, and what the
+    profile computes from it is the digest of the note."""
+    objects = read["objects"]
+    batch = objects["batch"]
+    assert {name: value for name, value in batch.items() if name != "signature"} == FROZEN["kern.batch"]["object"]
+    assert sch.signed_batch(batch).hex() == FROZEN["kern.batch"]["encoding"]
+    assert by_name("batch")["hash"] == sch.batch_hash(NETWORK, batch).hex() == FROZEN["kern.batch"]["digest"]
+    assert by_name("batch")["signed"] == sch.signed_batch(batch).decode("utf-8")
+    assert by_name("batch")["context"] == "kern.batch" and "kern.batch" in ref.PURPOSES
+    # The signature is not hashed: another one gives the same hash.
+    assert sch.batch_hash(NETWORK, {**batch, "signature": objects["batch_first"]["signature"]}).hex() == \
+        by_name("batch")["hash"]
+    for name, domain, key in (("request", "kern.mailbox", "hash"), ("evm_state", "kern.evm", "hash"),
+                              ("verifier_key", "kern.zk_claims.vk", "id")):
+        assert objects[name] == FROZEN[domain]["object"], name
+        assert ref.canonical_json(objects[name]).hex() == FROZEN[domain]["encoding"], name
+        assert by_name(name)[key] == FROZEN[domain]["digest"], name
+    # Every accepted object of the chapter comes with its hash, or its identifier, of 96 characters.
+    for record, _ in read["accepted"]:
+        if record["schema"] in OUTSIDE:
+            assert len(record["id" if record["schema"] == "verifier key" else "hash"]) == 96, record["name"]
+    assert sorted({record["schema"] for record, _ in read["accepted"]} & set(OUTSIDE)) == sorted(OUTSIDE)
+
+
+def test_every_rule_of_chapter_3_is_broken_alone_by_a_refused_object(read):
+    sentences = [sentence for obj in sch.CHAPTER_3 for sentence, _ in obj.rules]
+    assert len(sentences) == len(set(sentences)) == 4
+    assert [sch.heading(obj) for obj in sch.CHAPTER_3 if obj.rules] == ["Inclusion request", "Mini-EVM state"]
+    broken: collections.Counter = collections.Counter()
+    for record, schema, value in read["refused"]:
+        if schema not in OUTSIDE:
+            continue
+        if record["rule"] != "inconsistent":
+            assert "breaks" not in record, record["why"]
+            continue
+        assert record["breaks"] in sentences, record["why"]
+        with sv.without(record["breaks"]):
+            assert sch.verdict(schema, value, NETWORK) == "accepted", record["why"]
+        broken[record["breaks"]] += 1
+    assert set(broken) == set(sentences) and sum(broken.values()) == 5
+    assert broken[sv.the_rule("The level of the deadline")] == 2
+    assert [sentence for obj in sch.CHAPTER_3 for sentence, _ in obj.rules] == sentences      # put back
+    for obj in sch.CHAPTER_3:
+        for sentence, _ in obj.rules:
+            assert f"- {sentence}\n" in PARTS[sch.heading(obj)], sentence
+    # An object of the chapter is refused for its form before its rules.
+    refused = collections.Counter(record["rule"] for record, schema, _ in read["refused"] if schema in OUTSIDE)
+    assert refused == {"bad_text": 26, "out_of_range": 15, "wrong_type": 9, "unknown_field": 8, "missing_field": 5,
+                       "inconsistent": 5, "bad_address": 2, "bad_signature": 1} and sum(refused.values()) == 71
+
+
+def test_chapter_3_reaches_both_ends_of_every_range_and_passes_every_limit(read):
+    objects, top, limit = read["objects"], sch.INT_MAX, sch.LIMITS
+    word, address, p = str(2**256 - 1), str(2**160 - 1), sch.BN254_P
+
+    first, largest = objects["batch_first"], objects["batch_1024"]
+    assert [(first[name], largest[name]) for name in ("batch_index", "timestamp")] == [(0, top)] * 2
+    assert (len(first["tx_hashes"]), len(largest["tx_hashes"])) == (0, limit["batch_transactions"])
+    assert len(set(largest["tx_hashes"])) == 1024
+    assert (len(first["rollup_id"]), len(largest["rollup_id"])) == (1, 64) and set(largest["rollup_id"]) == set("k0-9")
+    assert _refused("a batch of 1,025 transactions")["rule"] == "out_of_range"
+    assert _refused("a name of 65 characters")["rule"] == "bad_text"
+
+    low, high, last = (objects[f"request_{end}"] for end in ("lowest", "highest", "last_level"))
+    assert (len(low["l2_tx_payload"]), len(high["l2_tx_payload"])) == (2, 2 * limit["payload_bytes"])
+    assert [(low[name], high[name]) for name in ("posted_at_l1_timestamp", "deadline_blocks")] == \
+        [(0, top), (1, sch.ROUND_MAX)]
+    assert (low["posted_at_l1_level"], last["posted_at_l1_level"]) == (0, top - 1)
+    # The sentence at its edge: a deadline that is the last level, reached from both sides.
+    assert high["posted_at_l1_level"] + high["deadline_blocks"] == top == last["posted_at_l1_level"] + 1
+    assert _refused("a transaction of 32,769 bytes")["rule"] == _refused("a request that carries no transaction")[
+        "rule"] == "bad_text"
+    assert _refused("a delay of 0 blocks")["rule"] == _refused("a delay of 2^32 blocks")["rule"] == "out_of_range"
+
+    first, largest = objects["evm_state_first"], objects["evm_state_largest"]
+    assert [(first[name], largest[name]) for name in ("pc", "gas", "halted", "reverted")] == \
+        [(0, top), (0, top), (False, True), (False, True)]
+    assert (first["stack"], set(largest["stack"]), len(largest["stack"])) == ([], {word}, limit["evm_stack"])
+    for name in ("memory", "output"):
+        assert (first[name], len(largest[name])) == ("", 2 * limit["evm_bytes"])
+    assert (first["storage"], len(largest["storage"])) == ({}, limit["evm_storage"])
+    assert set(largest["storage"].values()) == {word} and {len(slot) for slot in largest["storage"]} == {78}
+    context = largest["context"]
+    assert first["context"] == {"address": "0", "caller": "0", "value": "0", "calldata": "", "block_number": 0,
+                                "block_timestamp": 0}
+    assert (context["address"], context["caller"], context["value"]) == (address, address, word)
+    assert (len(context["calldata"]), context["block_number"], context["block_timestamp"]) == \
+        (2 * limit["evm_bytes"], top, top)
+    assert objects["evm_state"]["stack"][1] == word and len(objects["evm_state"]["memory"]) == 64
+    for why, rule in (("a stack of 1,025 words", "out_of_range"), ("a memory of 1,048,608 bytes", "bad_text"),
+                      ("an output of 1,048,577 bytes", "bad_text"), ("a calldata of 1,048,577 bytes", "bad_text"),
+                      ("a storage of 16,385 slots", "out_of_range"), ("a word of 2^256", "bad_text"),
+                      ("an address of the machine of 2^160", "bad_text"), ("a memory of 33 bytes", "bad_text")):
+        assert _refused(why)["rule"] == rule, why
+    # The three states a machine stops in, or not.
+    assert [(objects[name]["halted"], objects[name]["reverted"], bool(objects[name]["output"]))
+            for name in ("evm_state", "evm_state_returned", "evm_state_failed")] == \
+        [(False, False, False), (True, False, True), (True, True, False)]
+
+    lowest, most = objects["verifier_key_lowest"], objects["verifier_key_257"]
+    assert (len(lowest["ic"]), len(most["ic"])) == (1, limit["verifier_key_points"])
+    assert lowest["alpha1"] == ["0", "0"] and most["alpha1"] == [str(p - 1)] * 2
+    assert most["delta2"] == [[str(p - 1)] * 2] * 2 and most["ic"][256] == ["257", str(p - 1)]
+    assert len(str(p)) == 77 and len(word) == 78
+    for why, rule in (("a key without a point in `ic`", "out_of_range"), ("a key of 258 points", "out_of_range"),
+                      ("a coordinate of p", "bad_text"), ("a coordinate written as a number", "wrong_type")):
+        assert _refused(why)["rule"] == rule, why
+
+
+def test_the_sizes_the_document_quotes_for_chapter_3(read):
+    limit = sch.LIMITS
+    assert by_name("batch_1024")["bytes"] == 106_490 < limit["transaction_bytes"]
+    assert by_name("evm_state_largest")["bytes"] == 9_029_047 < limit["frame_bytes"]
+    assert "weighs 106,490 bytes: it fits in the size of a transaction" in PARTS["Limits"]
+    assert "the largest state weighs 9,029,047 bytes, which fit in a frame" in PARTS["Limits"]
+    assert "p = " + str(sch.BN254_P) in PARTS["Types"]
+    # No object of the chapter nests deeper than the document says.
+    assert max(sch.SCHEMAS[name].depth() for name in OUTSIDE) == 3
+    assert "None nests deeper than three levels." in PARTS["9.19 What is hashed outside blocks"]
+
+
+def test_the_document_says_what_chapter_3_covers_and_what_it_leaves():
+    assert [name for name in PARTS if name.startswith("9.2") and name[3].isdigit()] == [
+        "9.20 Rollup batches", "9.21 Forced inclusion requests", "9.22 States of the Mini-EVM", "9.23 Verifier keys"]
+    opening = PARTS["9.19 What is hashed outside blocks"]
+    for sentence in ("It states forms and hashes, and nothing of what a rollup does with them.",
+                     "no operation of a rollup is one of the fifteen kinds of transactions",
+                     "neither hashed nor signed"):
+        assert sentence in opening, sentence
+    assert len(sch.KINDS) == 15 and not any("rollup" in kind or "batch" in kind for kind in sch.KINDS)
+    # Each object says where its hash comes from, by the domain the note gives it.
+    for part, domain in (("Rollup batch", "kern.batch"), ("Inclusion request", "kern.mailbox"),
+                         ("Mini-EVM context", "kern.evm"), ("Verifier key", "kern.zk_claims.vk")):
+        assert f'`H("{domain}", ...)`' in PARTS[part], part
+        assert domain in FROZEN
+    assert "a batch carries no key" in PARTS["Rollup batch"] and "verifies no signature" in PARTS["Rollup batch"]
+    assert "a schema verifies neither" in PARTS["Verifier key"]
+    assert "The sizes are the ones the machine applies today (section 2.9)" in PARTS["Mini-EVM context"]
+    # What the devnet writes is named in the table of differences.
+    differences = PARTS["9.9 What changes from the formats of the devnet"]
+    for gone in ("`sequencer_pubkey`", "`posted_at_level`", "`included_in_batch`", "`deadline_blocks`",
+                 "`l2_tx_payload`", "`kern.zk_claims.vk`"):
+        assert gone in differences, gone
+    assert "For chapter 3 it holds:" in PARTS["9.11 Vectors"]
