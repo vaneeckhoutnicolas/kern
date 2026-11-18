@@ -6,10 +6,14 @@ kern.transaction
 
 Transaction types in Kern.
 
-Three operation kinds are supported in the reference implementation:
+Twelve operation kinds are supported (`OpKind`). Three move value and run
+contracts:
 1. TRANSFER  — move native KRN tokens from sender to recipient.
-2. ORIGINATE — deploy a Skald contract; storage initialized from `params`.
+2. ORIGINATE — deploy a Skald contract; storage initialized from `initial_storage`.
 3. CALL      — invoke an entry point of an originated contract.
+
+The nine others are the operations of governance, delegation, attestation
+and slashing, which kern.chain applies.
 
 Each transaction carries a nonce (per-sender, monotonically increasing),
 a fee paid to the baker, and a gas limit. The transaction body is signed
@@ -22,7 +26,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, asdict, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .crypto import (
     KernKeypair,
@@ -32,6 +36,14 @@ from .crypto import (
     tx_hash,
     verify,
 )
+from .nesting import nests_beyond
+
+# A transaction, as JSON, nests 32 levels deep at most: itself, then what
+# `params` and `initial_storage` hold. Every frame of the peer-to-peer
+# protocol that carries a transaction then stays under the depth at which a
+# frame is refused before it is decoded (kern.nesting.MAX_JSON_DEPTH): what
+# a node admitted, it can pass on, and every node reads it.
+MAX_TX_NESTING = 32
 
 
 
@@ -167,6 +179,9 @@ class Transaction:
             raise ValueError(f"gas_limit must be non-negative, got {self.gas_limit}")
         if self.nonce < 0:
             raise ValueError(f"nonce must be non-negative, got {self.nonce}")
+        for name in ("initial_storage", "params"):
+            if nests_beyond(getattr(self, name), MAX_TX_NESTING - 1):
+                raise ValueError(f"tx.{name}: a transaction nested more than {MAX_TX_NESTING} deep")
 
     # ----- canonical encoding ------------------------------------------------
 
@@ -262,6 +277,36 @@ class Transaction:
             signature=_opt_str(d, "signature"),
             chain_id=_opt_str(d, "chain_id"),
         )
+
+
+class Waiting:
+    """A transaction as a mempool describes it: the four facts that tell
+    whether the next block can charge it, and the transaction itself, which
+    is read only when it is asked for.
+
+    A proposer goes through everything that waits at every block. Sender,
+    nonce, fee and size are enough to leave a transaction where it is or to
+    remove it; decoding it is for those the block takes."""
+
+    __slots__ = ("hash_hex", "sender", "nonce", "fee", "size", "_read")
+
+    def __init__(self, hash_hex: str, sender: str, nonce: int, fee: int, size: int,
+                 read: Callable[[], Optional[Transaction]]):
+        self.hash_hex = hash_hex
+        self.sender = sender
+        self.nonce = nonce
+        self.fee = fee
+        self.size = size
+        self._read = read
+
+    @classmethod
+    def of(cls, tx: Transaction) -> "Waiting":
+        """The description of a transaction that is already at hand."""
+        return cls(tx.hash_hex(), tx.sender, tx.nonce, tx.fee, tx.encoded_size(), lambda: tx)
+
+    def transaction(self) -> Optional[Transaction]:
+        """The transaction, or None when it is gone or cannot be read any more."""
+        return self._read()
 
 
 def make_transfer(

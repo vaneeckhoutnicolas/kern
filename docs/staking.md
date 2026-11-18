@@ -1,5 +1,7 @@
 # Staking and Delegation
 
+> **Structure version 1.** What a block of structure version 1 computes, the reward of a block and who receives it, whether a vote passes and what a slash takes, is written in section 9.17 of [`api-stability.md`](api-stability.md), with its vectors. This page is about the node of today, and is not a reference for structure version 1.
+
 This document is the reference for how staking works in Kern as the code stands in v1.1-rc. It complements [`tokenomics.md`](tokenomics.md) §6. Every rule below can be checked in [`kern/chain.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/chain.py).
 
 ## Definition

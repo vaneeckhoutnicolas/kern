@@ -40,7 +40,7 @@ This document describes how the reference Kern node is organized. The code is in
 ## Modules
 
 - **`crypto.py`** — Ed25519 keys, blake2b-256 hashing, base58check encoding, `kn1`/`kpk` address and key prefixes. All hashing in Kern is domain-separated via blake2b keys (`kern.block`, `kern.tx`, `kern.addr`, `kern.state`, `kern.merkle`).
-- **`transaction.py`** — The `Transaction` dataclass, the three operation kinds (`TRANSFER`, `ORIGINATE`, `CALL`), signing and verification, and the helpers `make_transfer`, `make_origination`, `make_call`.
+- **`transaction.py`** — The `Transaction` dataclass, the twelve operation kinds (`OpKind`: `TRANSFER`, `ORIGINATE`, `CALL`, and nine operations of governance, delegation, attestation and slashing), signing and verification, and the helpers `make_transfer`, `make_origination`, `make_call`.
 - **`block.py`** — `BlockHeader`, `Block`, and the merkle root over transaction hashes.
 - **`chain.py`** — The state machine. Defines the canonical state layout (balances, nonces, contracts, validators), the per-transaction application rules, block validation, and the `Chain` in-memory wrapper.
 - **`consensus.py`** — Stake-weighted proposer selection, block proposal (with mempool draining), and the `BakerConfig`.
@@ -54,8 +54,8 @@ This document describes how the reference Kern node is organized. The code is in
 
 1. **`kern.node init`** — Reads `genesis.json`, constructs the level-0 block, builds the initial state (balances + validators), and writes both to the SQLite store under the data directory.
 2. **`kern.node start`** — Opens the SQLite store, reconstructs the chain from the persisted state snapshot, starts the P2P listener, starts the RPC server, and (if a baker key was supplied) starts the baker loop.
-3. **Baker loop** — Every `block_time` seconds: check if we are the selected proposer for the next round. If yes, drain the mempool, trial-apply transactions, build a block, sign the header, append it to the chain, persist it, and broadcast to peers. If no, sleep and try again next round.
-4. **Network handler** — On receiving a gossiped block, validate it against the parent and current state, append, persist, and drop included transactions from the mempool. On receiving a gossiped transaction, verify the signature and add it to the local mempool.
+3. **Baker loop** — Every `block_time` seconds: check if we are the selected proposer for the next round. If yes, read the mempool, take the transactions the block can charge, build a block, sign the header, append it to the chain, persist it, and broadcast to peers. If no, sleep and try again next round.
+4. **Network handler** — On receiving a gossiped block, validate it against the parent and current state, append, persist, and drop from the mempool the transactions it included and any other one whose nonce it consumed. On receiving a gossiped transaction, check that a block built on the head could charge it, verify the signature and add it to the local mempool, which keeps one transaction of a sender for each nonce and, when it is full, lets a transaction that waits give way to one the next block can charge.
 
 ## State commitments
 

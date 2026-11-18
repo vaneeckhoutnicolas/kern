@@ -82,7 +82,7 @@ The `nav:` section of `mkdocs.yml` defines the structure:
 2. **Token economy** — tokenomics, staking, contributors program, issuance
 3. **Protocol** — architecture, consensus, BFT, governance, trie
 4. **Smart contracts** — Skald language, type checker
-5. **Rollups & EVM** — rollup framework, multi-frame EVM, fraud proofs, forced inclusion
+5. **Rollups & EVM** — rollup framework, Mini-EVM, fraud proofs, forced inclusion
 6. **Build & run** — node ops, API reference, API stability spec
 7. **Change history** — per-version change docs
 

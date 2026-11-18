@@ -6,8 +6,14 @@
 useDefault = true
 
 [allowlist]
-description = "Documented example node keys/addresses (public by design, not secrets)"
+description = "Documented example node keys/addresses and published test vectors (public by design, not secrets)"
 regexes = [
   # Example baker public key shown in docs/running-a-node.md
   '''9XYenoNdH5oAsQ7r4wE74DpDMKpYLQDzMB95revzeR2ZXEU8UFo5f''',
+]
+paths = [
+  # Official test vectors, kept as unchanged copies of public files (tests/vectors/SOURCES.json).
+  # They hold the seeds and private keys of test keys that their publishers made public.
+  # Nothing else is exempt: tests/vectors/kern and every other path are still scanned.
+  '''(^|/)tests/vectors/(rfc10073|nist-acvp|wycheproof)/''',
 ]

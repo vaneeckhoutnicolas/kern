@@ -145,6 +145,13 @@ class ConsensusMessage:
             d["valid_round"] = self.valid_round
         return json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
+    def same_statement(self, other: "ConsensusMessage") -> bool:
+        """True if both messages say the same thing: what is signed is
+        equal, whatever the bytes of the two signatures. A statement can
+        be signed more than once, and every signature of it stands for the
+        same message (review of 12 November 2026)."""
+        return self._signed_payload() == other._signed_payload()
+
     def sign(self, kp: KernKeypair) -> None:
         if kp.address != self.validator:
             raise ValueError("keypair does not match validator address")
@@ -868,6 +875,32 @@ class BftEngine:
         if (level, round_) not in self.states and len(self.states) >= MAX_ROUND_STATES:
             return False
         return True
+
+    def wants(self, msg: ConsensusMessage) -> bool:
+        """True if `msg`, a vote received from a peer, can still tell this
+        engine something: a PREENDORSE or an ENDORSE of a validator of the
+        set, for a level and a round inside the window, which is the first
+        vote of that validator for that (kind, level, round) or the first
+        one that conflicts with it, the second half of an equivocation.
+
+        The node asks before it checks the signature of a vote and before
+        it relays it. Nothing here vouches for the vote: the answer only
+        says whether checking it is worth anything. A vote the engine does
+        not want changes nothing in it, so it is dropped unchecked."""
+        if msg.kind not in (MsgKind.PREENDORSE, MsgKind.ENDORSE):
+            return False
+        if not self._is_validator(msg.validator) or not self.in_window(msg.level, msg.round):
+            return False
+        state = self.states.get((msg.level, msg.round))
+        if state is None:
+            return True
+        votes = state.preendorsements if msg.kind == MsgKind.PREENDORSE else state.endorsements
+        held = votes.get(msg.validator)
+        if held is None:
+            return True
+        if held.block_hash == msg.block_hash:
+            return False
+        return (msg.validator, msg.kind.value, msg.level, msg.round) not in self._evidence_keys
 
     def on_message(self, msg: ConsensusMessage) -> List[ConsensusMessage]:
         """Process an incoming consensus message. Returns outbound messages

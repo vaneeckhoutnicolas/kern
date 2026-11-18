@@ -63,13 +63,13 @@ This documentation reflects **v1.0-rc** (release candidate). The reference imple
 
 - ⚠️ Multi-validator BFT consensus with bonded delegation (lock and valid round since Phase E; multi-machine devnet and audit pending, see [consensus-locking.md](consensus-locking.md))
 - ✅ Skald language + static type checker + invariant runtime enforcement
-- ✅ Multi-frame EVM with fraud-proof bisection
+- ✅ Mini-EVM with fraud-proof bisection (one program at a time: [what it executes](api-stability.md#28-kvm-evm-rollup-opcode-set))
 - ✅ Real BN254 pairing for zkSNARK verification
-- ✅ EVM Yellow Paper-compliant gas pricing
+- ✅ Gas pricing in the Mini-EVM: constants from the Ethereum Yellow Paper, and rules of its own in [section 2.9](api-stability.md#29-gas-pricing)
 - ✅ Two-track on-chain governance with quadratic + delegated voting + slashing
 - ✅ Bonded PoS delegation (no LST; delegated KRN locked and slashable, unbonding period on exit)
 - ✅ Adaptive issuance + treasury
-- ✅ 1050 tests passing, none skipped
+- ✅ 2622 tests passing, none skipped
 
 What remains before mainnet (Midgard):
 
@@ -97,7 +97,7 @@ git clone https://github.com/vaneeckhoutnicolas/kern.git
 cd kern
 pip install -r requirements.txt
 pytest tests/
-# 1050 passed in about 2 minutes
+# 2622 passed in about 3 minutes
 ```
 
 For a multi-node devnet:

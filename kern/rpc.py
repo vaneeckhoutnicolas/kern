@@ -39,6 +39,8 @@ from typing import TYPE_CHECKING, Deque, Dict
 
 from aiohttp import web
 
+from . import nesting
+from .storage import MEMPOOL_FULL
 from .transaction import Transaction
 
 LOG = logging.getLogger("kern.rpc")
@@ -191,19 +193,22 @@ def build_app(
                 status=429,
                 headers={"Retry-After": str(int(rate_limit_window_s))},
             )
-        body = await req.json()
+        # The body is measured before it is decoded (kern.nesting): text that is
+        # not JSON in UTF-8, or that nests too deep, is the client's error.
+        try:
+            body = nesting.decode(await req.read())
+        except ValueError as e:
+            return web.json_response({"error": f"malformed request body: {e}"}, status=400)
         try:
             tx = Transaction.from_dict(body)
         except Exception as e:
             return web.json_response({"error": f"malformed transaction: {e}"}, status=400)
-        if not tx.verify_signature():
-            return web.json_response({"error": "invalid signature"}, status=400)
-        admitted = node.storage.add_to_mempool(tx)
-        if not admitted:
-            return web.json_response(
-                {"error": "mempool full or per-sender limit reached"},
-                status=429,
-            )
+        # One door for clients and peers (Node.admit_transaction): what no
+        # block built on the head could charge is the client's to correct,
+        # a full mempool is a reason to come back later.
+        refused = node.admit_transaction(tx)
+        if refused is not None:
+            return web.json_response({"error": refused}, status=429 if refused == MEMPOOL_FULL else 400)
         # Broadcast to peers only once the tx is accepted locally.
         if node.network is not None:
             asyncio.create_task(node.network.broadcast_tx(tx.to_dict()))

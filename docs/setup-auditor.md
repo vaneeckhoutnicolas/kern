@@ -43,7 +43,7 @@ pip install -e ".[dev]"
 
 ```bash
 pytest tests/ -v
-# Expected: 1050 passed, none skipped (v1.1-rc) — record exact counts in your audit notes
+# Expected: 2622 passed, none skipped (v1.1-rc) — record exact counts in your audit notes
 # Record the test run time and resource usage too
 
 python -c "import kern; print(kern.__file__)"
@@ -88,7 +88,7 @@ grep -L "Nicolas Van Eeckhout" $(find . -name "*.py" \
 - [ ] The codebase is original Python (not vendored from any other blockchain project)
 - [ ] SPDX-License-Identifier: Apache-2.0 is present on all 55+ Python files
 - [ ] Copyright attribution to Nicolas Van Eeckhout is preserved
-- [ ] The single external library dependency (`py_ecc`) is used via Python imports, not vendored
+- [ ] The external library dependencies (`py_ecc`, `pynacl`, `aiohttp`, `cryptography`) are used via Python imports, not vendored
 
 ---
 
@@ -138,7 +138,7 @@ The audit covers the following modules at v1.0-rc:
 
 | Item | Why |
 |---|---|
-| Third-party libraries (`py_ecc`, `pynacl`, `aiohttp`) | Separately audited by their maintainers |
+| Third-party libraries (`py_ecc`, `pynacl`, `aiohttp`, `cryptography`) | Separately audited by their maintainers |
 | Operating system, Python interpreter | Not part of Kern |
 | Future v1.x roadmap items | Audited at their respective release tags |
 | Networks and operational items | Audited in operational reviews, separately |
@@ -248,8 +248,8 @@ The following are explicit must-cover items. Do not omit any:
 
 ### EVM and rollups
 
-- [ ] Gas accounting matches Yellow Paper for every supported opcode
-- [ ] SSTORE EIP-2200 three-case pricing is correct
+- [ ] Gas accounting of the Mini-EVM is what section 2.9 of `docs/api-stability.md` says, for every instruction of its section 2.8; any other difference from the Yellow Paper is a finding
+- [ ] SSTORE pricing reads the slot and the value written, and nothing outside the committed state: 20,000 to fill a slot that holds zero, 5,000 otherwise
 - [ ] Memory expansion cost calculation matches the spec
 - [ ] BN254 pairing precompile produces correct results for empty input, identity case, and random valid inputs
 - [ ] Fraud-proof bisection correctly converges in O(log n) steps
@@ -273,7 +273,7 @@ The following are explicit must-cover items. Do not omit any:
 
 - [ ] All 55 Python source files have proper SPDX-License-Identifier
 - [ ] All 55 Python source files carry founder attribution to Nicolas Van Eeckhout
-- [ ] No vendored external code present
+- [ ] No vendored external code present (the official test vectors under `tests/vectors` are data, not code: each file is listed with its origin in `tests/vectors/SOURCES.json`)
 - [ ] All design-influence citations (Tezos, Ethereum, EIPs) are properly noted as references, not represented as Kern's own innovation
 
 ---

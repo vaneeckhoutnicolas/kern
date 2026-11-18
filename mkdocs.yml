@@ -115,6 +115,8 @@ nav:
       - Consensus on the wire: consensus-wire.md
       - Consensus locking (design): consensus-locking.md
       - State-machine invariants: state-machine-invariants.md
+      - Cryptographic inventory: cryptographic-inventory.md
+      - Hybrid signatures (design): hybrid-signatures.md
       - Go port breakpoints: go-port-breakpoints.md
   - Smart contracts (Skald):
       - Skald language: skald-language.md
@@ -123,7 +125,7 @@ nav:
       - Oracle network: oracle-network.md
   - Rollups & EVM:
       - EVM rollups: rollups.md
-      - Multi-frame EVM: multi-frame-evm.md
+      - Calls, creations and precompiles: multi-frame-evm.md
       - EVM fraud proofs: evm-fraud-proofs.md
       - Forced inclusion: forced-inclusion.md
   - Build & run:

@@ -1,21 +1,16 @@
-# Multi-frame EVM
+# Calls, creations and precompiles of the Mini-EVM
 
-This document describes Kern's multi-frame EVM execution model, implemented in [`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py). It extends the single-frame Mini-EVM from [`evm-fraud-proofs.md`](evm-fraud-proofs.md) to support inter-contract calls (CALL / STATICCALL / DELEGATECALL), contract deployment (CREATE / CREATE2), and precompiles.
+This page says what [`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py) does around the Mini-EVM of [`evm-fraud-proofs.md`](evm-fraud-proofs.md): it runs one program for a call or for a creation, on a world of accounts, and it serves nine precompiles. It is a library of the rollup framework. Nothing in the node calls it.
+
+The page keeps the file name it had when it described a design with several frames. What that design promised and this library does not do is listed [at the end](#what-this-library-does-not-do).
 
 ---
 
-## Single-frame vs multi-frame
+## One program at a time
 
-The v0.3 Mini-EVM in [`kern/evm/vm.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/vm.py) handles **one** EVM execution context — a single contract, called once, with its own stack/memory/storage/gas. That's enough to demonstrate the bisection fraud-proof protocol with real EVM semantics, but it's not enough for real EVM applications: any non-trivial DApp involves multiple contracts calling each other.
+The machine of [`kern/evm/vm.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/vm.py) executes one program. Its instructions are listed in [section 2.8 of the API stability page](api-stability.md#28-kvm-evm-rollup-opcode-set). CALL, CALLCODE, DELEGATECALL, STATICCALL, CREATE and CREATE2 are not among them: a program that reaches one of them halts, reverted, as on an unknown instruction. A contract cannot call another contract, and there is no stack of frames.
 
-The v0.5 multi-frame layer adds:
-
-- **WorldState**: the global EVM state — account balances, code, storage, nonces — keyed by address.
-- **Frames**: recursive execution contexts. A CALL opcode pushes a frame; RETURN/STOP/REVERT pops it.
-- **CALL / STATICCALL / DELEGATECALL**: the three call variants with their different semantics.
-- **CREATE / CREATE2**: contract deployment from inside EVM execution.
-- **Precompiles**: built-in functions at addresses 0x01..0x09 (ECRECOVER, SHA256, IDENTITY).
-- **Snapshot / revert**: atomic rollback when a sub-call REVERTs.
+A call comes from outside the machine, through `call_contract`. It runs the code of one account once and gives back a `CallResult`: whether the call succeeded, what it returned and the gas that is left.
 
 ## World state
 
@@ -29,185 +24,93 @@ class Account:
 
 @dataclass
 class WorldState:
-    accounts: Dict[int, Account] = field(default_factory=dict)
+    accounts: Dict[int, Account]
 ```
 
-The world state is the EVM's global ledger. It's the EVM analogue of Kern L1's `state` dict, restricted to the EVM execution domain (the rollup's state, not the L1 state).
+`WorldState` holds the accounts by address. `get` gives the account at an address and makes an empty one when there is none. `transfer` moves a balance and returns `False` when the sender does not hold it. `snapshot` copies every account and `revert_to` puts a copy back: that is how a call that fails leaves the world as it was.
 
-Two key operations:
-
-- `transfer(from, to, amount)` — atomic value transfer, returns False on insufficient balance.
-- `snapshot()` / `revert_to(snap)` — take an immutable snapshot for atomic rollback.
-
-## Call variants
-
-The three CALL opcodes have different semantics — getting this right is one of the most-bug-prone parts of EVM implementation:
-
-| Opcode | Storage modified | `msg.sender` | `msg.value` | State mutation allowed |
-|---|---|---|---|---|
-| `CALL` | Callee's | Caller | Specified by caller | Yes |
-| `STATICCALL` | (none) | Caller | Always 0 | **No** — any SSTORE reverts |
-| `DELEGATECALL` | Caller's | Outer caller (preserved) | Outer value (preserved) | Yes |
-
-### CALL — ordinary call
+## The three kinds of call
 
 ```python
-result = call_contract(world, kind=FrameKind.CALL,
-                       caller=0x10, address=0x100,
-                       value=1000, calldata=b"...", gas=100_000)
+result = call_contract(
+    world, kind=FrameKind.CALL, caller=0xabc, address=0x100,
+    value=0, calldata=b"", gas=100_000,
+)
 ```
 
-- Value is transferred from caller to callee.
-- The callee runs with its own storage, its own context (`msg.sender = caller`, `msg.value = 1000`, `address = 0x100`).
-- If the callee REVERTs, all changes (value transfer, storage writes) are atomically rolled back.
+| Kind | Storage the program runs on | Value |
+|---|---|---|
+| `CALL` | The storage of the contract | Moved from the caller to the contract before the program runs |
+| `DELEGATECALL` | The storage of the caller | Not moved; the program reads it as the value of its call |
+| `STATICCALL` | The storage of the contract, which the program cannot write | Refused: a static call that carries a value does not run |
 
-### STATICCALL — read-only call
+- A call that succeeds keeps the storage its program leaves.
+- A static call cannot write. Its program halts, reverted, on the first SSTORE it reaches, even one that would change nothing, and the call fails, as in Ethereum.
+- A call whose program reverts, or is still running when the step limit of the machine cuts it, fails: the world is as it was before the call, the value included.
+- A call gives back the gas its program had left when it stopped, whether the call succeeded or failed: the machine keeps the gas of the state it reached ([section 2.9](api-stability.md#29-gas-pricing)). In Ethereum a call that fails gives gas back only when its program ends on REVERT.
+- A static call moves no value. A `CALL` marked static, or a `STATICCALL`, that carries one does not run, and gives back all its gas. A `DELEGATECALL` moves none: marked static, it runs, its program reads the value of its call and cannot write, as in Ethereum.
+- A call to an account without code moves the value and succeeds.
+- A call whose value the caller does not hold fails, and gives back all its gas: its program did not run.
+- A call whose code or storage does not make a state of the machine does not start: `ValueError`, before the world is copied and before any value moves.
+- A call does not start when its gas, value, addresses, block or calldata do not make the context of a state of the machine, or when the code or the storage it would run on does not make one. It raises `ValueError`, and the world is as it was ([section 2.9](api-stability.md#29-gas-pricing)).
 
-Used for view functions. Has identical semantics to CALL but:
-- `value` must be 0 (enforced; positive value → call fails).
-- The `is_static` flag propagates to all sub-calls; any SSTORE while static reverts the call.
-
-### DELEGATECALL — library pattern
-
-This is the EVM's "use someone else's code with my state" primitive. Critical for the library pattern:
-- The callee's code is executed.
-- But the storage that gets mutated is the **caller's**, not the callee's.
-- And `msg.sender` / `msg.value` are preserved from the outer call.
-
-A typical use: a "Vault" contract uses DELEGATECALL to invoke shared library code that mutates the Vault's own storage. This is also the foundation of upgradeable-proxy patterns (the proxy DELEGATECALLs to an implementation contract).
-
-## Atomic semantics
-
-Every call goes through a snapshot:
+## Creations
 
 ```python
-snap = world.snapshot()
-try:
-    # value transfer + execution
-    ...
-    if reverted:
-        world.revert_to(snap)
-except:
-    world.revert_to(snap)
-```
-
-The snapshot is a deep copy of the entire `accounts` dict. If the call succeeds, the snapshot is discarded. If it REVERTs, the world is restored.
-
-This is what makes calls atomic: a REVERT inside a deeply-nested call chain undoes *exactly that sub-call's effects*, not the whole transaction.
-
-## Contract creation
-
-CREATE and CREATE2 deploy new contracts by running `init_code` and storing whatever bytes it RETURNs as the new contract's code.
-
-```python
-addr, result = create_contract(
+address, result = create_contract(
     world, creator=0xabc, init_code=init_bytecode,
     value=0, gas=100_000,
 )
 ```
 
-### CREATE
+`create_contract` runs an init program and stores the bytes it returns as the code of a new account, with the storage the program leaves. It returns the new address, or `None` when the creation fails: the init program reverts, the step limit cuts it, or the creator does not hold the value. The nonce of the creator goes up whether the creation succeeds or fails. A creation whose program or context is refused with `ValueError` does not start, and changes nothing.
 
-Address = `blake2b(creator || nonce)[12:32]`. The creator's nonce is bumped (regardless of whether init_code succeeds — matches Ethereum), making each CREATE produce a fresh address.
+| Creation | Address |
+|---|---|
+| Without a salt | 20 bytes of keyed BLAKE2b over the creator and its nonce |
+| With a salt | 20 bytes of keyed BLAKE2b over the creator, the salt and the hash of the init program |
 
-### CREATE2
-
-Address = `blake2b(creator || salt || hash(init_code))[12:32]`. The salt lets the deployer **pick** the address: same salt + same init_code → same address. Enables counterfactual deployment patterns where you can interact with a contract before it's been deployed (since you know its future address).
-
-The reference implementation uses blake2b for address derivation; real Ethereum uses keccak256 with RLP encoding. The choice doesn't change the deterministic-address property.
+The same creator, salt and init program give the same address. These are not the addresses of Ethereum, which derives them with Keccak-256.
 
 ## Precompiles
 
-Precompiles are functions at fixed low addresses (0x01..0x09) that are *not* EVM contracts but get invoked through the normal CALL flow. They're the EVM's way of exposing cryptographic primitives that would be prohibitively expensive to implement as EVM bytecode.
+A call to one of the addresses 0x01 to 0x09 runs a built-in function instead of a program:
 
-v0.5 implements three:
-
-### 0x01 — ECRECOVER
-
-Recovers an address from a signature. Kern uses **Ed25519** instead of Ethereum's secp256k1 — this is a deliberate divergence to match the rest of the Kern protocol (validator keys, transaction signatures, etc., all use Ed25519). Calldata layout:
-
-```
-[ 32-byte message hash | 32-byte public key | 64-byte signature ]
-```
-
-Returns the 20-byte address (= blake2b-160 of the pubkey, matching Kern's address derivation), left-padded to 32 bytes. On bad signature: returns 32 zero bytes.
-
-### 0x02 — SHA256
-
-Standard SHA-256 of the input. No special semantics; output is the 32-byte hash.
-
-### 0x04 — IDENTITY
-
-Returns calldata unchanged. EVM contracts use this as a `memcpy` primitive — CALL with `output_size = input_size` and the precompile address copies bytes between memory regions cheaply.
-
-### Not yet implemented
-
-| Address | Function | Status |
+| Address | Function | Note |
 |---|---|---|
-| 0x03 | RIPEMD160 | Stub — easy to add |
-| 0x05 | MODEXP | Stub — long-tail use |
-| 0x06 | BN_ADD (BN254 point addition) | Stub |
-| 0x07 | BN_MUL (BN254 scalar mul) | Stub |
-| 0x08 | BN_PAIRING (BN254 pairing) | Stub — needed for zkSNARK verification |
-| 0x09 | BLAKE2F | Stub |
+| 0x01 | Signature check | Ed25519, not the secp256k1 recovery of Ethereum: see below |
+| 0x02 | SHA-256 | |
+| 0x03 | RIPEMD-160 | The digest, left-padded to 32 bytes |
+| 0x04 | Identity | Returns its input |
+| 0x05 | Modular exponentiation | |
+| 0x06 | BN254 point addition | Through py_ecc |
+| 0x07 | BN254 scalar multiplication | Through py_ecc |
+| 0x08 | BN254 pairing check | Through py_ecc |
+| 0x09 | BLAKE2F | A placeholder: see the [cryptographic inventory](cryptographic-inventory.md) |
 
-Adding any of these is a single function in `kern/evm/frames.py`. The control-plane (gas accounting, calldata extraction, return-data packaging) is already in place.
+Address 0x01 does not recover a key. It takes 128 bytes, a 32-byte message, a 32-byte Ed25519 public key and a 64-byte signature, and returns the address of that key, 20 bytes left-padded to 32. It returns 32 zero bytes when the input is short or the signature does not verify.
 
-## Address derivation
+The addresses and their roles are those of [section 2.10 of the API stability page](api-stability.md#210-precompile-addresses).
 
-Addresses in the multi-frame EVM are 256-bit integers (matching the EVM's word size), not the `kn1...` base58 strings used at L1. This is correct for EVM compatibility: existing Solidity tools expect 20-byte addresses formatted as 0x-prefixed hex.
+## What this library does not do
 
-The bridge between the two address spaces happens at the rollup bridge contract (see [`rollups.md`](rollups.md)): an L1 `kn1...` address that deposits funds into the rollup gets a corresponding EVM 256-bit address derived deterministically.
+- No call from inside a program. There are no nested frames, no gas handed from a caller to a callee and no return data copied back into the memory of a caller.
+- No event. LOG0 to LOG4 halt a program, and the `logs` of a `CallResult` stay empty.
+- No stack of frames in the commitment of a state. A state of the machine has the nine fields of [section 9.22](api-stability.md#922-states-of-the-mini-evm), and a fraud proof is about one program.
+- Not the addresses of Ethereum, and not its signature precompile.
 
-## Fraud proofs across frames
-
-The bisection fraud-proof protocol from [`evm-fraud-proofs.md`](evm-fraud-proofs.md) extends naturally to multi-frame execution:
-
-- Each frame produces its own sequence of `VmState` commitments via the step-wise VM.
-- The frame stack itself is part of the state hashed at each step.
-- A divergence in *any* frame at *any* step is detectable via the same `O(log n)` bisection.
-- The single-step verifier re-runs one EVM instruction in the disputed frame, with the disputed pre-state, and decides who's right.
-
-The single-frame protocol covers single contract execution; the multi-frame extension covers contract-calls-contract execution. No new protocol primitives are needed.
-
-## Gas accounting
-
-CALL-family opcodes have a base cost (700 gas) plus the cost of the sub-call's actual execution. The sub-call's gas budget is the *forwarded* gas (a parameter on the stack), which can be less than the caller's remaining gas. Unused gas is returned to the caller.
-
-CREATE costs 32 000 gas plus the cost of executing `init_code`. The deployed contract's storage and code stay around perpetually, justifying the high base cost.
-
-LOG0..LOG4 cost 375 + 375 × N gas (where N is the number of indexed topics). Logs themselves don't return data; they're emitted as side-effect events for off-chain indexing.
-
-These costs match the Ethereum Yellow Paper rough orders of magnitude. Dynamic gas (e.g., SSTORE's cost depending on the previous slot value) is simplified to static costs in v0.5; matching real Ethereum's dynamic gas is a v0.6 refinement.
-
-## What multi-frame enables in real applications
-
-This is the layer that makes the rollup useful. With single-frame EVM, you could prove arithmetic correctness; with multi-frame, you can run real DeFi:
-
-- **AMMs**: a `Router` contract that CALLs an `LP` contract to swap, which CALLs the underlying `ERC20` tokens to transfer.
-- **Lending**: a `Comptroller` that STATICCALLs price oracles, then CALLs collateral handlers, then CALLs the liability ledger.
-- **Upgradeable contracts**: a thin Proxy contract that DELEGATECALLs to an Implementation, where the Implementation can be replaced via governance.
-- **Cross-contract composability**: any DApp built from multiple contracts that interact.
-
-None of these patterns work without multi-frame execution. v0.5 brings them in.
+The design this page used to describe, where a CALL instruction opens a frame and the stack of frames is hashed into the state, is not implemented.
 
 ## Reference
 
-[`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py) (~330 lines) provides:
+[`kern/evm/frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/evm/frames.py) provides:
 
-- `Account`, `WorldState` — global state
-- `Frame`, `FrameKind`, `CallResult` — frame abstractions
-- `call_contract(...)` — top-level CALL / STATICCALL / DELEGATECALL dispatch
-- `create_contract(...)` — CREATE / CREATE2 deployment
-- `derive_create_address`, `derive_create2_address` — deterministic address derivation
-- Precompiles dict, `is_precompile`, `execute_precompile`
+- `Account`, `WorldState`: the accounts and their snapshots
+- `FrameKind`, `CallResult`: the kind of a call and its result
+- `call_contract(...)`: one call, of one of the three kinds
+- `create_contract(...)`: one creation, with or without a salt
+- `derive_create_address`, `derive_create2_address`: the address of a creation
+- `PRECOMPILES`, `is_precompile`, `execute_precompile`: the nine built-in functions
+- `Frame`: a dataclass of the earlier design, which nothing builds
 
-Tested in [`tests/test_evm_frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_frames.py) (25 tests) covering:
-
-- World state ops (get/transfer/snapshot/revert)
-- Precompile dispatch (SHA256, IDENTITY, ECRECOVER with valid Ed25519 sig)
-- CALL with value transfer, return data, revert rollback
-- CALL persists storage on success
-- STATICCALL allows pure views, rejects value, rejects SSTORE
-- DELEGATECALL mutates caller's storage
-- CREATE / CREATE2 deterministic addresses, init_code execution, nonce bumping
+It is tested in [`tests/test_evm_frames.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_frames.py), in [`tests/test_evm_referee.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_referee.py) for what a call refuses and what it leaves when it fails, in [`tests/test_evm_jumps_static_context.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_jumps_static_context.py) for what a static call may do and the gas a call gives back, and in [`tests/test_evm_pages.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/tests/test_evm_pages.py), which compares this page with the library.

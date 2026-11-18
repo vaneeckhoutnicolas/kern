@@ -73,6 +73,25 @@ fields are ASCII by construction (addresses, base58, hex); Skald
 sources and storage values that may contain non-ASCII are covered by
 the escape rules above.
 
+**Decoding depth.** Python's `json.loads` recurses once for each array
+or object inside another, and where it gives up depends on the
+interpreter and on the process. The node therefore measures nesting on
+the bytes, before decoding: a frame, or the body of a request, nested
+more than 64 deep is malformed, and a transaction nests 32 deep at
+most, itself included (`kern/nesting.py`, `kern/transaction.py`). Go's
+`encoding/json` accepts 10,000 levels: kern-go applies the same two
+limits itself, before decoding, or it would read frames and
+transactions that the Python nodes refuse.
+
+**Comparing two JSON values.** Two attestation claims contradict when
+their JSON differs: the JSON the identifier of an attestation is
+computed from, with sorted keys (`claims_contradict` in
+`kern/attestation.py`). `true`, `1` and `1.0` are three different
+values. Neither language gives this with its own equality on decoded
+values: for Python `True == 1` and `1 == 1.0`, and Go decodes every
+number into a `float64` unless told otherwise, so `1` and `1.0` come
+out equal. kern-go compares the encodings, as the Python node does.
+
 ## 3. Map iteration order
 
 Go randomizes map iteration; Python 3.7+ dicts preserve insertion order.

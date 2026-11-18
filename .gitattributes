@@ -1,0 +1,5 @@
+# Official test vectors are kept byte for byte: git never converts their line endings.
+# tests/vectors/SOURCES.json records the SHA-256 of each file, and tests/test_vectors.py checks it.
+tests/vectors/rfc10073/** -text
+tests/vectors/nist-acvp/** -text
+tests/vectors/wycheproof/** -text

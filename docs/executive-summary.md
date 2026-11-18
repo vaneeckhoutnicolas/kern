@@ -21,7 +21,7 @@ Kern is designed to close that gap, not by being a "better Ethereum" or a "more 
 2. **A bonded Proof-of-Stake validator economy.** Anyone can delegate without handing funds to a third party: delegated KRN are bonded by the protocol, share in the validator's rewards and in its slashing risk. Rewards adjust adaptively to participation.
 3. **A contract language built for verification.** Skald is small, statically typed, and enforces declared invariants at runtime. A lending market literally cannot enter an insolvent state.
 4. **An on-chain evolution path.** Protocol amendments — including consensus parameters, gas pricing, and Skald itself — go through an on-chain governance cycle. No hard forks.
-5. **EVM compatibility via Optimistic Rollups.** Existing Ethereum applications run on a Kern-anchored rollup with Hardhat/Foundry/MetaMask working unchanged. Kern itself stays narrow and verifiable.
+5. **EVM compatibility via Optimistic Rollups, as a target.** The design is that existing Ethereum applications run on a Kern-anchored rollup with their usual tools, while Kern itself stays narrow and verifiable. That is not built: the repository holds a model of the rollup, off the chain, and a Mini-EVM that executes a subset of the instructions of Ethereum ([rollups.md](rollups.md)).
 
 Plus, shipping in v1.1-rc:
 
@@ -144,20 +144,20 @@ The full tokenomics — supply, distribution, vesting, sinks, faucets, adaptive 
 | v0.4 — EVM extensions      | SSTORE/SLOAD, SHA3, shifts, environment opcodes, ExecContext                              | ✅ Done     |
 | v0.5 — Governance live     | Protocol amendment + treasury state machines; Skald contracts                            | ✅ Done     |
 | v0.5 — Trie swap-in        | `state_root_hex` dispatches on governance-set `state_root_function`                       | ✅ Done     |
-| v0.5 — Multi-frame EVM     | CALL/STATICCALL/DELEGATECALL/CREATE/CREATE2 + LOG + precompiles                          | ✅ Done     |
+| v0.5 — Calls and creations | One call or one creation at a time, from outside the Mini-EVM, in three kinds of call; precompiles. No call from inside a program, no event | ✅ Done     |
 | v0.6 — Governance via tx   | GOVERNANCE_PROPOSE and GOVERNANCE_VOTE are first-class transactions                       | ✅ Done     |
 | v0.6 — apply_block wiring  | Governance phases advance per block; activations applied to state automatically           | ✅ Done     |
 | v0.6 — Proposal bonds      | Anti-spam economics: refund on success, 50/50 burn/treasury on rejection                  | ✅ Done     |
 | v0.6 — More precompiles    | RIPEMD160, MODEXP, BLAKE2F (in addition to ECRECOVER, SHA256, IDENTITY)                   | ✅ Done     |
 | v0.7 — BN254 precompiles   | Point addition, scalar mul, pairing entry-points — basis for on-chain zkSNARK verification | ✅ Done     |
-| v0.7 — Dynamic gas         | EVM dynamic gas costs matching Ethereum Yellow Paper                                       | ✅ Done     |
+| v0.7 — Dynamic gas         | Gas cost functions with the constants of the Ethereum Yellow Paper                         | ✅ Done     |
 | v0.8 — Quadratic voting    | Treasury voting now sqrt(stake) by default, dampening whales                              | ✅ Done     |
 | v0.8 — Delegated voting    | Non-validators delegate stake to validators with per-proposal override                    | ✅ Done     |
 | v0.8 — Equivocation        | Double-voting in same phase detected, recorded for slashing                               | ✅ Done     |
 | v0.9 — Observability       | JSON-line structured logs + Prometheus metrics with /metrics endpoint                     | ✅ Done     |
 | v0.9 — Fuzzing harness     | Property-based fuzzers for EVM determinism, tx safety, governance invariants              | ✅ Done     |
 | v0.9 — Devnet bootstrap    | One-command multi-validator local network generator                                       | ✅ Done     |
-| v1.0-rc — Dynamic gas wiring | EIP-2200 SSTORE pricing wired into VM step(); SHA3/EXP/memory expansion costs live | ✅ Done |
+| v1.0-rc — Dynamic gas wiring | Gas cost functions wired into VM step(): storage writes, SHA3, EXP and memory expansion. The rules of this machine are in api-stability.md, section 2.9 | ✅ Done |
 | v1.0-rc — Slashing tx | OpKind.SLASH_EQUIVOCATION transaction; proportional delegator slashing | ✅ Done |
 | v1.0-rc — Delegated staking | DELEGATE_STAKE / UNDELEGATE_STAKE; commission split; effective_stake (bonded since v1.1-rc Phase D) | ✅ Done |
 | v1.0-rc — Genesis 100M | Distribution: 70% public / 10% founder vested 4y / 14% Foundation / 3% contributors / 2% validator bootstrap / 1% bootstrap validator stake | ✅ Done |

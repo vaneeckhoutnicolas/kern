@@ -29,9 +29,17 @@ message stream. Seven kinds exist:
 | `blocks`      | `{"blocks": [{...}, ...]}`       | Catch-up sync response               |
 
 Hardening caps at this layer: 16 MiB per message, 128 concurrent
-connections, 512 blocks per sync reply. Malformed frames close the
+connections, 512 blocks and 8 MiB per sync reply. Malformed frames close the
 connection; a handler error on one message is logged and does not kill
 the connection.
+
+A frame is measured before it is decoded: one whose JSON nests arrays
+and objects more than 64 deep is malformed, whatever it holds
+(`kern/nesting.py`). A transaction nests 32 deep at most, itself
+included, and `Transaction` refuses a deeper one. Every frame built
+around an admitted transaction is therefore read by every node: a
+`transaction` frame adds one level, a `block` or a `proposal` three,
+a `blocks` reply four.
 
 All inner payloads are decoded by the strict typed `from_dict`
 constructors (`Transaction`, `BlockHeader`, `Block`, `ConsensusMessage`,
@@ -73,7 +81,9 @@ before step 3, and only it can go through step 4. The node remembers it
 whether or not it passes steps 3 and 4. One exception: a proof that does
 not verify is not signed by the proposer and a relay may have damaged it,
 so the same signed PROPOSE arriving later with a valid proof still goes
-on. Any other signed PROPOSE for the same (level, round), for a
+on. Two PROPOSE messages are the same when what they sign is the same;
+the bytes of the two signatures are not compared, since one statement
+can be signed more than once. Any other signed PROPOSE for the same (level, round), for a
 different block or for the same block with another valid round, is
 never validated, kept or voted on, even when the first one was invalid:
 the two signed PROPOSE messages are recorded as proposal equivocation
@@ -166,13 +176,23 @@ cadence `block_time`):
 
 Every validator, on a valid proposal or consensus message:
 
-1. Deduplicate by `(kind, level, round, validator, block_hash)`. For a
-   valid proposal: keep its block on disk before the engine may sign,
-   then count the endorsements its `commits` carry as ENDORSE votes of the
-   payload round (the self-commit of a proposer holding the quorum alone).
+1. A vote received from a peer is taken only if the engine can use it
+   (`BftEngine.wants`): a PREENDORSE or an ENDORSE of a validator of the
+   set, for a level and a round inside the window, that is the first
+   vote of that validator for that kind, level and round, or the first
+   one that conflicts with it. Only then is its signature checked. Any
+   other vote is dropped unchecked: a copy of a vote already held, a
+   vote signed by a key that is not a validator, a vote for a level or
+   a round out of reach. For a valid proposal: keep its block on disk
+   before the engine may sign, then count the endorsements its
+   `commits` carry as ENDORSE votes of the payload round (the
+   self-commit of a proposer holding the quorum alone).
 2. Feed `BftEngine.on_message`; broadcast and self-ingest any outbound
    messages it returns.
-3. Re-gossip newly seen wire messages for mesh propagation.
+3. Relay the vote taken in step 1 to every peer, once, for mesh
+   propagation. A vote the engine did not want is never relayed, so a
+   message that no validator signed goes no further than the node that
+   received it.
 4. Try to finalize: if `find_endorse_qc(level, hash)` returns an
    endorsement certificate at any round for a pending block, set
    `endorsements` from it and `cert_round` to its round, then
@@ -207,9 +227,17 @@ kept as `ProposalEquivocation` evidence, not slashable yet.
 Both sides of a new connection send `hello` with their head level. A node
 that learns of a higher peer level — from `hello`, or from a gossiped
 finalized block more than one level ahead — requests the missing range
-with `get_blocks` (rate-limited to one request per 2 s). Replies stream
-at most 512 blocks, applied strictly in order through the same
-`require_quorum=True` path as gossiped blocks. Deduplication sets are
+with `get_blocks` (rate-limited to one request per 2 s). A reply is one
+frame: it holds the blocks from the first level asked for, as many as fit
+in 8 MiB, half of the largest frame, and 512 at most (`sync_reply`). Its
+first block always travels, whatever it weighs. Blocks are applied strictly
+in order through the same `require_quorum=True` path as gossiped blocks.
+While a reply brings the node forward, it asks the same peer for what
+follows, up to the level that peer announced in its `hello`; a reply that
+brings nothing ends the exchange. Until this bound a reply was limited in
+blocks only: 512 blocks of more than 32 kB each made a frame that the node
+behind dropped, closing the connection, and it could not catch up.
+Deduplication sets are
 advisory only; correctness never depends on them (stale blocks are
 rejected by level, duplicate transactions by the mempool key, repeated
 consensus messages are idempotent in the engine).
@@ -254,9 +282,10 @@ valid certificate exists, every new vote or the late arrival of the
 proposal re-evaluates the round. A vote for another block can therefore
 neither poison a certificate nor freeze a round.
 
-**Equivocation is visible and punishable.** The node's message
-deduplication key includes the block hash, so a second, conflicting vote
-reaches the engine and is re-gossiped. The engine turns it into
+**Equivocation is visible and punishable.** A second, conflicting vote
+of a validator reaches the engine and is relayed, once: every node then
+holds the two votes. Further votes of that validator for the same kind,
+level and round add nothing and are dropped. The engine turns the pair into
 `SlashingEvidence` once per offence; the validator's node files a
 `SLASH_CONSENSUS_EQUIVOCATION` transaction carrying both signed votes.
 The chain accepts it when both votes decode strictly, are signed with the
