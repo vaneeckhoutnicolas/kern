@@ -214,6 +214,17 @@ def derived(name: str, schema: str, value: Any, network_id: bytes) -> dict:
     elif schema == "genesis":
         out["hashed"] = ref.canonical_json(sch.first_header(value)).decode("utf-8")
         out["block_hash"] = sch.first_block_hash(value).hex()
+    elif schema == "rollup batch":
+        if name == "batch":
+            out["context"] = "kern.batch"
+            out["signed"] = sch.signed_batch(value).decode("utf-8")
+        out["hash"] = sch.batch_hash(network_id, value).hex()
+    elif schema == "inclusion request":
+        out["hash"] = sch.request_hash(network_id, value).hex()
+    elif schema == "Mini-EVM state":
+        out["hash"] = sch.evm_state_hash(network_id, value).hex()
+    elif schema == "verifier key":
+        out["id"] = sch.verifier_key_id(network_id, value).hex()
     return out
 
 
@@ -260,18 +271,21 @@ def difference(before: Any, after: Any, path: str = "") -> tuple[list[str], dict
     return remove, put
 
 
+RULED = sch.CHAPTER_2 + sch.CHAPTER_3                         # the objects whose tables come with sentences
+
+
 def the_rule(words: str) -> str:
-    """The one sentence of chapter 2 that holds these words."""
-    found = {sentence for obj in sch.CHAPTER_2 for sentence, _ in obj.rules if words in sentence}
+    """The one sentence of chapter 2 or 3 that holds these words."""
+    found = {sentence for obj in RULED for sentence, _ in obj.rules if words in sentence}
     assert len(found) == 1, (words, found)
     return found.pop()
 
 
 @contextlib.contextmanager
 def without(sentence: str) -> Iterator[None]:
-    """The reference without one rule of chapter 2, for as long as the block lasts."""
-    saved = [(obj, obj.rules) for obj in sch.CHAPTER_2]
-    for obj in sch.CHAPTER_2:
+    """The reference without one rule of chapter 2 or 3, for as long as the block lasts."""
+    saved = [(obj, obj.rules) for obj in RULED]
+    for obj in RULED:
         obj.rules = [rule for rule in obj.rules if rule[0] != sentence]
     try:
         yield
@@ -354,7 +368,11 @@ DESCRIPTION = (
     "sees it: a step is a request it would send (`ask`: the first and the last level), a `blocks` frame it receives "
     "(`blocks`: the levels of its blocks) or four bytes it reads before a frame (`prefix`); `verdicts` gives "
     "`accepted`, `refused` or `closed` for each step. `served` holds what a node sends when several requests reach "
-    "it on one connection: `held` as in `answers`, and the levels of one answer for each request."
+    "it on one connection: `held` as in `answers`, and the levels of one answer for each request. "
+    "The accepted objects of the schemas `rollup batch`, `inclusion request`, `Mini-EVM state` and `verifier key` "
+    "are hashed outside blocks. Each comes with what the profile computes from it: the hash of a batch, taken "
+    "without its signature (`hash`), and for the first one the text its sequencer signs and its context (`signed`, "
+    "`context`); the hash of a request and of a state (`hash`); the identifier of a key (`id`)."
 )
 
 
@@ -409,7 +427,7 @@ class Builder(Vectors):
            set: dict[str, Any] | None = None, breaks: str | None = None) -> None:
         """A refused object: an accepted one with members removed, then
         values put in place. `breaks` names, by a few of its words, the one
-        sentence of chapter 2 that refuses it: without that sentence the
+        sentence of chapter 2 or 3 that refuses it: without that sentence the
         reference accepts the object, so it breaks no other rule."""
         changed = self.edited(self.objects[base], remove, set)
         answer = sch.verdict(self.schemas[base], changed, self.network_id)
@@ -425,7 +443,7 @@ class Builder(Vectors):
             with without(record["breaks"]):
                 alone = sch.verdict(self.schemas[base], changed, self.network_id)
             assert alone == "accepted", f"{base}, {why}: without its rule, still {alone}"
-        elif self.schemas[base] in ("state", "account", "genesis"):
+        elif self.schemas[base] in ("state", "account", "genesis", "inclusion request", "Mini-EVM state"):
             assert rule != "inconsistent", f"{base}, {why}: which sentence does it break?"
         self.refused.append({**record, **pin(ref.canonical_json(changed))})
 
@@ -2232,6 +2250,170 @@ class Builder(Vectors):
 
     # -- the vectors ------------------------------------------------------
 
+    def outside(self) -> None:
+        """Chapter 3: the four objects that are hashed outside blocks. The
+        first vector of each schema is the object of the note, which gives
+        back its digest."""
+        top, word, address = INT_MAX, str(2**256 - 1), str(2**160 - 1)
+        p = sch.BN254_P
+        note = {name: copy(self.frozen[domain]["object"]) for name, domain in (
+            ("batch", "kern.batch"), ("request", "kern.mailbox"), ("state", "kern.evm"), ("key", "kern.zk_claims.vk"))}
+        a_hash = {"$concat": [{"$text": [91, "0"]}, {"$index": 10000}]}        # 96 characters, another for each item
+        elsewhere = "kn1VwTAqJ8uFjeNr5FzW54xUbMjE9sr9g7PrYyKtyHRRvDH5QADRewCQ7Xc6w2imSEDmWnfEk2v"
+
+        # -- rollup batches (section 9.20)
+        self.yes("batch", "rollup batch", "a rollup batch: the object of the note (its vector `kern.batch`), with the "
+                 "signature of its sequencer", {**note["batch"], "signature": {"$sig": 301}}, mutate=True)
+        self.yes("batch_first", "rollup batch", "the first batch of a rollup, with no transaction: the lowest value "
+                 "of every range, and a name of one character",
+                 {**note["batch"], "rollup_id": "r", "batch_index": 0, "tx_hashes": [], "timestamp": 0,
+                  "signature": {"$sig": 302}})
+        self.yes("batch_1024", "rollup batch", "a batch of 1,024 transactions: the highest value of every range, and "
+                 "a name of 64 characters with every kind of character a name may have",
+                 {**note["batch"], "rollup_id": {"$concat": ["k", {"$text": [21, "0-9"]}]}, "batch_index": top,
+                  "tx_hashes": {"$list": [1024, a_hash]}, "timestamp": top, "signature": {"$sig": 303}})
+        no = lambda rule, why, **how: self.no("batch", rule, why, **how)                    # noqa: E731
+        no("missing_field", "a batch that nobody signed", remove=["signature"])
+        no("unknown_field", "a batch that carries the key of its sequencer, as today",
+           set={"sequencer_pubkey": {"$key": 301}})
+        no("unknown_field", "a batch with the level at which the chain took it", set={"posted_at_level": 12})
+        no("unknown_field", "a batch with what has become of it", set={"status": "pending"})
+        no("bad_text", "a rollup whose name starts with a digit", set={"rollup_id": "1-rollup"})
+        no("bad_text", "a rollup named with a capital", set={"rollup_id": "Rollup-1"})
+        no("bad_text", "a rollup without a name", set={"rollup_id": ""})
+        self.no("batch_1024", "bad_text", "a name of 65 characters",
+                set={"rollup_id": {"$concat": ["kk", {"$text": [21, "0-9"]}]}})
+        no("out_of_range", "a batch numbered -1", set={"batch_index": -1})
+        self.no("batch_1024", "out_of_range", "a batch of 1,025 transactions",
+                set={"tx_hashes.1024": {"$text": [48, "ab"]}})
+        no("bad_text", "a state root of 64 characters, as today", set={"state_root": {"$text": [32, "ab"]}})
+        no("bad_text", "the hash of a transaction in capitals", set={"tx_hashes.0": {"$text": [48, "AB"]}})
+        no("wrong_type", "the hashes of the transactions as one text", set={"tx_hashes": {"$text": [48, "ab"]}})
+        no("wrong_type", "a batch number as a text", set={"batch_index": "3"})
+        no("bad_address", "a sequencer of another network", set={"sequencer": elsewhere})
+        no("bad_signature", "a signature of another scheme",
+           set={"signature": {"$concat": ["ksig2.", {"$text": [4498, "A"]}]}})
+
+        # -- forced inclusion requests (section 9.21)
+        self.yes("request", "inclusion request", "a forced inclusion request: the object of the note (its vector "
+                 "`kern.mailbox`)", note["request"], mutate=True)
+        self.yes("request_lowest", "inclusion request", "a transaction of one byte, posted at level 0 at the first "
+                 "second there is, to include within one block",
+                 {**note["request"], "rollup_id": "r", "l2_tx_payload": "00", "posted_at_l1_level": 0,
+                  "posted_at_l1_timestamp": 0, "deadline_blocks": 1})
+        self.yes("request_highest", "inclusion request", "a transaction of 32,768 bytes and the longest delay there "
+                 "is, posted so that its deadline is the last level",
+                 {**note["request"], "l2_tx_payload": {"$text": [32768, "ff"]},
+                  "posted_at_l1_level": top - ROUND_MAX, "posted_at_l1_timestamp": top, "deadline_blocks": ROUND_MAX})
+        self.yes("request_last_level", "inclusion request", "a request posted one level before the last one",
+                 {**note["request"], "posted_at_l1_level": top - 1, "deadline_blocks": 1})
+        no = lambda rule, why, **how: self.no("request", rule, why, **how)                  # noqa: E731
+        no("missing_field", "a request without its delay: the 21,600 blocks of today are a value a request states",
+           remove=["deadline_blocks"])
+        no("out_of_range", "a delay of 0 blocks", set={"deadline_blocks": 0})
+        no("out_of_range", "a delay of 2^32 blocks", set={"deadline_blocks": ROUND_MAX + 1})
+        no("unknown_field", "a request with what has become of it", set={"status": "pending"})
+        no("unknown_field", "a request with the batch that included it", set={"included_in_batch": 3})
+        no("unknown_field", "a request that carries its own hash", set={"hash": {"$text": [48, "ab"]}})
+        no("bad_text", "a request that carries no transaction", set={"l2_tx_payload": ""})
+        self.no("request_highest", "bad_text", "a transaction of 32,769 bytes",
+                set={"l2_tx_payload": {"$text": [32769, "ff"]}})
+        no("bad_text", "half a byte", set={"l2_tx_payload": "deadbee"})
+        no("bad_text", "bytes written in capitals", set={"l2_tx_payload": "DEADBEEF"})
+        no("bad_text", "bytes written with a prefix", set={"l2_tx_payload": "0xdeadbeef"})
+        no("wrong_type", "bytes written as a list of numbers", set={"l2_tx_payload": [222, 173, 190, 239]})
+        no("bad_address", "a sender of another network", set={"sender": elsewhere})
+        self.no("request_highest", "inconsistent", "a deadline one level beyond the last one",
+                set={"posted_at_l1_level": top - ROUND_MAX + 1}, breaks="The level of the deadline")
+        self.no("request_last_level", "inconsistent", "a request posted at the last level: no level is left to "
+                "include it", set={"posted_at_l1_level": top}, breaks="The level of the deadline")
+
+        # -- states of the Mini-EVM (section 9.22)
+        self.yes("evm_state", "Mini-EVM state", "a state of the Mini-EVM: the object of the note (its vector "
+                 "`kern.evm`)", note["state"], mutate=True, maps=("storage",))
+        nothing = {"address": "0", "caller": "0", "value": "0", "calldata": "", "block_number": 0,
+                   "block_timestamp": 0}
+        self.yes("evm_state_first", "Mini-EVM state", "the state before the first instruction of a program that is "
+                 "given nothing: the lowest value of every range",
+                 {"pc": 0, "stack": [], "memory": "", "gas": 0, "halted": False, "output": "", "reverted": False,
+                  "storage": {}, "context": nothing})
+        self.yes("evm_state_returned", "Mini-EVM state", "a state that stopped and handed back 32 bytes",
+                 {**note["state"], "halted": True, "output": {"$text": [32, "2a"]}})
+        self.yes("evm_state_failed", "Mini-EVM state", "a state that stopped on a failure, and hands back nothing",
+                 {**note["state"], "halted": True, "reverted": True})
+        slot = {"$concat": ["1", {"$text": [72, "0"]}, {"$index": 10000}]}        # 78 digits, another for each slot
+        self.yes("evm_state_largest", "Mini-EVM state", "the largest state there is: 1,024 words on the stack, "
+                 "1,048,576 bytes of memory, of output and of calldata, 16,384 slots, and the highest value of every "
+                 "number",
+                 {"pc": top, "stack": {"$list": [1024, word]}, "memory": {"$text": [1048576, "ff"]}, "gas": top,
+                  "halted": True, "output": {"$text": [1048576, "ff"]}, "reverted": True,
+                  "storage": {"$map": [16384, slot, word]},
+                  "context": {"address": address, "caller": address, "value": word,
+                              "calldata": {"$text": [1048576, "ff"]}, "block_number": top, "block_timestamp": top}})
+        no = lambda rule, why, **how: self.no("evm_state", rule, why, **how)                # noqa: E731
+        rule = lambda breaks, why, **how: self.no("evm_state", "inconsistent", why, breaks=breaks, **how)  # noqa: E731
+        no("missing_field", "a state without its context", remove=["context"])
+        no("missing_field", "a context without the data of the call", remove=["context.calldata"])
+        no("unknown_field", "a state with the text of its last error, which is not hashed",
+           set={"last_error": "out of gas"})
+        no("out_of_range", "a position of -1 in the program", set={"pc": -1})
+        no("out_of_range", "a gas of -1", set={"gas": -1})
+        no("wrong_type", "a word of the stack written as a number", set={"stack.0": 1})
+        no("bad_text", "a word with a zero in front", set={"stack.0": "01"})
+        no("bad_text", "a word of 2^256", set={"stack.1": str(2**256)})
+        no("bad_text", "a word with a sign", set={"stack.0": "-1"})
+        no("bad_text", "a word in hexadecimal", set={"stack.0": "0x01"})
+        no("bad_text", "an empty word", set={"stack.0": ""})
+        self.no("evm_state_largest", "out_of_range", "a stack of 1,025 words", set={"stack.1024": "1"})
+        no("bad_text", "a memory of 33 bytes: it grows by words of 32", set={"memory": {"$text": [33, "00"]}})
+        self.no("evm_state_largest", "bad_text", "a memory of 1,048,608 bytes",
+                set={"memory": {"$text": [1048608, "ff"]}})
+        self.no("evm_state_largest", "bad_text", "an output of 1,048,577 bytes",
+                set={"output": {"$text": [1048577, "ff"]}})
+        self.no("evm_state_largest", "bad_text", "a calldata of 1,048,577 bytes",
+                set={"context.calldata": {"$text": [1048577, "ff"]}})
+        self.no("evm_state_largest", "out_of_range", "a storage of 16,385 slots", set={"storage.7": "1"})
+        no("wrong_type", "a storage written as a list of pairs, as today", set={"storage": [["0", "7"], ["9", "2"]]})
+        no("bad_text", "a slot whose number has a zero in front", set={"storage.07": "1"})
+        no("wrong_type", "a slot that holds a number", set={"storage.9": 2})
+        no("bad_text", "an address of the machine of 2^160", set={"context.address": str(2**160)})
+        no("bad_text", "a caller of 2^160", set={"context.caller": str(2**160)})
+        no("wrong_type", "a flag written as a number", set={"halted": 0})
+        rule("that is `reverted`", "a state that failed and has not stopped", set={"reverted": True})
+        rule("`output` is empty", "a state that hands something back before it stops",
+             set={"output": "2a"})
+        rule("No slot of `storage`", "a slot that holds 0: the machine keeps no such slot", set={"storage.5": "0"})
+
+        # -- verifier keys (section 9.23)
+        self.yes("verifier_key", "verifier key", "a verifier key: the object of the note (its vector "
+                 "`kern.zk_claims.vk`), for a circuit with one public input", note["key"], mutate=True)
+        zero, last = ["0", "0"], [str(p - 1), str(p - 1)]
+        self.yes("verifier_key_lowest", "verifier key", "a key for a circuit without a public input, every "
+                 "coordinate 0: a schema does not ask whether a point is on the curve",
+                 {"alpha1": zero, "beta2": [zero, zero], "gamma2": [zero, zero], "delta2": [zero, zero],
+                  "ic": [zero]})
+        self.yes("verifier_key_257", "verifier key", "a key for 256 public inputs, with coordinates of p - 1",
+                 {"alpha1": last, "beta2": [last, last], "gamma2": [last, last], "delta2": [last, last],
+                  "ic": {"$list": [257, [{"$concat": [{"$index": 1}]}, str(p - 1)]]}})
+        no = lambda rule, why, **how: self.no("verifier_key", rule, why, **how)             # noqa: E731
+        no("missing_field", "a key without `delta2`", remove=["delta2"])
+        no("unknown_field", "a key that names its curve", set={"curve": "bn254"})
+        no("out_of_range", "a key without a point in `ic`", set={"ic": []})
+        self.no("verifier_key_257", "out_of_range", "a key of 258 points", set={"ic.257": ["1", "2"]})
+        no("out_of_range", "a point of three coordinates", set={"alpha1": ["1", "2", "1"]})
+        no("out_of_range", "a point of one coordinate", set={"alpha1": ["1"]})
+        no("out_of_range", "a point of the second group with one pair", set={"beta2": [["3", "4"]]})
+        no("out_of_range", "a point of the second group with three pairs",
+           set={"delta2": [["11", "12"], ["13", "14"], ["15", "16"]]})
+        no("out_of_range", "a point of the second group written as four coordinates in a row",
+           set={"gamma2": ["7", "8", "9", "10"]})
+        no("wrong_type", "a point of the first group where one of the second group is due",
+           set={"gamma2": ["7", "8"]})
+        no("wrong_type", "a coordinate written as a number, as today", set={"alpha1.0": 1})
+        no("bad_text", "a coordinate of p", set={"ic.0.0": str(p)})
+        no("bad_text", "a coordinate with a zero in front", set={"ic.0.1": "016"})
+        no("bad_text", "a coordinate in hexadecimal", set={"delta2.0.0": "0b"})
+
     def build(self) -> dict:
         self.transactions()
         self.messages_and_certificates()
@@ -2250,6 +2432,7 @@ class Builder(Vectors):
         self.slashes()
         self.transitions()
         self.exchanges()
+        self.outside()
         return {"description": DESCRIPTION, "network_id": self.network_id.hex(), "limits": LIMITS,
                 "rules": sch.RULES, "block_rules": sch.BLOCK_RULES, "guardian_rules": sch.GUARDIAN_RULES,
                 "slash_rules": sch.SLASH_RULES, "whole_block_rules": sch.WHOLE_BLOCK_RULES,

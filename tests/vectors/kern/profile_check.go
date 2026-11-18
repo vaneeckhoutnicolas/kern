@@ -1665,6 +1665,7 @@ var schemas = map[string]schema{
 	"transaction": aTransaction, "vote": aVote, "propose message": aProposeMessage, "certificate": aCertificate,
 	"header": aHeader, "block": aBlock, "final block": aFinalBlock, "frame": aFrame,
 	"state": aState, "account": anAccount, "genesis": aGenesis,
+	"rollup batch": aBatch, "inclusion request": aRequest, "Mini-EVM state": anEvmState, "verifier key": aVerifierKey,
 }
 
 // nestingOf reads the nesting of a JSON text on its bytes: brackets and
@@ -1746,7 +1747,7 @@ func judge(name string, v any) (string, []string) {
 	return verdict, broken
 }
 
-// ruled is an object of chapter 2. Its fields are checked from the last
+// ruled is an object of chapter 2 or 3. Its fields are checked from the last
 // name to the first, then the members that are not fields are looked for,
 // then every rule is applied, whether an earlier one was broken or not.
 func ruled(fields map[string]field, rules ...sentence) schema {
@@ -3358,6 +3359,138 @@ func exchangeOn(steps []any) []string {
 	return verdicts
 }
 
+// ---------------------------------------------------------------- chapter 3: what is hashed outside blocks
+
+// Written from sections 9.19 to 9.23 of docs/api-stability.md: the four
+// objects the note gives a hash domain and that stand neither in a block
+// nor in the state. Forms and hashes, and nothing of what a rollup does.
+
+const (
+	maxBatchTransactions = 1024
+	maxPayloadBytes      = 32768
+	maxEvmStack          = 1024
+	maxEvmBytes          = 1048576
+	maxEvmStorage        = 16384
+	maxVerifierKeyPoints = 257
+)
+
+// someBytes is bytes written in hexadecimal, two characters for each
+// byte: low to high bytes, a multiple of step.
+func someBytes(low, high, step int) schema {
+	return func(v any) string {
+		s, ok := v.(string)
+		if !ok {
+			return "wrong_type"
+		}
+		if len(s)%2 != 0 || len(s)/2 < low || len(s)/2 > high || (len(s)/2)%step != 0 {
+			return "bad_text"
+		}
+		for i := 0; i < len(s); i++ {
+			if !isDigit(s[i]) && (s[i] < 'a' || s[i] > 'f') {
+				return "bad_text"
+			}
+		}
+		return ""
+	}
+}
+
+// digitsUpTo is a whole number from 0 to high written in decimal: no sign,
+// and no zero in front of another digit, so that a number has one text.
+func digitsUpTo(high *big.Int) schema {
+	longest := len(high.String())
+	return func(v any) string {
+		s, ok := v.(string)
+		if !ok {
+			return "wrong_type"
+		}
+		if s == "" || len(s) > longest || len(s) > 1 && s[0] == '0' {
+			return "bad_text"
+		}
+		for i := 0; i < len(s); i++ {
+			if !isDigit(s[i]) {
+				return "bad_text"
+			}
+		}
+		if n, _ := new(big.Int).SetString(s, 10); n.Cmp(high) > 0 {
+			return "bad_text"
+		}
+		return ""
+	}
+}
+
+func lastOf(bits uint) *big.Int {
+	return new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), bits), big.NewInt(1))
+}
+
+// The prime of the base field of the curve BN254, as section 9.2 writes it.
+var bn254Prime, _ = new(big.Int).SetString("21888242871839275222246405745257275088696311157297823662689037894645226208583", 10)
+
+var (
+	aRollup       = letters(1, 64, func(i int, c byte) bool { return isLower(c) || i > 0 && (isDigit(c) || c == '-') })
+	aWord         = digitsUpTo(lastOf(256))
+	anEvmAddress  = digitsUpTo(lastOf(160))
+	aFieldElement = digitsUpTo(new(big.Int).Sub(bn254Prime, big.NewInt(1)))
+	aPoint        = listOf(aFieldElement, 2, 2)
+	aPointOfTwo   = listOf(aPoint, 2, 2)
+)
+
+// The sentences of chapter 3, kept apart from those of chapter 2.
+var outsideSentences []string
+
+func outsideRule(text string, holds func(o map[string]any) bool) sentence {
+	outsideSentences = append(outsideSentences, text)
+	return sentence{text, holds}
+}
+
+var aBatch = ruled(map[string]field{
+	"rollup_id": required(aRollup), "batch_index": required(integer(0, maxInt)),
+	"parent_state_root": required(aHash), "state_root": required(aHash),
+	"tx_hashes": required(listOf(aHash, 0, maxBatchTransactions)), "tx_data_hash": required(aHash),
+	"timestamp": required(integer(0, maxInt)), "sequencer": required(anAddress), "signature": required(aSignature),
+})
+
+var aRequest = ruled(map[string]field{
+	"rollup_id": required(aRollup), "sender": required(anAddress),
+	"l2_tx_payload": required(someBytes(1, maxPayloadBytes, 1)), "posted_at_l1_level": required(aLevel),
+	"posted_at_l1_timestamp": required(integer(0, maxInt)), "deadline_blocks": required(aPeriod),
+}, outsideRule("The level of the deadline, `posted_at_l1_level` plus `deadline_blocks`, is at most 2^63 - 1.",
+	func(o map[string]any) bool {
+		deadline := new(big.Int).Add(amountAt(o, "posted_at_l1_level"), amountAt(o, "deadline_blocks"))
+		return deadline.Cmp(big.NewInt(maxInt)) <= 0
+	}))
+
+var anEvmContext = ruled(map[string]field{
+	"address": required(anEvmAddress), "caller": required(anEvmAddress), "value": required(aWord),
+	"calldata": required(someBytes(0, maxEvmBytes, 1)), "block_number": required(aLevel),
+	"block_timestamp": required(integer(0, maxInt)),
+})
+
+var anEvmState = ruled(map[string]field{
+	"pc": required(integer(0, maxInt)), "stack": required(listOf(aWord, 0, maxEvmStack)),
+	"memory": required(someBytes(0, maxEvmBytes, 32)), "gas": required(integer(0, maxInt)),
+	"halted": required(boolean), "output": required(someBytes(0, maxEvmBytes, 1)), "reverted": required(boolean),
+	"storage": required(mapOf(aWord, aWord, 0, maxEvmStorage)), "context": required(anEvmContext),
+},
+	outsideRule("A state that is `reverted` is `halted`.", func(o map[string]any) bool {
+		return o["halted"] == true || o["reverted"] != true
+	}),
+	outsideRule("`output` is empty unless the state is `halted`.", func(o map[string]any) bool {
+		return o["halted"] == true || textAt(o, "output") == ""
+	}),
+	outsideRule("No slot of `storage` holds `\"0\"`.", func(o map[string]any) bool {
+		for _, held := range mapAt(o, "storage") {
+			if held == "0" {
+				return false
+			}
+		}
+		return true
+	}))
+
+var aVerifierKey = ruled(map[string]field{
+	"alpha1": required(aPoint), "beta2": required(aPointOfTwo), "gamma2": required(aPointOfTwo),
+	"delta2": required(aPointOfTwo), "ic": required(listOf(aPoint, 1, maxVerifierKeyPoints)),
+})
+
 // ---------------------------------------------------------------- the vectors of the schemas
 
 func fillerOf(what string, n int64, length int) []byte {
@@ -3840,6 +3973,8 @@ func checkSchemas(path string) {
 		"certificate_signatures": maxCertificateSignatures, "code_bytes": maxCodeBytes, "value_bytes": maxValueBytes,
 		"contract_fields": maxContractFields, "claim_bytes": maxClaimBytes, "recipients": maxRecipients,
 		"validators": maxValidators, "guardians": maxGuardians,
+		"batch_transactions": maxBatchTransactions, "payload_bytes": maxPayloadBytes, "evm_stack": maxEvmStack,
+		"evm_bytes": maxEvmBytes, "evm_storage": maxEvmStorage, "verifier_key_points": maxVerifierKeyPoints,
 	}
 	check("the limits of the file are the limits of this program", fmt.Sprint(limits) == fmt.Sprint(file.Limits))
 
@@ -3847,6 +3982,8 @@ func checkSchemas(path string) {
 	kept := map[string]string{} // the schema of each accepted vector
 	derived, states := 0, 0
 	shown := map[string]bool{} // the sentences of chapter 2 that a refused vector breaks, alone
+	outside := 0               // the objects of chapter 3, each with its hash or its identifier
+	shownOutside := map[string]bool{}
 	for _, v := range file.Accepted {
 		object := vectors.expand(mustParse(v.Object), 0)
 		encoding, err := canonicalJSON(object)
@@ -3895,6 +4032,21 @@ func checkSchemas(path string) {
 			hashed, hash := firstHeader(o)
 			check(v.Name+": the nine fields of the block of level 0", string(hashed) == v.Hashed)
 			check(v.Name+": the hash of the block of level 0", hash == v.BlockHash)
+		case "rollup batch":
+			// The hash is taken on the batch without its signature, which is also what the sequencer signs.
+			check(v.Name+": hash", same(h("kern.batch", schemaNetwork, without(o, "signature")), v.Hash))
+			check(v.Name+": what is signed", v.Signed == "" || string(without(o, "signature")) == v.Signed)
+			check(v.Name+": context", v.Context == "" || v.Context == "kern.batch" && has(purposes, v.Context))
+			outside++
+		case "inclusion request":
+			check(v.Name+": hash", same(h("kern.mailbox", schemaNetwork, encoding), v.Hash))
+			outside++
+		case "Mini-EVM state":
+			check(v.Name+": hash", same(h("kern.evm", schemaNetwork, encoding), v.Hash))
+			outside++
+		case "verifier key":
+			check(v.Name+": identifier", same(h("kern.zk_claims.vk", schemaNetwork, encoding), v.ID))
+			outside++
 		}
 		if v.Mutations == nil {
 			continue
@@ -3931,12 +4083,21 @@ func checkSchemas(path string) {
 		check("refused, "+v.Why+": "+verdict+", expected "+v.Rule, verdict == v.Rule)
 		// A refused state names the one sentence it breaks; this program finds that sentence broken, and no other.
 		ofChapter2 := name == "state" || name == "account" || name == "genesis"
-		check("refused, "+v.Why+": the sentence it breaks", (v.Breaks != "") == (ofChapter2 && v.Rule == "inconsistent"))
+		ofChapter3 := name == "inclusion request" || name == "Mini-EVM state"
+		check("refused, "+v.Why+": the sentence it breaks", (v.Breaks != "") == ((ofChapter2 || ofChapter3) && v.Rule == "inconsistent"))
 		if v.Breaks != "" {
 			check("refused, "+v.Why+": breaks "+fmt.Sprint(breaks), len(breaks) == 1 && breaks[0] == v.Breaks)
-			shown[v.Breaks] = true
+			if ofChapter3 {
+				shownOutside[v.Breaks] = true
+			} else {
+				shown[v.Breaks] = true
+			}
 		}
 	}
+	for _, text := range outsideSentences {
+		check("a refused vector breaks the sentence: "+text, shownOutside[text])
+	}
+	check("the sentences of chapter 3 that a vector breaks are those this program checks", len(shownOutside) == len(outsideSentences))
 	for _, text := range sentences {
 		check("a refused vector breaks the sentence: "+text, shown[text])
 	}
@@ -4090,6 +4251,8 @@ func checkSchemas(path string) {
 			len(sentences), len(file.Charges), len(file.Decisions), len(file.Payments), len(file.Exchanges), len(file.Served))
 		fmt.Printf("the arithmetic of a block: %d rewards, %d votes, %d blocks of reports and %d whole blocks, as the Python reference\n",
 			len(file.Rewards), len(file.Tallies), len(file.Slashes), len(file.Transitions))
+		fmt.Printf("what is hashed outside blocks: %d objects with their hash or their identifier, %d sentences each broken alone, as the Python reference\n",
+			outside, len(outsideSentences))
 	}
 }
 

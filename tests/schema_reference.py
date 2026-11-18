@@ -9,14 +9,15 @@ document are compared with the tables below, and tests/schema_vectors.py
 builds tests/vectors/kern/schemas.json with it, which the Go program kept
 next to that file checks with tables of its own, written independently.
 
-Chapters 1 and 2 of three. Chapter 1: what is signed and what travels.
+The three chapters. Chapter 1: what is signed and what travels.
 Transactions, block headers, blocks, consensus messages, certificates, the
 frames peers exchange and the body of an injection request. Chapter 2:
 what is kept. The state and the rules that tie its tables together, the
 account of the state trie, the key registry, the genesis and the block of
 level 0, and three rules that are not forms: what a block charges, in what
 order proposals are decided, and how a request for blocks finds its
-answer. The objects hashed outside blocks are chapter 3.
+answer. Chapter 3: what is hashed outside blocks. Rollup batches, forced
+inclusion requests, states of the Mini-EVM and verifier keys.
 
 Nothing here is used by the node, which still writes the formats of
 sections 2.1 to 2.7 of that document. The byte rules all schemas share
@@ -57,6 +58,12 @@ LIMITS = {
     "recipients": 64,                   # the recipients of a treasury proposal
     "validators": 1_024,                # the validators of a network
     "guardians": 8,                     # the guardians of its treasury
+    "batch_transactions": 1_024,        # the transactions a rollup batch names
+    "payload_bytes": 32_768,            # the transaction a forced inclusion request carries
+    "evm_stack": 1_024,                 # the words on the stack of the Mini-EVM
+    "evm_bytes": 1_048_576,             # its memory, its output and the calldata of its context, each
+    "evm_storage": 16_384,              # the slots of its storage
+    "verifier_key_points": 257,         # the points of `ic` in a verifier key: one more than its public inputs
 }
 
 INT_MAX = 2**63 - 1
@@ -103,7 +110,7 @@ class Context:
 
 def number(n: int) -> str:
     """An integer as the document writes it."""
-    for power in (63, 32):
+    for power in (256, 160, 63, 32):
         if n == 2**power - 1:
             return f"2^{power} - 1"
         if n == -(2**power):
@@ -240,6 +247,58 @@ def low_high(n: int, low: int, high: int) -> bool:
     return low <= n <= high
 
 
+@dataclass(frozen=True)
+class Bytes(Type):
+    """Bytes written as hexadecimal text, two characters for each byte.
+    The bounds count bytes. `step` is 32 where the bytes go by words of
+    the Mini-EVM."""
+
+    low: int
+    high: int
+    step: int = 1
+    name = "bytes"
+    json = "string"
+
+    def check(self, value, cx, where):
+        text = _string(value, where)
+        size, odd = divmod(len(text), 2)
+        if odd or not re.fullmatch(r"[0-9a-f]*", text) or not low_high(size, self.low, self.high) \
+                or size % self.step:
+            refuse("bad_text", where, self.cell())
+
+    def words(self):
+        return f"two characters for each byte: {_HEX}"
+
+    def cell(self):
+        count = number(self.low) if self.low == self.high else f"{number(self.low)} to {number(self.high)}"
+        return f"`bytes`, {count}" + (f", a multiple of {self.step}" if self.step > 1 else "")
+
+
+@dataclass(frozen=True)
+class Decimal(Type):
+    """A whole number written as a string of decimal digits, without a
+    sign and without a zero in front: one number has one text. `top` is
+    how the document writes the highest value, where it has a name."""
+
+    name: str
+    high: int
+    top: str = ""
+    json = "string"
+
+    def check(self, value, cx, where):
+        text = _string(value, where)
+        if not re.fullmatch(r"0|[1-9][0-9]*", text) or len(text) > len(str(self.high)) or int(text) > self.high:
+            refuse("bad_text", where, self.words())
+
+    def words(self):
+        return (f"1 to {len(str(self.high))} digits, without a zero in front: "
+                f"a number from 0 to {self.top or number(self.high)}")
+
+    def cell(self):
+        whole = self.high == HIGHEST[self.name]
+        return f"`{self.name}`" if whole else f"`{self.name}`, 0 to {self.top or number(self.high)}"
+
+
 _B58_VALUES = {c: i for i, c in enumerate(ref._B58)}
 
 
@@ -350,9 +409,14 @@ class List(Type):
     def words(self):
         if self.high is None:
             count = "any number of" if self.low == 0 else f"{number(self.low)} or more"
+        elif self.low == self.high:
+            count = number(self.low)
         else:
             count = f"{number(self.low)} to {number(self.high)}"
-        return f"list of {count} {self.item.cell()}"
+        item = self.item.cell()
+        if isinstance(self.item, List):
+            item = "lists" + item[len("list"):]
+        return f"list of {count} {item}"
 
     def depth(self):
         return 1 + self.item.depth()
@@ -537,8 +601,16 @@ FIELDS = Named("fields", Map(NAME, VALUE, 0, LIMITS["contract_fields"]))
 POSITIVE = Named("positive amount", Int(1, INT_MAX, "in mukrn"))
 PERIOD = Named("period", Int(1, ROUND_MAX, "in blocks"))
 
+# Chapter 3. `p` is the prime of the field over which the curve BN254 is defined.
+BN254_P = 21888242871839275222246405745257275088696311157297823662689037894645226208583
+HIGHEST = {"word": 2**256 - 1, "field element": BN254_P - 1}      # the highest value of each type of digits
+ROLLUP = Named("rollup", CHAIN.inner)
+WORD = Decimal("word", HIGHEST["word"])
+FIELD_ELEMENT = Decimal("field element", HIGHEST["field element"], "p - 1")
+
 NAMED_TYPES = [LEVEL, ROUND, NONCE, AMOUNT, GAS, TIME, ADDRESS, HASH, KEY, SIGNATURE, NETWORK, CHAIN, NAME,
-               SCHEMA_NAME, SUBJECT, CODE, MEMO, VALUE, CLAIM, FIELDS, POSITIVE, PERIOD]
+               SCHEMA_NAME, SUBJECT, CODE, MEMO, VALUE, CLAIM, FIELDS, POSITIVE, PERIOD,
+               ROLLUP, Bytes(0, 0), WORD, FIELD_ELEMENT]
 
 
 # ---------------------------------------------------------------------------
@@ -2569,6 +2641,130 @@ def serve(held: Mapping[int, int], requests: list[tuple[int, int]]) -> list[list
 
 
 # ---------------------------------------------------------------------------
+# Chapter 3: what is hashed outside blocks (sections 9.19 to 9.23)
+# ---------------------------------------------------------------------------
+# Four objects the note gives a hash domain and field names (its section
+# 4.1), and that are neither in a block nor in the state. This chapter gives
+# them their types and their bounds, and nothing of what a rollup does with
+# them: no rule here reads a state.
+
+BATCH = Obj("rollup batch", [
+    ("rollup_id", ROLLUP, "required"),
+    ("batch_index", Int(0, INT_MAX), "required"),
+    ("parent_state_root", HASH, "required"),
+    ("state_root", HASH, "required"),
+    ("tx_hashes", List(HASH, 0, LIMITS["batch_transactions"]), "required"),
+    ("tx_data_hash", HASH, "required"),
+    ("timestamp", TIME, "required"),
+    ("sequencer", ADDRESS, "required"),
+    ("signature", SIGNATURE, "required"),
+])
+
+
+def signed_batch(batch: dict) -> bytes:
+    """What the sequencer signs, in the context `kern.batch`, and what the
+    hash of a batch is taken on: every field but the signature."""
+    return ref.canonical_json({k: v for k, v in batch.items() if k != "signature"})
+
+
+def batch_hash(network_id: bytes, batch: dict) -> bytes:
+    return ref.H("kern.batch", network_id, signed_batch(batch))
+
+
+def _deadline_is_a_level(request, cx, where):
+    if request["posted_at_l1_level"] + request["deadline_blocks"] > INT_MAX:
+        refuse("inconsistent", _join(where, "deadline_blocks"), "a deadline beyond the last level")
+
+
+REQUEST = Obj("inclusion request", [
+    ("rollup_id", ROLLUP, "required"),
+    ("sender", ADDRESS, "required"),
+    ("l2_tx_payload", Bytes(1, LIMITS["payload_bytes"]), "required"),
+    ("posted_at_l1_level", LEVEL, "required"),
+    ("posted_at_l1_timestamp", TIME, "required"),
+    ("deadline_blocks", PERIOD, "required"),
+], [
+    ("The level of the deadline, `posted_at_l1_level` plus `deadline_blocks`, is at most 2^63 - 1.",
+     _deadline_is_a_level),
+])
+
+
+def request_hash(network_id: bytes, request: dict) -> bytes:
+    return ref.H("kern.mailbox", network_id, ref.canonical_json(request))
+
+
+EVM_ADDRESS = Decimal("word", 2**160 - 1)             # an address inside the Mini-EVM: 160 bits (note, section 8)
+
+EVM_CONTEXT = Obj("Mini-EVM context", [
+    ("address", EVM_ADDRESS, "required"),
+    ("caller", EVM_ADDRESS, "required"),
+    ("value", WORD, "required"),
+    ("calldata", Bytes(0, LIMITS["evm_bytes"]), "required"),
+    ("block_number", LEVEL, "required"),
+    ("block_timestamp", TIME, "required"),
+])
+
+
+def _reverted_is_halted(state, cx, where):
+    if state["reverted"] and not state["halted"]:
+        refuse("inconsistent", _join(where, "reverted"), "reverted and not halted")
+
+
+def _output_once_halted(state, cx, where):
+    if state["output"] and not state["halted"]:
+        refuse("inconsistent", _join(where, "output"), "an output before the state is halted")
+
+
+def _no_zero_slot(state, cx, where):
+    for slot, held_ in state["storage"].items():
+        if held_ == "0":
+            refuse("inconsistent", _join(_join(where, "storage"), slot), "a slot that holds 0")
+
+
+EVM_STATE = Obj("Mini-EVM state", [
+    ("pc", Int(0, INT_MAX), "required"),
+    ("stack", List(WORD, 0, LIMITS["evm_stack"]), "required"),
+    ("memory", Bytes(0, LIMITS["evm_bytes"], 32), "required"),
+    ("gas", GAS, "required"),
+    ("halted", Bool(), "required"),
+    ("output", Bytes(0, LIMITS["evm_bytes"]), "required"),
+    ("reverted", Bool(), "required"),
+    ("storage", Map(WORD, WORD, 0, LIMITS["evm_storage"]), "required"),
+    ("context", EVM_CONTEXT, "required"),
+], [
+    ("A state that is `reverted` is `halted`.", _reverted_is_halted),
+    ("`output` is empty unless the state is `halted`.", _output_once_halted),
+    ('No slot of `storage` holds `"0"`.', _no_zero_slot),
+])
+
+
+def evm_state_hash(network_id: bytes, state: dict) -> bytes:
+    return ref.H("kern.evm", network_id, ref.canonical_json(state))
+
+
+POINT = List(FIELD_ELEMENT, 2, 2)                     # a point of the first group: its two coordinates
+POINT_2 = List(POINT, 2, 2)                           # a point of the second group: two pairs
+
+VERIFIER_KEY = Obj("verifier key", [
+    ("alpha1", POINT, "required"),
+    ("beta2", POINT_2, "required"),
+    ("gamma2", POINT_2, "required"),
+    ("delta2", POINT_2, "required"),
+    ("ic", List(POINT, 1, LIMITS["verifier_key_points"]), "required"),
+])
+
+
+def verifier_key_id(network_id: bytes, key: dict) -> bytes:
+    return ref.H("kern.zk_claims.vk", network_id, ref.canonical_json(key))
+
+
+SCHEMAS.update({"rollup batch": BATCH, "inclusion request": REQUEST, "Mini-EVM state": EVM_STATE,
+                "verifier key": VERIFIER_KEY})
+
+CHAPTER_3 = (BATCH, REQUEST, EVM_STATE, EVM_CONTEXT, VERIFIER_KEY)
+
+
+# ---------------------------------------------------------------------------
 # Reception
 # ---------------------------------------------------------------------------
 
@@ -2671,7 +2867,7 @@ def tables() -> dict[str, list[tuple[str, ...]]]:
         out[obj.name[0].upper() + obj.name[1:]] = obj.rows()
     for kind, frame in FRAMES.items():
         out[f"Frame `{kind}`"] = [row for row in frame.rows() if row[0] != "`kind`"]
-    for obj in CHAPTER_2:
+    for obj in CHAPTER_2 + CHAPTER_3:
         out[heading(obj)] = obj.rows()
     out["Block of level 0"] = list(FIRST_HEADER)
     out["Ends of phases"] = [
@@ -2722,5 +2918,8 @@ def rules() -> dict[str, list[str]]:
     out["What a slash takes"] = list(SLASHING_RULES)
     out["Reporting an offence"] = list(SLASH_RULES.values())
     out["9.18 A whole block"] = list(WHOLE_BLOCK_RULES.values())
+    for obj in CHAPTER_3:
+        if obj.rules:
+            out[heading(obj)] = [sentence for sentence, _ in obj.rules]
     return out
 
