@@ -25,15 +25,21 @@ See `docs/evm-fraud-proofs.md` for the full protocol description.
 from .opcodes import Op, opcode_name
 from .vm import (
     MAX_CALLDATA_BYTES,
+    MAX_CODE_BYTES,
     MAX_MEMORY_BYTES,
     MAX_STACK_WORDS,
     MAX_STORAGE_SLOTS,
     EvmError,
     ExecContext,
     ExecutionTrace,
+    TraceStates,
     VmState,
     beyond_limits,
     execute,
+    not_a_state,
+    require_program,
+    require_state,
+    run,
     step,
 )
 from .bisection import (
@@ -60,10 +66,10 @@ from .frames import (
 
 __all__ = [
     "Op", "opcode_name",
-    "EvmError", "ExecContext", "ExecutionTrace", "VmState", "execute", "step",
-    # the limits of a state
-    "MAX_STACK_WORDS", "MAX_MEMORY_BYTES", "MAX_STORAGE_SLOTS", "MAX_CALLDATA_BYTES",
-    "beyond_limits",
+    "EvmError", "ExecContext", "ExecutionTrace", "TraceStates", "VmState", "execute", "run", "step",
+    # the limits of a state and of a program, and what a state is
+    "MAX_STACK_WORDS", "MAX_MEMORY_BYTES", "MAX_STORAGE_SLOTS", "MAX_CALLDATA_BYTES", "MAX_CODE_BYTES",
+    "beyond_limits", "not_a_state", "require_state", "require_program",
     "BisectionState", "SingleStepResult",
     "bisection_round", "run_full_bisection", "single_step_verify",
     # frames / multi-frame

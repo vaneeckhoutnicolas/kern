@@ -366,8 +366,6 @@ def beyond(part: str) -> VmState:
         return VmState(gas=1_000, halted=True, output=bytes(MEMORY + 1))
     if part == "storage":
         return VmState(gas=1_000, storage={key: 1 for key in range(1, STORAGE + 2)})
-    if part == "original storage":
-        return VmState(gas=1_000, original_storage={key: 1 for key in range(1, STORAGE + 2)})
     assert part == "calldata"
     return VmState(gas=1_000, context=ExecContext(calldata=bytes(CALLDATA + 1)))
 
@@ -375,7 +373,7 @@ def beyond(part: str) -> VmState:
 def at_the_limits() -> VmState:
     return VmState(
         gas=1_000, stack=[1] * STACK, memory=bytearray(MEMORY), storage=full_storage(),
-        original_storage=full_storage(), context=ExecContext(calldata=bytes(CALLDATA)),
+        context=ExecContext(calldata=bytes(CALLDATA)),
     )
 
 
@@ -385,7 +383,6 @@ PARTS = [
     pytest.param("memory", "memory", id="memory"),
     pytest.param("output", "output", id="output"),
     pytest.param("storage", "storage", id="storage"),
-    pytest.param("original storage", "storage", id="original-storage"),
     pytest.param("calldata", "calldata", id="calldata"),
 ]
 
@@ -627,7 +624,7 @@ def test_no_instruction_takes_a_state_at_the_limits_beyond_them(word, watch):
     gas pays for a range of 2^39 bytes that starts at the byte 2^39."""
     state = VmState(
         gas=LARGEST_GAS, stack=[word] * STACK, memory=bytearray(MEMORY), storage=full_storage(),
-        original_storage=full_storage(), context=ExecContext(calldata=bytes(CALLDATA)),
+        context=ExecContext(calldata=bytes(CALLDATA)),
     )
     for byte in range(256):
         after = step(state, bytes([byte]) + bytes(32))

@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field, fields
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 from .opcodes import GAS_COST, Op, is_dup, is_push, is_swap, opcode_name, push_size
 
@@ -85,11 +85,6 @@ class VmState:
     # v0.4 additions:
     storage: Dict[int, int] = field(default_factory=dict)  # contract storage
     context: ExecContext = field(default_factory=ExecContext)
-    # v1.0-rc: snapshot of storage at the start of the transaction, used
-    # for EIP-2200 SSTORE pricing. Populated by `execute()`; if absent
-    # (e.g., reading old serialized states), SSTORE pricing falls back
-    # to current-state-only mode (same as v0.3-v0.9).
-    original_storage: Dict[int, int] = field(default_factory=dict)
     # Last error message for debugging (not part of commitment for now)
     last_error: Optional[str] = None
 
@@ -127,7 +122,6 @@ class VmState:
             output=self.output,
             reverted=self.reverted,
             storage=dict(self.storage),
-            original_storage=dict(self.original_storage),
             context=self.context,  # frozen-ish; safe to share
             last_error=self.last_error,
         )
@@ -144,31 +138,110 @@ MAX_STACK_WORDS = 1_024
 MAX_MEMORY_BYTES = 1_048_576  # the output is a copy of a range of the memory
 MAX_STORAGE_SLOTS = 16_384
 MAX_CALLDATA_BYTES = 1_048_576
+# The machine runs no program longer than this. The code of a contract is an
+# output of the machine, which is no longer.
+MAX_CODE_BYTES = 1_048_576
 
 
 def beyond_limits(state: "VmState") -> Optional[str]:
     """Name what `state` holds beyond the limits of the machine, or None.
 
     Only lengths are read, so that a state far too large is turned away
-    before anything copies it or hashes it. `original_storage` is copied
-    by every step like the storage, and counts with it."""
+    before anything copies it or hashes it."""
     if len(state.stack) > MAX_STACK_WORDS:
         return "stack"
     if len(state.memory) > MAX_MEMORY_BYTES:
         return "memory"
     if len(state.output) > MAX_MEMORY_BYTES:
         return "output"
-    if max(len(state.storage), len(state.original_storage)) > MAX_STORAGE_SLOTS:
+    if len(state.storage) > MAX_STORAGE_SLOTS:
         return "storage"
     if len(state.context.calldata) > MAX_CALLDATA_BYTES:
         return "calldata"
     return None
 
 
-def _require_state(state: "VmState") -> None:
+# ---------------------------------------------------------------------------
+# What a state of the machine is
+# ---------------------------------------------------------------------------
+
+_ADDRESS_MAX = (1 << 160) - 1
+_INT_MAX = (1 << 63) - 1
+_STATE_FIELDS = frozenset(f.name for f in fields(VmState))
+_CONTEXT_FIELDS = frozenset(f.name for f in fields(ExecContext))
+
+
+def _is_number(value: Any, highest: int) -> bool:
+    """An integer from 0 to `highest`. A boolean is not one."""
+    return type(value) is int and 0 <= value <= highest
+
+
+def not_a_state(state: Any) -> Optional[str]:
+    """Say what keeps `state` from being a state of the machine, or None.
+
+    A state of the machine is a `VmState` and nothing more, whose fields
+    have the types, the ranges and the sizes of structure version 1
+    (`docs/api-stability.md`, section 9.22). The machine reaches no other
+    state. A state handed in from outside is one only if this says so: a
+    word written as a text hashes like the word and does not behave like
+    it. Sizes are read first, and nothing is copied or hashed."""
+    if type(state) is not VmState or vars(state).keys() != _STATE_FIELDS:
+        return "it is not a VmState"
+    for name, kind in (("stack", list), ("memory", bytearray), ("output", bytes), ("storage", dict)):
+        if type(getattr(state, name)) is not kind:
+            return f"its {name} is not a {kind.__name__}"
+    context = state.context
+    if type(context) is not ExecContext or vars(context).keys() != _CONTEXT_FIELDS:
+        return "its context is not an ExecContext"
+    if type(context.calldata) is not bytes:
+        return "its calldata is not bytes"
     beyond = beyond_limits(state)
     if beyond:
-        raise ValueError(f"not a state of the Mini-EVM: its {beyond} is beyond the limit")
+        return f"its {beyond} is beyond the limit"
+    if len(state.memory) % 32:
+        return "its memory is not a number of words"
+    if not _is_number(state.pc, _INT_MAX):
+        return "its pc is out of range"
+    if not _is_number(state.gas, _INT_MAX):
+        return "its gas is out of range"
+    if type(state.halted) is not bool or type(state.reverted) is not bool:
+        return "halted or reverted is not a boolean"
+    for word in state.stack:
+        if not _is_number(word, _WORD_MASK):
+            return "its stack holds something other than a word"
+    for slot, held in state.storage.items():
+        if not _is_number(slot, _WORD_MASK) or not _is_number(held, _WORD_MASK):
+            return "its storage holds something other than a word"
+        if held == 0:
+            return "a slot of its storage holds zero"
+    if not _is_number(context.address, _ADDRESS_MAX) or not _is_number(context.caller, _ADDRESS_MAX):
+        return "an address of its context is out of range"
+    if not _is_number(context.value, _WORD_MASK):
+        return "the value of its context is out of range"
+    if not _is_number(context.block_number, _INT_MAX) or not _is_number(context.block_timestamp, _INT_MAX):
+        return "the block of its context is out of range"
+    if state.reverted and not state.halted:
+        return "it is reverted and not halted"
+    if state.output and not state.halted:
+        return "it has an output and is not halted"
+    return None
+
+
+def require_state(state: Any) -> None:
+    """`ValueError` unless `state` is a state of the machine (`not_a_state`)."""
+    reason = not_a_state(state)
+    if reason:
+        raise ValueError(f"not a state of the Mini-EVM: {reason}")
+
+
+def require_program(code: Any) -> None:
+    """`ValueError` unless `code` is a program of the machine: `bytes`, of
+    `MAX_CODE_BYTES` at most. Its type and its length are read, and nothing
+    else."""
+    if type(code) is not bytes:
+        raise ValueError("not a program of the Mini-EVM: it is not bytes")
+    if len(code) > MAX_CODE_BYTES:
+        raise ValueError("not a program of the Mini-EVM: it is beyond the limit")
 
 
 # ---------------------------------------------------------------------------
@@ -300,12 +373,11 @@ def _dynamic_extra_cost(op: int, state: "VmState", code: bytes) -> int:
             return 0
         key, new_val = vals[0], vals[1]
         current = state.storage.get(key, 0)
-        original = state.original_storage.get(key, current)
-        # sstore_cost() returns total; subtract static SSTORE cost (we set 5000
-        # in v0.3 opcodes.py — but the new dynamic model takes over fully).
-        # GAS_COST[SSTORE] is the BASE static value; replace it.
+        # The price reads the slot and the value written: both are in the
+        # commitment of the state. sstore_cost() returns the total, of which
+        # the static SSTORE cost is already counted.
         static = GAS_COST.get(Op.SSTORE, 5000)
-        return max(0, dg.sstore_cost(current, new_val, original) - static)
+        return max(0, dg.sstore_cost(current, new_val) - static)
 
     if op in (Op.LOG0, Op.LOG1, Op.LOG2, Op.LOG3, Op.LOG4):
         # `step` does not execute the LOG family: events are not modelled,
@@ -348,9 +420,19 @@ def step(state: VmState, code: bytes) -> VmState:
     at first: an instruction that can neither pay nor fit halts for want
     of gas.
 
-    A `state` that is already beyond the limits is not a state of the
-    machine: `ValueError`, before anything copies it."""
-    _require_state(state)
+    What is not a state of the machine is not run: `ValueError`, its
+    sizes read first, before anything copies it, hashes it or reads a word
+    of it (`not_a_state`). Nor is what is not a program of the machine
+    (`require_program`)."""
+    require_program(code)
+    require_state(state)
+    return _advance(state, code)
+
+
+def _advance(state: VmState, code: bytes) -> VmState:
+    """`step`, for a state the machine made itself and a program it has
+    checked: the loops of `execute`, `run` and `TraceStates`, which would
+    otherwise read every word of each state they have just built."""
     try:
         s = _step(state, code)
     except _MemoryLimit as reached:
@@ -624,6 +706,47 @@ def _step(state: VmState, code: bytes) -> VmState:
 # Trace generation
 # ---------------------------------------------------------------------------
 
+class TraceStates:
+    """The states of an execution, read like a list: `states[i]` is the
+    state after `i` steps, `states[-1]` the last one.
+
+    Only the first state and the last one are kept. Any other is run again
+    from the first, without hashing anything: a trace holds one commitment
+    for each step, and not one copy of the memory for each step. What is
+    handed out is a copy: changing it changes nothing in the trace."""
+
+    def __init__(self, code: bytes, first: VmState, last: VmState, n_steps: int) -> None:
+        self._code = code
+        self._first = first
+        self._last = last
+        self._n_steps = n_steps
+
+    def __len__(self) -> int:
+        return self._n_steps + 1
+
+    def __iter__(self) -> Iterator[VmState]:
+        state = self._first
+        yield state.clone()
+        for _ in range(self._n_steps):
+            state = _advance(state, self._code)
+            yield state.clone()
+
+    def __getitem__(self, index: Union[int, slice]) -> Any:
+        if isinstance(index, slice):
+            wanted = range(*index.indices(len(self)))
+            found = {position: state for position, state in enumerate(self) if position in wanted}
+            return [found[position] for position in wanted]
+        position = index + len(self) if index < 0 else index
+        if not 0 <= position < len(self):
+            raise IndexError("no such step in the trace")
+        if position == self._n_steps:
+            return self._last.clone()
+        state = self._first
+        for _ in range(position):
+            state = _advance(state, self._code)
+        return state.clone()
+
+
 @dataclass
 class ExecutionTrace:
     """The full execution trace of a program: every intermediate state
@@ -634,9 +757,12 @@ class ExecutionTrace:
 
     For a program that terminates in N steps, len(states) = N+1, and
     states[N].halted == True.
+
+    `execute` keeps the commitments, the first state and the last one:
+    its `states` give any other back by running the program again.
     """
 
-    states: List[VmState]
+    states: Union[List[VmState], TraceStates]
     commitments: List[bytes]
 
     @property
@@ -666,24 +792,60 @@ def execute(
     AFTER one more instruction has been executed; `states[0]` is the
     initial state (before any instruction).
 
-    `ValueError` when the calldata or the initial storage is beyond the
-    limits of the machine: nothing is hashed and nothing runs."""
-    initial = VmState(
-        gas=gas,
-        storage=dict(initial_storage or {}),
-        original_storage=dict(initial_storage or {}),  # v1.0-rc: SSTORE pricing baseline
-        context=context or ExecContext(),
-    )
-    _require_state(initial)
-    states: List[VmState] = [initial]
+    The trace keeps one commitment for each step, the first state and the
+    last one (`TraceStates`). Every state is hashed on the way: a call,
+    which reads the last state and no other, goes through `run`.
+
+    `ValueError` when `code` is not a program of the machine, or when the
+    gas, the context and the initial storage do not make a state of it:
+    nothing is copied, nothing is hashed and nothing runs."""
+    initial = _initial_state(code, gas, context, initial_storage)
     commitments: List[bytes] = [initial.commitment()]
 
+    last = initial
     for _ in range(max_steps):
-        last = states[-1]
         if last.halted:
             break
-        nxt = step(last, code)
-        states.append(nxt)
-        commitments.append(nxt.commitment())
+        last = _advance(last, code)
+        commitments.append(last.commitment())
 
-    return ExecutionTrace(states=states, commitments=commitments)
+    return ExecutionTrace(states=TraceStates(code, initial, last, len(commitments) - 1), commitments=commitments)
+
+
+def _initial_state(code: bytes, gas: int, context: Optional[ExecContext],
+                   initial_storage: Optional[Dict[int, int]]) -> VmState:
+    """The state a program starts from, or `ValueError`. The size of the
+    initial storage is read before its first copy."""
+    require_program(code)
+    storage: Dict[int, int] = {}
+    if initial_storage is not None:
+        if type(initial_storage) is not dict:
+            raise ValueError("not a state of the Mini-EVM: its storage is not a dict")
+        if len(initial_storage) > MAX_STORAGE_SLOTS:
+            raise ValueError("not a state of the Mini-EVM: its storage is beyond the limit")
+        storage = dict(initial_storage)
+    initial = VmState(gas=gas, storage=storage, context=ExecContext() if context is None else context)
+    require_state(initial)
+    return initial
+
+
+def run(
+    code: bytes,
+    *,
+    gas: int = 1_000_000,
+    max_steps: int = 1_000_000,
+    context: Optional[ExecContext] = None,
+    initial_storage: Optional[Dict[int, int]] = None,
+) -> VmState:
+    """Run `code` as `execute` does and return its last state alone.
+
+    Nothing is kept on the way and nothing is hashed: this is what a call
+    needs. The last state is not halted when `max_steps` ran out first.
+
+    `ValueError` as for `execute`."""
+    state = _initial_state(code, gas, context, initial_storage)
+    for _ in range(max_steps):
+        if state.halted:
+            break
+        state = _advance(state, code)
+    return state
