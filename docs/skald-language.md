@@ -126,6 +126,8 @@ These are available in every entry/view body:
 
 At origination, the invariants see the account that creates the contract as `sender`, the address of the contract as `self`, what that address already holds as `balance`, and an `amount` of 0.
 
+A view is not part of a transaction: nobody signs it and nothing is paid to it. Its `sender` is the zero address and its `amount` is 0. Its `self` and its `balance` are what its caller gives it, and a caller that gives no balance gives 0. Nothing in the node calls a view yet: whatever does must read in the state what the contract holds.
+
 ## Function classes
 
 - **`entry`** — externally callable, may mutate storage. After execution, all invariants must hold.
@@ -143,7 +145,7 @@ Storage is declared once per contract. Each storage field has a name and a type.
 | `string`  | `""`             |
 | `address` | `kn1` + 33 zeros |
 
-Storage assignments are type-checked at runtime. (A future static type checker will enforce this at compile time.)
+Storage assignments are type-checked at runtime. (A future static type checker will enforce this at compile time.) A value given from outside, an initial value or a parameter, is checked the same way, and a type takes nothing else: `true` and `false` are not integers, and `1` is not a boolean.
 
 ## Invariants
 
@@ -253,9 +255,9 @@ The interpreter exposes three entry points to the rest of the node:
 ```python
 interpret_origination(code: str, initial_storage: dict, *, sender=None, self_addr=None, balance=0) -> dict
 interpret_call(code, storage, entry, params, *, sender, amount, self_addr, balance=0) -> dict
-interpret_view(code, storage, view, params, *, self_addr=...) -> Any
+interpret_view(code, storage, view, params, *, self_addr=..., balance=0) -> Any
 ```
 
-The chain gives an origination its `sender`, the address of the contract and what that address holds, and gives a call what the contract holds. A caller outside a chain that leaves them out gets the zero address and a balance of 0.
+The chain gives an origination its `sender`, the address of the contract and what that address holds, and gives a call what the contract holds. A caller outside a chain that leaves them out gets the zero address and a balance of 0. A view takes its `balance` from its caller in the same way.
 
 Each call parses the source from scratch (no caching yet); a production node will store compiled KVM bytecode in the contract's state and skip re-parsing.
