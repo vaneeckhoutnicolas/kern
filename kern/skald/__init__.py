@@ -529,7 +529,9 @@ def _coerce_default(type_: str) -> Any:
 
 
 def _typecheck(value: Any, type_: str, *, where: str) -> None:
-    if type_ == "int" and not isinstance(value, int):
+    # An integer is an integer and nothing else: Python counts True and
+    # False among its integers, and a contract does not.
+    if type_ == "int" and type(value) is not int:
         raise SkaldError(f"{where}: expected int, got {type(value).__name__}")
     if type_ == "string" and not isinstance(value, str):
         raise SkaldError(f"{where}: expected string, got {type(value).__name__}")
@@ -823,8 +825,13 @@ def interpret_view(
     params: Any,
     *,
     self_addr: str = "kn1" + "0" * 33,
+    balance: int = 0,
 ) -> Any:
-    """Run a `view` function and return its value. Storage is not modified."""
+    """Run a `view` function and return its value. Storage is not modified.
+
+    Nobody signs a view and nothing is paid to it: its `sender` is the zero
+    address and its `amount` is 0. `balance` is what the contract holds,
+    which the caller reads in the state; a caller that gives none gives 0."""
     import copy
     contract = parse(code)
     if view not in contract.functions:
@@ -847,6 +854,6 @@ def interpret_view(
         "sender": "kn1" + "0" * 33,
         "amount": 0,
         "self": self_addr,
-        "balance": 0,
+        "balance": balance,
     })
     return interp._call(fn, args)
