@@ -38,7 +38,7 @@ explorer = [
 ]
 docs = [
     "mkdocs>=1.6.1",
-    "mkdocs-material>=9.8.1",
+    "mkdocs-material>=9.8.2",
     "pymdown-extensions>=13.1",
 ]
 
