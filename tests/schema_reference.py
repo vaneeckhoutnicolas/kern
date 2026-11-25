@@ -14,8 +14,9 @@ Transactions, block headers, blocks, consensus messages, certificates, the
 frames peers exchange and the body of an injection request. Chapter 2:
 what is kept. The state and the rules that tie its tables together, the
 account of the state trie, the key registry, the genesis and the block of
-level 0, and three rules that are not forms: what a block charges, in what
-order proposals are decided, and how a request for blocks finds its
+level 0, and the rules that are not forms: what a block charges, which key
+a first transaction carries, in what order proposals are decided, what
+each kind of transaction does, and how a request for blocks finds its
 answer. Chapter 3: what is hashed outside blocks. Rollup batches, forced
 inclusion requests, states of the Mini-EVM and verifier keys.
 
@@ -38,6 +39,7 @@ from typing import Any, Callable, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))      # the reference of the profile stands next to this file
 
+import ed25519_reference as ed                                # noqa: E402
 import profile_reference as ref                               # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -1936,8 +1938,8 @@ def first_block_hash(genesis: dict) -> bytes:
 # -- what a block charges (section 9.16) --------------------------------------
 # A block holds only transactions it charges. The rules below say when it
 # does not: each one makes the block invalid. A schema verifies no signature,
-# so the two rules of the note on signatures and keys are sentences of the
-# document only.
+# so the rule of the note on signatures is a sentence of the document only.
+# The one on keys is, here, the five rules of KEY_RULES.
 
 BLOCK_RULES = {
     "block_too_large": "The sizes of its transactions add up to `max_block_bytes` at most.",
@@ -2017,6 +2019,55 @@ def charge(state: dict, proposer: str, transactions: list[dict]) -> dict:
         _moved(balances, tx["sender"], -tx["amount"])
         _moved(balances, tx["recipient"], tx["amount"])
     return {"valid": True, "balances": balances, "nonces": nonces, "failed": failed}
+
+
+# -- the key a first transaction carries (section 9.16) ------------------------
+# The seventh rule of what a block charges, cut in five: each of them makes
+# the block invalid. The fourth is the check the note makes of a key before
+# it is recorded. It reads the bytes of the key and verifies no signature.
+
+KEY_RULES = {
+    "key_missing": "A sender that has no key in `keys` carries its `public_key`.",
+    "key_carried_again": "A sender that has a key in `keys` carries none.",
+    "key_of_another": "The hash of the key a transaction carries is the address of its sender.",
+    "not_a_key": "That key passes the check the note makes of a key before it is recorded (its section 4.5, rule 4).",
+    "key_known": "No address has had that key.",
+}
+
+
+def _keyed(network_id: bytes, keys: dict, level: int, tx: dict) -> str | None:
+    """Looks at the key a transaction carries when its turn comes: the rule
+    that it breaks, the first one in the order of the document, which makes
+    its block invalid, or nothing once the key it carries is recorded from
+    the level of the block."""
+    sender = tx["sender"]
+    if "public_key" not in tx:
+        return None if sender in keys else "key_missing"
+    if sender in keys:
+        return "key_carried_again"
+    public_key = ref.key_from_text(tx["public_key"])
+    if ref.account_address(network_id, public_key) != sender:
+        return "key_of_another"
+    if not ed.is_a_key(key_parts(public_key)[1]):
+        return "not_a_key"
+    if any(ref.key_from_text(entry["public_key"]) == public_key for entries in keys.values() for entry in entries):
+        return "key_known"
+    keys[sender] = [{"from": level, "public_key": tx["public_key"]}]
+    return None
+
+
+def first_keys(network_id: bytes, before: dict, transactions: list[dict]) -> dict:
+    """What the transactions of a block do to the key registry, or the rule
+    that makes the block invalid. `before` holds the level of the block
+    (`level`) and `keys`. A transaction is looked at on the registry as the
+    transactions before it left it: the second transaction of a new account
+    finds the key that the first one recorded."""
+    keys = copy.deepcopy(before["keys"])
+    for i, tx in enumerate(transactions):
+        rule = _keyed(network_id, keys, before["level"], tx)
+        if rule is not None:
+            return {"valid": False, "rule": rule, "at": i}
+    return {"valid": True, "keys": keys}
 
 
 # -- deciding proposals (section 9.16) ----------------------------------------
@@ -2150,6 +2201,363 @@ def guard(before: dict, operations: list[dict]) -> dict:
     return {"did": did, "treasury_holds": held_by_treasury, "burned": burned,
             "payments": {identifier: {name: payment[name] for name in ("phase", "released_by") if name in payment}
                          for identifier, payment in payments.items()}}
+
+
+# -- what a delegation does (section 9.16) -------------------------------------
+# From here to the arithmetic: the operations of the kinds of transactions
+# that write a table of the state. An operation that breaks one of its rules
+# fails: its transaction stays in its block, has paid its fee, and changes
+# nothing else. The engines name the first rule broken, in the order of the
+# document.
+
+DELEGATING_RULES = {
+    "no_such_validator": "A `delegate_stake` names a validator of the state.",
+    "own_validator": "That validator is not its sender.",
+    "other_validator": "Its sender has no delegation to another validator.",
+    "stake_not_held": "Its sender holds its `amount`.",
+    "no_delegation": "The sender of an `undelegate_stake` has a delegation.",
+    "release_out_of_range": "The level at which that delegation is released, the level of the block plus "
+                            "`delegation_unbonding_blocks`, is not above 2^63 - 1.",
+}
+DELEGATING_TABLES = ("balances", "validators", "consensus_set", "delegations", "delegation_unbonding")
+
+
+def _staked(tables: dict, level: int, period: int, tx: dict) -> str:
+    """A `delegate_stake` or an `undelegate_stake` on the tables of a state,
+    in the block of a level: `delegated`, `ended`, or the rule that makes
+    it fail, in which case nothing has changed."""
+    sender, balances, held = tx["sender"], tables["balances"], tables["delegations"].get(tx["sender"])
+    if tx["kind"] == "delegate_stake":
+        validator, amount = tx["params"]["validator"], tx["amount"]
+        if all(entry["address"] != validator for entry in tables["validators"]):
+            return "no_such_validator"
+        if validator == sender:
+            return "own_validator"
+        if held is not None and held["validator"] != validator:
+            return "other_validator"
+        if balances.get(sender, 0) < amount:
+            return "stake_not_held"
+        _moved(balances, sender, -amount)
+        if held is None:
+            held = tables["delegations"][sender] = {"validator": validator, "amount": 0, "tranches": []}
+        held["amount"] += amount
+        if held["tranches"] and held["tranches"][-1]["level"] == level:
+            held["tranches"][-1]["amount"] += amount
+        else:
+            held["tranches"].append({"level": level, "amount": amount})
+        return "delegated"
+    if held is None:
+        return "no_delegation"
+    if level + period > INT_MAX:
+        return "release_out_of_range"
+    del tables["delegations"][sender]
+    tables["delegation_unbonding"].append({"delegator": sender, **held, "unbonding_from": level,
+                                           "release_at": level + period})
+    validator = next(entry for entry in tables["validators"] if entry["address"] == held["validator"])
+    weight = next(entry for entry in tables["consensus_set"] if entry["address"] == held["validator"])
+    weight["stake"] = min(weight["stake"], validator["stake"] + _delegated(tables, held["validator"]))
+    return "ended"
+
+
+def delegate(before: dict, operations: list[dict]) -> dict:
+    """What the delegations of a block do, and the ends of delegations.
+    `before` holds the level of the block (`level`),
+    `delegation_unbonding_blocks`, and the tables they read and write:
+    `balances`, `validators`, `consensus_set`, `delegations` and
+    `delegation_unbonding`. An operation is its `sender`, its `kind` and,
+    for a `delegate_stake`, its `amount` and its `params`.
+
+    Returns what each operation did, `delegated` or `ended`, or the rule
+    that makes it fail; then the tables as the operations leave them."""
+    tables = copy.deepcopy({name: before[name] for name in DELEGATING_TABLES})
+    did = [_staked(tables, before["level"], before["delegation_unbonding_blocks"], operation)
+           for operation in operations]
+    return {"did": did, **tables}
+
+
+# -- proposals and votes (section 9.16) ----------------------------------------
+
+PROPOSING_RULES = {
+    "not_by_a_validator": "A `governance_propose` of the protocol track is sent by a validator.",
+    "known_proposal": "No proposal of its track, in the state, has its identifier.",
+    "crossed_rates": "Its `params` do not hold an `i_min_ppm` above their `i_max_ppm`.",
+    "bond_not_held": "Its sender holds the bond of its track.",
+    "voter_not_a_validator": "A `governance_vote` is sent by a validator.",
+    "unknown_proposal": "It names a proposal of its `track`, in the state.",
+    "vote_not_open": "A vote of that proposal is open: its `phase` is `exploration` or `adoption` on the protocol "
+                     "track, `voting` on the treasury track.",
+}
+PROPOSING_TABLES = ("balances", "validators", "governance")
+OPEN_VOTES = {"protocol": ("exploration", "adoption"), "treasury": ("voting",)}
+
+
+def _governed(network_id: bytes, tables: dict, bonds: Mapping[str, int], level: int, tx: dict) -> str:
+    """A `governance_propose` or a `governance_vote` on the tables of a
+    state, in the block of a level: `submitted`, `voted`, or the rule that
+    makes it fail, in which case nothing has changed. `bonds` holds
+    `protocol_bond` and `treasury_bond`."""
+    sender, params, balances = tx["sender"], tx["params"], tables["balances"]
+    track = params["track"]
+    proposals = tables["governance"][track]
+    is_validator = any(entry["address"] == sender for entry in tables["validators"])
+    if tx["kind"] == "governance_propose":
+        identifier, bond = proposal_id(network_id, tx).hex(), bonds[track + "_bond"]
+        rates = params["payload"].get("params", {})
+        if track == "protocol" and not is_validator:
+            return "not_by_a_validator"
+        if any(proposal["proposal_id"] == identifier for proposal in proposals):
+            return "known_proposal"
+        if "i_min_ppm" in rates and "i_max_ppm" in rates and rates["i_min_ppm"] > rates["i_max_ppm"]:
+            return "crossed_rates"
+        if balances.get(sender, 0) < bond:
+            return "bond_not_held"
+        _moved(balances, sender, -bond)
+        votes = {"exploration_votes": {}, "adoption_votes": {}, "double_votes": []} if track == "protocol" \
+            else {"votes": {}}
+        proposals.append({"proposal_id": identifier, "submitter": sender, "payload": copy.deepcopy(params["payload"]),
+                          "submitted_at": level, "phase": "submitted", **votes, "bond": bond})
+        return "submitted"
+    if not is_validator:
+        return "voter_not_a_validator"
+    proposal = next((entry for entry in proposals if entry["proposal_id"] == params["proposal_id"]), None)
+    if proposal is None:
+        return "unknown_proposal"
+    phase = proposal["phase"]
+    if phase not in OPEN_VOTES[track]:
+        return "vote_not_open"
+    if track == "treasury":
+        proposal["votes"][sender] = params["vote"]                  # the last vote of a validator replaces its first
+        return "voted"
+    votes = proposal[phase + "_votes"]
+    if sender not in votes:
+        votes[sender] = params["vote"]                              # the first vote of a phase stands
+    elif votes[sender] != params["vote"] and all((double["voter"], double["phase"]) != (sender, phase)
+                                                 for double in proposal["double_votes"]):
+        proposal["double_votes"].append({"voter": sender, "phase": phase, "level": level, "punished": False})
+    return "voted"
+
+
+def govern(network_id: bytes, before: dict, operations: list[dict]) -> dict:
+    """What the proposals and the votes of a block do. `before` holds the
+    level of the block (`level`), `protocol_bond`, `treasury_bond`, and the
+    tables they read and write: `balances`, `validators` and `governance`.
+    An operation is its `sender`, its `kind` and its `params`.
+
+    Returns what each operation did, `submitted` or `voted`, or the rule
+    that makes it fail; then `balances` and `governance` as the operations
+    leave them."""
+    tables = copy.deepcopy({name: before[name] for name in PROPOSING_TABLES})
+    did = [_governed(network_id, tables, before, before["level"], operation) for operation in operations]
+    return {"did": did, "balances": tables["balances"], "governance": tables["governance"]}
+
+
+# -- what an attestation does (section 9.16) -----------------------------------
+
+ATTESTING_RULES = {
+    "amount_not_held": "The sender of an `attest` holds its `amount`.",
+    "unknown_attestation": "A `revoke_attestation` names an attestation of the state.",
+    "not_the_issuer": "Its sender is the issuer of that attestation.",
+    "revoked_already": "That attestation is not revoked.",
+    "slashed_attestation": "It is not slashed.",
+}
+ATTESTING_TABLES = ("balances", "attestations")
+
+
+def _attested(network_id: bytes, tables: dict, level: int, tx: dict) -> str:
+    """An `attest` or a `revoke_attestation` on the tables of a state, in
+    the block of a level: `attested`, `revoked`, or the rule that makes it
+    fail, in which case nothing has changed."""
+    sender, params, balances, attestations = tx["sender"], tx["params"], tables["balances"], tables["attestations"]
+    if tx["kind"] == "attest":
+        if balances.get(sender, 0) < tx["amount"]:
+            return "amount_not_held"
+        identifier = attestation_id(network_id, tx).hex()
+        if identifier in attestations:
+            raise ValueError("two attestations of one sender under one nonce: no block holds them")
+        _moved(balances, sender, -tx["amount"])
+        attestations[identifier] = {"issuer": sender, "schema_id": params["schema_id"], "subject": params["subject"],
+                                    "claim": copy.deepcopy(params["claim"]), "bond": tx["amount"],
+                                    "issued_at": level, "slashed": False}
+        return "attested"
+    attestation = attestations.get(params["attestation_id"])
+    if attestation is None:
+        return "unknown_attestation"
+    if attestation["issuer"] != sender:
+        return "not_the_issuer"
+    if "revoked_at" in attestation:
+        return "revoked_already"
+    if attestation["slashed"]:
+        return "slashed_attestation"
+    attestation["revoked_at"] = level
+    return "revoked"
+
+
+def attest(network_id: bytes, before: dict, operations: list[dict]) -> dict:
+    """What the attestations of a block do, and their revocations. `before`
+    holds the level of the block (`level`), `balances` and `attestations`.
+    An operation is its `sender`, its `kind`, its `params` and, for an
+    `attest`, its `nonce` and its `amount`.
+
+    Returns what each operation did, `attested` or `revoked`, or the rule
+    that makes it fail; then the two tables as the operations leave them.
+    The bond of a revoked attestation returns later, at step 4 of a block:
+    nothing returns here."""
+    tables = copy.deepcopy({name: before[name] for name in ATTESTING_TABLES})
+    did = [_attested(network_id, tables, before["level"], operation) for operation in operations]
+    return {"did": did, **tables}
+
+
+# -- what a contract does (section 9.16) ---------------------------------------
+# This file has no interpreter of the language, and neither has the Go
+# program: what the language says of a code is given to them. A vector
+# carries it for each of its transactions that asks (`language`), and
+# tests/test_schema_vectors.py asks the interpreter of the node the same
+# questions and compares. Everything around the language is written here.
+
+CONTRACT_RULES = {
+    "code_refused": "The language accepts the `code` of an `originate`: the code reads, none of its statements is "
+                    "more than 64 levels deep, and its types are right.",
+    "fields_out_of_bounds": "That code declares 256 fields at most, each under a `name`.",
+    "undeclared_field": "Every name of `initial_storage` is a field the code declares.",
+    "wrong_value": "Every value of `initial_storage` is of the type of its field: an integer for `int`, `true` or "
+                   "`false` for `bool`, a text for `string`, an address of the network for `address`.",
+    "address_not_named": "`initial_storage` names every field of the type `address`.",
+    "invariant_refused": "The invariants of the contract hold on its first storage.",
+    "not_a_contract": "The `recipient` of a `call` is the address of a contract.",
+    "payment_not_held": "The sender of a `call` holds its `amount`.",
+    "wrong_parameters": "`entry` is an entry point of that contract, and `params` names the parameters of that entry "
+                        "point, all of them and no other, each with a value of its type.",
+    "execution_refused": "The execution succeeds: no `require` refuses, no value leaves the type `value`, the "
+                         "execution stays within its 10,000 steps and its 64 levels, and the invariants hold on the "
+                         "storage it leaves.",
+}
+CONTRACT_TABLES = ("balances", "contracts")
+DEFAULTS = {"int": 0, "bool": False, "string": ""}                  # a field of the type `address` has none
+
+
+class Said:
+    """What the language says of the transactions of a vector, by their
+    positions (`language`). For an `originate`: `declares`, the fields of
+    its code, each with its type, absent when the language refuses the
+    code; then `receives`, what the check of its invariants is given, and
+    `holds`, whether they hold. For a `call`: `takes`, the parameters of
+    its entry point, each with its type, absent when the contract has no
+    such entry point; then `receives`, what the execution is given, and
+    `leaves`, the storage it leaves, absent when it fails.
+
+    `receives` is not an answer: it is what an engine must have built when
+    it asks, and an engine that built something else is told so. A vector
+    says nothing that is not asked: `done` checks it."""
+
+    def __init__(self, language: Mapping[str, dict] | None = None) -> None:
+        self.language = dict(language or {})
+        self.asked: set[tuple[str, str]] = set()
+
+    def says(self, position: int, question: dict) -> Any:
+        if str(position) not in self.language:
+            raise ValueError(f"nothing is said of the language for the transaction {position}")
+        said, asks = self.language[str(position)], question["asks"]
+        self.asked.add((str(position), asks))
+        if "receives" in question:
+            if said.get("receives") != question["receives"]:
+                raise ValueError(f"transaction {position}: not what its execution is said to receive")
+            self.asked.add((str(position), "receives"))
+        return said["holds"] if asks == "holds" else said.get(asks)
+
+    def done(self) -> None:
+        for position, said in self.language.items():
+            if not any(where == position for where, _ in self.asked) or \
+                    any((position, name) not in self.asked for name in said):
+                raise ValueError(f"transaction {position}: more is said of the language than is asked")
+
+
+def _of_type(network_id: bytes, value: Any, type_: str) -> bool:
+    """Whether a value is of a type of the language."""
+    if type_ == "int":
+        return type(value) is int
+    if type_ == "bool":
+        return type(value) is bool
+    if type_ == "string":
+        return isinstance(value, str)
+    try:
+        address_hash(network_id, value)
+    except ValueError:
+        return False
+    return type_ == "address"
+
+
+def _is_a_name(text: str) -> bool:
+    try:
+        NAME.check(text, Context(b""), "")
+    except Refused:
+        return False
+    return True
+
+
+def _contracted(network_id: bytes, tables: dict, tx: dict, says: Callable[[dict], Any]) -> str:
+    """An `originate` or a `call` on the tables of a state: `originated`,
+    `called`, or the rule that makes it fail, in which case nothing has
+    changed. `says` answers for the language."""
+    sender, balances, contracts = tx["sender"], tables["balances"], tables["contracts"]
+    if tx["kind"] == "originate":
+        code, named = tx["code"], tx["initial_storage"]
+        declared = says({"asks": "declares", "code": code})
+        if declared is None:
+            return "code_refused"
+        if len(declared) > LIMITS["contract_fields"] or not all(_is_a_name(name) for name in declared):
+            return "fields_out_of_bounds"
+        if any(name not in declared for name in named):
+            return "undeclared_field"
+        if any(not _of_type(network_id, value, declared[name]) for name, value in named.items()):
+            return "wrong_value"
+        if any(type_ == "address" and name not in named for name, type_ in declared.items()):
+            return "address_not_named"
+        address = ref.contract_address(network_id, transaction_id(network_id, tx))
+        storage = {name: named[name] if name in named else DEFAULTS[type_] for name, type_ in declared.items()}
+        receives = {"sender": sender, "amount": 0, "self": address, "balance": balances.get(address, 0),
+                    "storage": storage}
+        if not says({"asks": "holds", "code": code, "receives": receives}):
+            return "invariant_refused"
+        contracts[address] = {"code": code, "storage": copy.deepcopy(storage)}
+        return "originated"
+    recipient, amount = tx["recipient"], tx["amount"]
+    contract = contracts.get(recipient)
+    if contract is None:
+        return "not_a_contract"
+    if balances.get(sender, 0) < amount:
+        return "payment_not_held"
+    takes = says({"asks": "takes", "code": contract["code"], "entry": tx["entry"]})
+    if takes is None or set(tx["params"]) != set(takes) or \
+            any(not _of_type(network_id, value, takes[name]) for name, value in tx["params"].items()):
+        return "wrong_parameters"
+    receives = {"sender": sender, "amount": amount, "self": recipient, "balance": balances.get(recipient, 0) + amount,
+                "storage": copy.deepcopy(contract["storage"])}
+    left = says({"asks": "leaves", "code": contract["code"], "entry": tx["entry"], "params": tx["params"],
+                 "receives": receives})
+    if left is None:
+        return "execution_refused"
+    _moved(balances, sender, -amount)
+    _moved(balances, recipient, amount)
+    contract["storage"] = copy.deepcopy(left)
+    return "called"
+
+
+def contract(network_id: bytes, before: dict, transactions: list[dict], language: Any) -> dict:
+    """What the originations and the calls of a block do. `before` holds
+    `balances` and `contracts`. These are whole transactions: the address
+    of a contract comes from the identifier of the transaction that
+    originates it. `language` answers for the language, question by
+    question (`says`), and is told when everything is asked (`done`): a
+    `Said`, which reads the answers a vector carries, or anything that has
+    these two methods.
+
+    Returns what each transaction did, `originated` or `called`, or the
+    rule that makes it fail; then the two tables as they leave them."""
+    tables = copy.deepcopy({name: before[name] for name in CONTRACT_TABLES})
+    did = [_contracted(network_id, tables, tx, lambda question, at=i: language.says(at, question))
+           for i, tx in enumerate(transactions)]
+    language.done()
+    return {"did": did, **tables}
 
 
 # -- the arithmetic of a block (section 9.17) ---------------------------------
@@ -2410,8 +2818,7 @@ WHOLE_BLOCK_RULES = {
     "wrong_state_root": "The `state_root` of its header is the root of the state the block leads to, computed by "
                         "the function that state names.",
 }
-WHOLE_BLOCK_KINDS = ("transfer", "release_payment", "cancel_payment", "slash_equivocation",
-                     "slash_consensus_equivocation", "slash_attestation_equivocation")
+WHOLE_BLOCK_KINDS = tuple(kind for kind in KINDS if kind != "rotate_key")      # a rotation comes with its own vectors
 
 
 def _lost(state: dict, bond: int) -> None:
@@ -2460,18 +2867,28 @@ def _guarded(state: dict, tx: dict) -> bool:
     return True
 
 
-def _operated(state: dict, tx: dict) -> bool:
+def _operated(network_id: bytes, state: dict, tx: dict, says: Callable[[dict], Any]) -> bool:
     """The operation of a transaction that has paid, on a whole state:
-    whether it succeeded. One that fails changes nothing else."""
-    balances = state["balances"]
-    if tx["kind"] == "transfer":
+    whether it succeeded. One that fails changes nothing else. `says`
+    answers for the language, when the transaction creates or calls a
+    contract."""
+    balances, kind, level, constants = state["balances"], tx["kind"], state["level"], state["constants"]
+    if kind == "transfer":
         if balances.get(tx["sender"], 0) < tx["amount"]:
             return False
         _moved(balances, tx["sender"], -tx["amount"])
         _moved(balances, tx["recipient"], tx["amount"])
         return True
-    if tx["kind"] in ("release_payment", "cancel_payment"):
+    if kind in ("release_payment", "cancel_payment"):
         return _guarded(state, tx)
+    if kind in ("delegate_stake", "undelegate_stake"):
+        return _staked(state, level, constants["delegation_unbonding_blocks"], tx) not in DELEGATING_RULES
+    if kind in ("governance_propose", "governance_vote"):
+        return _governed(network_id, state, constants, level, tx) not in PROPOSING_RULES
+    if kind in ("attest", "revoke_attestation"):
+        return _attested(network_id, state, level, tx) not in ATTESTING_RULES
+    if kind in ("originate", "call"):
+        return _contracted(network_id, state, tx, says) not in CONTRACT_RULES
     outcome = _reported(state, state["governance"]["protocol"], state["level"],
                         state["constants"]["delegation_unbonding_blocks"], tx)
     if isinstance(outcome, str):
@@ -2526,16 +2943,17 @@ def _moved_on(state: dict) -> None:
                 _moved(balances, proposal["submitter"], bond)
 
 
-def transition(state: dict, block: dict) -> dict:
+def transition(network_id: bytes, state: dict, block: dict, language: Any = None) -> dict:
     """What a block does to a whole state, by the eight steps of section
     9.16: the state it leads to and the positions of the transactions whose
     operation failed, or the rule that makes the block invalid. The root of
     that state is not looked at here: `apply` does.
 
-    The blocks of these vectors hold transfers, the transactions of
-    guardians and the reports of offences, sent by accounts whose key the
-    state holds, and their proposer is a validator: no signature is
-    verified, and neither is the draw of the proposer."""
+    The blocks of these vectors hold every kind of transaction but a
+    `rotate_key`, among them the first transaction of an account, which
+    carries its key. Their proposer is a validator: no signature is
+    verified, and neither is the draw of the proposer. `language` answers
+    for the language where a block creates or calls a contract (`Said`)."""
     header, transactions = block["header"], block["transactions"]
     level, proposer = header["level"], header["proposer"]
     if level != state["level"] + 1:
@@ -2546,16 +2964,18 @@ def transition(state: dict, block: dict) -> dict:
         raise ValueError("the proposer of a whole block of these vectors is a validator")
     new = copy.deepcopy(state)
     balances, constants = new["balances"], new["constants"]
+    language = Said() if language is None else language
     new["level"] = level                                                                 # step 1
     failed = []
     for i, tx in enumerate(transactions):                                                # step 2
-        rule = _charged(new, balances, new["nonces"], proposer, tx)
+        if tx["kind"] not in WHOLE_BLOCK_KINDS:
+            raise ValueError("a transaction that the whole blocks of these vectors do not hold")
+        rule = _charged(new, balances, new["nonces"], proposer, tx) or _keyed(network_id, new["keys"], level, tx)
         if rule is not None:
             return {"valid": False, "rule": rule, "at": i}
-        if tx["kind"] not in WHOLE_BLOCK_KINDS or "public_key" in tx or tx["sender"] not in new["keys"]:
-            raise ValueError("a transaction that the whole blocks of these vectors do not hold")
-        if not _operated(new, tx):
+        if not _operated(network_id, new, tx, lambda question, at=i: language.says(at, question)):
             failed.append(i)
+    language.done()
     minted = reward(new, proposer)                                                       # step 3
     for address, amount in minted["credits"].items():
         _moved(balances, address, amount)
@@ -2582,10 +3002,10 @@ def transition(state: dict, block: dict) -> dict:
     return {"valid": True, "state": new, "failed": failed}
 
 
-def apply(network_id: bytes, state: dict, block: dict) -> dict:
+def apply(network_id: bytes, state: dict, block: dict, language: Any = None) -> dict:
     """A whole block on a whole state: what `transition` gives, when the
     header of the block commits to the state it leads to."""
-    result = transition(state, block)
+    result = transition(network_id, state, block, language)
     if result["valid"] and block["header"]["state_root"] != state_root(network_id, result["state"]).hex():
         return {"valid": False, "rule": "wrong_state_root"}
     return result
@@ -2909,8 +3329,13 @@ def rules() -> dict[str, list[str]]:
         if obj.rules:
             out[heading(obj)] = [sentence for sentence, _ in obj.rules]
     out["What a block charges"] = list(BLOCK_RULES.values()) + SIGNATURE_RULES
+    out["The key a first transaction carries"] = list(KEY_RULES.values())
     out["Deciding proposals"] = list(DECIDING_RULES)
     out["What a guardian does"] = list(GUARDIAN_RULES.values())
+    out["What a delegation does"] = list(DELEGATING_RULES.values())
+    out["Proposals and votes"] = list(PROPOSING_RULES.values())
+    out["What an attestation does"] = list(ATTESTING_RULES.values())
+    out["What a contract does"] = list(CONTRACT_RULES.values())
     out["9.17 The arithmetic of a block"] = list(ARITHMETIC_RULES)
     out["The reward of a block"] = list(REWARD_RULES)
     out["The share of the delegators"] = list(SHARING_RULES)

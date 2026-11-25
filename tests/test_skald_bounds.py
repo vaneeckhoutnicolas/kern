@@ -924,6 +924,60 @@ def test_no_page_gives_an_integer_of_a_contract_more_than_64_bits():
     assert "a code nested deeper than 64 levels is not read" in stability
 
 
+def test_the_page_of_stability_says_what_the_bound_on_nesting_refuses():
+    """The bound stands far below the depth at which the Python stack of a
+    node decided, and it also refuses code that every node read before it:
+    a sum of 64 terms is the shortest one, and a sum of 63 terms is read."""
+    assert interpret_origination(sum_of(63), None) == {"n": 0}
+    with pytest.raises(SkaldError, match="a statement is 64 levels deep at most"):
+        interpret_origination(sum_of(64), None)
+    promise = page("api-stability.md")
+    promise = promise[promise.index("### 3.3 Skald language"):promise.index("### 3.4 ")]
+    assert ("Near the limit of the Python stack, a deeper code was read or refused according to the node that read "
+            "it; the bound is set far below that limit, so that every node gives the same answer. It also refuses "
+            "code that every node read before: a sum of 64 terms, for instance.") in promise
+    assert "no node could promise" not in promise
+
+
+RATIO = "contract Ratio { storage { q: int, r: int, } entry divide(a: int, b: int) { q = a / b; r = a % b; } }"
+
+
+@pytest.mark.parametrize("a, b, quotient, remainder", [(-7, 2, -4, 1), (7, -2, -4, -1), (7, 2, 3, 1), (-7, -2, 3, -1),
+                                                       (-8, 2, -4, 0), (0, -2, 0, 0)])
+def test_control_a_division_rounds_down_and_a_remainder_takes_the_sign_of_its_divisor(a, b, quotient, remainder):
+    assert call(RATIO, {"q": 0, "r": 0}, "divide", {"a": a, "b": b}) == {"q": quotient, "r": remainder}
+    assert quotient * b + remainder == a
+
+
+def test_the_page_of_the_language_says_how_a_division_rounds():
+    language = page("skald-language.md")
+    assert ("Integer division (`/`) rounds down, toward minus infinity: `-7 / 2` is `-4`, and so is `7 / -2`. The "
+            "remainder (`%`) takes the sign of its divisor: `-7 % 2` is `1`, and `7 % -2` is `-1`.") in language
+    assert "truncat" not in language
+
+
+def test_no_page_says_that_a_flat_fee_answers_for_what_a_contract_computes():
+    """The fee of the L1 is flat and nothing meters compute: the pages say
+    so, and say no more of it than that the interpreter bounds an
+    execution."""
+    paper, floor = page("whitepaper.md"), page("fee-floor.md")
+    assert ("Skald has no loop and no recursion, and the interpreter bounds every execution; the L1 layer does not "
+            "meter compute, and the fee does not depend on it.") in paper
+    assert "to add a fee component that grows with the size of a transaction and a spam bound" in paper
+    opening = " ".join(floor[:floor.index("## Why this is a consensus rule")].split())
+    assert ("Skald has no loop and no recursion, and the interpreter bounds every execution (see "
+            "[`skald-language.md`](skald-language.md), \"Bounds\"). That bounds one execution. It provides no fee "
+            "that grows with what a transaction costs a node, and no per-block spam bound.") in opening
+    assert ("an **optional** mechanism that adds a fee floor, which grows with the size of a transaction, and a cap "
+            "on the size of a block, and that is **off by default**") in opening
+    for text in (paper, floor, page("skald-language.md")):
+        words = " ".join(text.split())
+        for claim in ("safe against compute", "metering is not required", "compute-proportional",
+                      "termination is structural"):
+            assert claim not in words, claim
+    assert skald.MAX_STEPS == 10_000 and "## Bounds" in page("skald-language.md")
+
+
 # ---------------------------------------------------------------------------
 # The contracts of the repository
 # ---------------------------------------------------------------------------

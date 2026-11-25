@@ -1,11 +1,12 @@
 # L1 fee floor & block size cap (optional, governance-gated)
 
-The Kern L1 charges a flat, sender-chosen `tx.fee` and does not meter compute
-(it relies on Skald being loop-free and non-recursive to terminate by
-construction — see [`skald-language.md`](skald-language.md)). That is safe
-against compute-DoS but provides no *compute-proportional* fee and no per-block
-spam bound. This document describes an **optional** mechanism that adds both,
-and that is **off by default**.
+The Kern L1 charges a flat, sender-chosen `tx.fee` and does not meter compute:
+Skald has no loop and no recursion, and the interpreter bounds every execution
+(see [`skald-language.md`](skald-language.md), "Bounds"). That bounds one
+execution. It provides no fee that grows with what a transaction costs a node,
+and no per-block spam bound. This document describes an **optional** mechanism
+that adds a fee floor, which grows with the size of a transaction, and a cap on
+the size of a block, and that is **off by default**.
 
 ## Why this is a consensus rule (and therefore not a local flag)
 

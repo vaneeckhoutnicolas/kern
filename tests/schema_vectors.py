@@ -13,8 +13,10 @@ Keys and signatures weigh kilobytes, and a bound is only tested by an
 object that reaches it. The file therefore writes objects with
 directives, which both programs carry out in the same way, and pins every
 object by the length of its canonical encoding and the start of its
-SHA3-384. The fillers are not keys, and no signature in these vectors
-verifies: verifying signatures is not what a schema does.
+SHA3-384. The fillers are not keys of anyone, and no signature in these
+vectors verifies: verifying signatures is not what a schema does. The
+Ed25519 part of a few fillers passes the check the note makes of a key,
+and the vectors of first transactions use them.
 
     python tests/schema_vectors.py            rebuilds schemas.json
 """
@@ -26,7 +28,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))      # the references stand next to this file
 
@@ -362,8 +364,34 @@ DESCRIPTION = (
     "block leads to as the members to remove from the first state (`remove`) and the values to put in place "
     "(`set`), the positions of the transactions whose operation failed (`failed`), the root of that state "
     "(`state_root`, which is the one in the header of the block) and the pin of its canonical encoding; or `rule` "
-    "names what makes the block invalid, by a key of `whole_block_rules` or of `block_rules`, and `at` the position "
+    "names what makes the block invalid, by a key of `whole_block_rules`, of `block_rules` or of `key_rules`, and "
+    "`at` the position "
     "of the transaction that breaks it. "
+    "`first_transactions` holds the transactions of one block as the key registry sees them: `before` gives the level"
+    " of the block and `keys`; `then` gives the registry afterwards, or `rule` names, by a key of `key_rules`, the "
+    "rule that makes the block invalid, the first one broken in the order of that table, and `at` the position of the"
+    " transaction that breaks it. The fillers 300, 338, 356, 359 and 422 have an Ed25519 part that passes the check "
+    "of the note; 301 has one that is no point of the curve, and 305 one that is a point outside the subgroup of "
+    "prime order. `delegations`, `proposals` and `attestations` hold the operations of one block, for three families "
+    "of kinds: `before` gives the level of the block and the tables the operations read and write, with "
+    "`delegation_unbonding_blocks` for the first family and the two bonds for the second; an operation is its "
+    "`sender`, its `kind`, its `params` where its kind has some, its `amount` where it moves one, and its `nonce` for"
+    " an `attest`; `then` gives what each operation did (`did`: `delegated` or `ended`, `submitted` or `voted`, "
+    "`attested` or `revoked`, or the rule that makes it fail, by a key of `delegating_rules`, `proposing_rules` or "
+    "`attesting_rules`: the first one broken, in the order of its table) and the tables afterwards. Addresses are "
+    "short names in these three families, and so are the identifiers a state already holds; the identifier of a "
+    "proposal or of an attestation that an operation records is computed on the network of the file. `contracts` "
+    "holds the originations and the calls of one block, as whole transactions on addresses of the network: `before` "
+    "gives `balances` and `contracts`, and `then` what each transaction did (`originated`, `called`, or a key of "
+    "`contract_rules`) and the two tables afterwards. Neither program has an interpreter of the language: `language` "
+    "gives, under the position of each transaction that asks, what the language says of it. For an `originate`: "
+    "`declares`, the fields of its code with their types, absent when the language refuses the code; `receives`, what"
+    " the check of its invariants is given (`sender`, `amount`, `self`, `balance` and `storage`); `holds`, whether "
+    "they hold. For a `call`: `takes`, the parameters of its entry point with their types, absent when the contract "
+    "has no such entry point; `receives`, what its execution is given; `leaves`, the storage it leaves, absent when "
+    "it fails. A program builds what an execution receives and finds it equal to `receives`; a position says nothing "
+    "that is not asked, and a transaction of which nothing is asked has no position. A transition that creates or "
+    "calls a contract has its `language` too. "
     "`exchanges` holds what happens on a connection as the node that asks for blocks "
     "sees it: a step is a request it would send (`ask`: the first and the last level), a `blocks` frame it receives "
     "(`blocks`: the levels of its blocks) or four bytes it reads before a frame (`prefix`); `verdicts` gives "
@@ -374,6 +402,50 @@ DESCRIPTION = (
     "without its signature (`hash`), and for the first one the text its sequencer signs and its context (`signed`, "
     "`context`); the hash of a request and of a state (`hash`); the identifier of a key (`id`)."
 )
+
+
+# The contracts of the vectors, in the language of the node (docs/skald-language.md).
+COUNTER = ("contract Counter { storage { count: int, owner: address, label: string, open: bool, } "
+           "invariant small { count <= 100 } "
+           "entry add(by: int) { require open with \"closed\"; count = count + by; } "
+           "entry pay() { require amount > 0 with \"nothing paid\"; count = balance; } "
+           "entry rename(to: string, who: address) { require sender == owner with \"not the owner\"; label = to; "
+           "owner = who; } "
+           "view get() -> int { return count; } }")
+FUNDED = "contract Funded { storage { n: int, } invariant funded { balance > 0 } }"
+MINE = "contract Mine { storage { owner: address, } invariant owned { owner == sender } }"
+UNREADABLE = "contract Broken { storage { count: int, }"
+MISTYPED = "contract Mixed { storage { count: int, owner: address, } entry mix() { count = owner; } }"
+DEEP = "contract Deep { storage { n: int, } entry sum() { n = " + " + ".join(["1"] * 64) + "; } }"
+
+
+class Dictated:
+    """The language as the builder states it. Its answers are written by
+    hand, transaction by transaction, under the names `sch.Said` reads:
+    `declares`, `holds`, `takes`, `leaves`. What an execution receives is
+    not written by hand: it is noted as the reference builds it. The
+    answers that were asked and what was received make the `language` of a
+    vector."""
+
+    def __init__(self, answers: dict[int, dict]) -> None:
+        self.answers = answers
+        self.language: dict[str, dict] = {}
+
+    def says(self, position: int, question: dict) -> Any:
+        answer, asks = self.answers[position], question["asks"]
+        said = self.language.setdefault(str(position), {})
+        if "receives" in question:
+            said["receives"] = copy(question["receives"])
+        if asks in answer:
+            said[asks] = copy(answer[asks])
+            return said[asks]
+        assert asks != "holds", f"transaction {position}: do its invariants hold?"
+        return None
+
+    def done(self) -> None:
+        assert set(self.language) == {str(position) for position in self.answers}, "an answer nothing asked for"
+        for position, answer in self.answers.items():
+            assert set(answer) <= set(self.language[str(position)]), f"transaction {position}: an answer too many"
 
 
 class Builder(Vectors):
@@ -396,6 +468,11 @@ class Builder(Vectors):
         self.tallied: list[dict] = []
         self.slashed: list[dict] = []
         self.applied: list[dict] = []
+        self.keyed: list[dict] = []
+        self.staked: list[dict] = []
+        self.governed: list[dict] = []
+        self.attested: list[dict] = []
+        self.contracted: list[dict] = []
         self.exchanged: list[dict] = []
         self.served: list[dict] = []
 
@@ -1953,21 +2030,24 @@ class Builder(Vectors):
 
         def whole(why: str, base: str, proposer: str, txs: Any, *, name: str | None = None, rule: str | None = None,
                   at: int | None = None, level: int | None = None, root: str | None = None,
-                  failed: tuple[int, ...] = ()) -> dict:
+                  failed: tuple[int, ...] = (), answers: dict | None = None) -> dict:
             state = self.objects[base]
             height = state["level"] + 1 if level is None else level
             header = {"version": 1, "level": height, "payload_round": 0, "timestamp": 1794000000 + height,
                       "parent_hash": {"$text": [48, "ab"]}, "state_root": {"$text": [48, "00"]},
                       **self.roots(self.expand(txs)), "proposer": proposer, "signature": {"$sig": 900}}
             block = {"header": header, "transactions": txs}
-            result = sch.transition(state, self.expand(block))
+            dictated = Dictated(answers or {})
+            result = sch.transition(self.network_id, state, self.expand(block), dictated)
             after = result.get("state", {})
             if result["valid"]:
                 sch.check("state", after, self.network_id)
                 header["state_root"] = root or sch.state_root(self.network_id, after).hex()
             sch.check("block", self.expand(block), self.network_id)
-            result = sch.apply(self.network_id, state, self.expand(block))
+            result = sch.apply(self.network_id, state, self.expand(block), sch.Said(dictated.language))
             record: dict[str, Any] = {"why": why, "from": base, "block": block}
+            if dictated.language:
+                record["language"] = dictated.language                  # what the language says of its contracts
             if rule:
                 assert result == ({"valid": False, "rule": rule} if at is None else
                                   {"valid": False, "rule": rule, "at": at}), (why, result)
@@ -2212,6 +2292,875 @@ class Builder(Vectors):
               "state_small_blocks", a, many(27))
         whole("one transfer more: the block is too large", "state_small_blocks", a, many(28), rule="block_too_large")
 
+        # -- every kind of transaction but a rotation, and the first transactions of accounts
+        self.operations_in_blocks(whole)
+
+    def quick_state(self) -> dict:
+        """A first state whose periods are a few blocks long, so that a
+        chain of a few blocks goes through every phase. Three validators
+        with their keys, and accounts that the state funds and that have no
+        key yet: the first guardian is one of them."""
+        a, b, c = (self.account(100 + i) for i in range(3))
+        d, e, f = (self.account(n) for n in (300, 338, 356))
+        guardians = [self.account(n) for n in (359, 371, 386)]
+        state = self.first_state()
+        listed = [{"address": a, "stake": 300_000_000}, {"address": b, "stake": 100_000_000},
+                  {"address": c, "stake": 200_000_000}]
+        state.update({
+            "guardians": guardians, "validators": listed, "consensus_set": copy(listed),
+            "balances": {a: 500_000_000, b: 1_000_000, c: 1_000_000, d: 50_000_000, e: 50_000_000, f: 20_000_000,
+                         guardians[0]: 1_000_000, state["treasury_address"]: 14_000_000_000_000},
+            "constants": {**CONSTANTS_OF_THE_VECTORS, "epoch_blocks": 4, "delegation_unbonding_blocks": 8,
+                          "attestation_unbonding_blocks": 2, "protocol_proposal_blocks": 1,
+                          "protocol_exploration_blocks": 2, "protocol_cooldown_blocks": 1,
+                          "protocol_adoption_blocks": 2, "treasury_proposal_blocks": 1, "treasury_vote_blocks": 2,
+                          "guardian_delay_blocks": 1, "treasury_release_blocks": 3},
+        })
+        return self.with_supply(state)
+
+    def operations_in_blocks(self, whole: Callable[..., dict]) -> None:
+        """Whole blocks that hold every kind of transaction but a
+        `rotate_key`: a chain of eight blocks from a first state, in which
+        accounts send their first transaction, and blocks that a key makes
+        invalid. The accounts 300, 338, 356, 359 and 422 have a key whose
+        Ed25519 part passes the check of the note."""
+        a, b, c = (self.account(100 + i) for i in range(3))
+        d, e, f, g = (self.account(n) for n in (300, 338, 356, 359))
+        treasury = self.address(9)
+        million = 1_000_000
+        held = lambda state, address: state["balances"].get(address, 0)                     # noqa: E731
+
+        def sent(kind: str, account: int, nonce: int, sig: int, key: bool = False, **fields: Any) -> dict:
+            if key:
+                fields["public_key"] = {"$key": account}
+            return self.tx(kind, nonce=nonce, sig=sig, sender={"$account": account}, **fields)
+
+        def ballot(account: int, nonce: int, sig: int, vote: str, proposal: str, track: str = "protocol") -> dict:
+            return sent("governance_vote", account, nonce, sig,
+                        params={"track": track, "proposal_id": proposal, "vote": vote})
+
+        start = self.yes("state_quick", "state", "a first state whose periods are a few blocks long: an epoch of 4 "
+                         "blocks, phases of 1 and 2 blocks, a bond of an attestation held 2 blocks. Three validators "
+                         "have their keys, and five accounts hold funds and have no key yet, the first guardian "
+                         "among them", self.quick_state())
+        assert set(start["keys"]) == {a, b, c} and start["nonces"] == {} and start["level"] == 0
+
+        # -- level 1: first transactions, a delegation, an attestation, a proposal, a contract
+        delegation = sent("delegate_stake", 300, 0, 1, key=True, amount=30 * million, params={"validator": a})
+        statement = sent("attest", 300, 1, 2, amount=1_000, params={
+            "schema_id": "kyc.basic", "subject": "subject-1", "claim": {"country": "BE", "level": 2}})
+        proposal = sent("governance_propose", 100, 0, 3, params={
+            "track": "protocol", "payload": {"params": {"treasury_share_ppm": 100_000}}, "salt": 0})
+        creation = sent("originate", 338, 0, 4, key=True, code=COUNTER,
+                        initial_storage={"owner": {"$account": 338}, "open": True})
+        k = ref.contract_address(self.network_id, sch.transaction_id(self.network_id, self.expand(creation)))
+        pid = sch.proposal_id(self.network_id, self.expand(proposal)).hex()
+        aid = sch.attestation_id(self.network_id, self.expand(statement)).hex()
+        fields = {"count": "int", "owner": "address", "label": "string", "open": "bool"}
+        stored = lambda count: {"count": count, "owner": e, "label": "", "open": True}       # noqa: E731
+        one = whole(
+            "the block of level 1 on that state. An account sends its first transaction, a delegation, with its "
+            "key: the key is recorded from level 1, and its second transaction, an attestation with a bond, "
+            "carries none. A validator submits a protocol proposal and its bond leaves its balance. Another new "
+            "account creates a contract with its first transaction and calls it with its second: the call moves "
+            "7 mukrn to the contract, whose entry point keeps its `balance` in a field. The proposer is the "
+            "validator of the delegation: the delegator has its share of the reward of this very block, and the "
+            "weight of the validator does not move",
+            "state_quick", a,
+            [delegation, statement, proposal, creation,
+             sent("call", 338, 1, 5, recipient=k, amount=7, entry="pay", params={})],
+            name="after_quick_1",
+            answers={3: {"declares": fields, "holds": True}, 4: {"takes": {}, "leaves": stored(7)}})
+        key_of = lambda account: self.expand({"$key": account})                              # noqa: E731
+        assert one["keys"][d] == [{"from": 1, "public_key": key_of(300)}] and one["nonces"] == {d: 2, a: 1, e: 2}
+        assert one["keys"][e] == [{"from": 1, "public_key": key_of(338)}]
+        assert one["delegations"] == {d: {"validator": a, "amount": 30 * million,
+                                          "tranches": [{"level": 1, "amount": 30 * million}]}}
+        assert one["consensus_set"] == start["consensus_set"]
+        assert one["attestations"][aid]["bond"] == 1_000 and one["attestations"][aid]["issued_at"] == 1
+        assert [(p["proposal_id"], p["phase"], p["bond"]) for p in one["governance"]["protocol"]] == \
+            [(pid, "submitted", 100 * million)]
+        assert one["contracts"] == {k: {"code": COUNTER, "storage": stored(7)}} and held(one, k) == 7
+        share = held(one, d) - (50 * million - 30 * million - 1_000 - 2_000)
+        minted = one["total_supply"] - start["total_supply"]
+        assert 0 < share < minted and held(one, treasury) - held(start, treasury) == minted * 50_000 // million
+
+        # -- level 2: a vote that is not open yet, a call that fails, a revocation, a treasury proposal
+        grant = sent("governance_propose", 356, 0, 9, key=True, params={
+            "track": "treasury", "payload": {"recipients": [{"address": f, "amount": 5 * million}], "memo": "a grant"},
+            "salt": 0})
+        tid = sch.proposal_id(self.network_id, self.expand(grant)).hex()
+        two = whole(
+            "the block of level 2. A validator votes on the proposal, whose phase `submitted` ends at this level: "
+            "the transactions of a block come before its step 6, the vote is not open for them, and this one fails "
+            "and has paid. A call that would leave a storage the invariant refuses fails and has paid, and the "
+            "storage stays. The attestation is revoked: its bond stays held. A third new account submits a "
+            "treasury proposal with its first transaction. After the transactions, the protocol proposal enters "
+            "its first vote",
+            "after_quick_1", b,
+            [ballot(101, 0, 6, "yes", pid), sent("call", 338, 2, 7, recipient=k, amount=0, entry="add", params={"by": 200}),
+             sent("revoke_attestation", 300, 2, 8, params={"attestation_id": aid}), grant],
+            name="after_quick_2", failed=(0, 1), answers={1: {"takes": {"by": "int"}}})
+        ours = lambda state: state["governance"]["protocol"][0]                              # noqa: E731
+        theirs = lambda state: state["governance"]["treasury"][0]                            # noqa: E731
+        assert ours(two)["phase"] == "exploration" and ours(two)["exploration_votes"] == {}
+        assert two["contracts"] == one["contracts"] and held(two, k) == 7
+        assert two["attestations"][aid]["revoked_at"] == 2 and two["attestations"][aid]["bond"] == 1_000
+        assert (theirs(two)["proposal_id"], theirs(two)["phase"]) == (tid, "submitted")
+        assert held(two, f) == 20 * million - 10 * million - 1_000 and two["keys"][f][0]["from"] == 2
+
+        # -- level 3: votes, and a vote that contradicts the first one of its validator
+        three = whole(
+            "the block of level 3. Two validators vote on the protocol proposal, and the second one then votes "
+            "the other way: its first vote stands, and the double vote is recorded with the level of the block. "
+            "After the transactions, the treasury proposal enters its vote",
+            "after_quick_2", c,
+            [ballot(100, 1, 10, "yes", pid), ballot(101, 1, 11, "no", pid), ballot(101, 2, 12, "yes", pid)],
+            name="after_quick_3")
+        assert ours(three)["exploration_votes"] == {a: "yes", b: "no"}
+        assert ours(three)["double_votes"] == [{"voter": b, "phase": "exploration", "level": 3, "punished": False}]
+        assert theirs(three)["phase"] == "voting"
+
+        # -- level 4: a vote at the last level, a delegation in the block of a snapshot, a bond that returns
+        four = whole(
+            "the block of level 4, at which the first vote ends and an epoch too. The third validator votes yes "
+            "at this last level: the transactions come before the count, and its vote makes the proposal pass, "
+            "four fifths being reached with it and not without it. The vote is counted by the weights of the "
+            "snapshot of level 0. An account delegates to another validator in this block, and a validator votes "
+            "on the treasury proposal. The bond of the attestation revoked two levels earlier returns. The "
+            "snapshot is then taken again: both delegations weigh from now on",
+            "after_quick_3", a,
+            [ballot(102, 0, 13, "yes", pid),
+             sent("delegate_stake", 338, 3, 14, amount=20 * million, params={"validator": b}),
+             ballot(100, 2, 15, "yes", tid, "treasury")],
+            name="after_quick_4")
+        assert ours(four)["phase"] == "cooldown" and ours(four)["exploration_votes"] == {a: "yes", b: "no", c: "yes"}
+        assert sch.tally(three["consensus_set"], ours(four)["exploration_votes"], "protocol")["passes"]
+        assert not sch.tally(three["consensus_set"], ours(three)["exploration_votes"], "protocol")["passes"]
+        assert four["attestations"][aid]["bond"] == 0 and held(four, d) - held(three, d) > 1_000
+        assert [entry["stake"] for entry in four["consensus_set"]] == [330 * million, 120 * million, 200 * million]
+        assert theirs(four)["votes"] == {a: "yes"} and theirs(four)["phase"] == "voting"
+
+        # -- level 5: the end of a delegation, a vote, the report of the double vote, a reward that is not shared
+        five = whole(
+            "the block of level 5, proposed by the validator of the first delegation. That delegation ends: it "
+            "unbonds from this level, and the weight of its validator comes down at once. A validator votes on "
+            "the treasury proposal at the last level of its vote. The double vote of level 3 is reported: its "
+            "validator loses 30,000,000 of its stake, the sender of the report receives 3,000,000 and the rest is "
+            "burned; the delegation bonded to that validator at level 4, after the offence, is not touched. The "
+            "reward of the block is not shared: the proposer has no delegation any more. After the transactions, "
+            "the treasury vote passes by the square roots of the weights and the payment waits for a guardian, "
+            "and the protocol proposal, which rested one level, enters its second vote",
+            "after_quick_4", a,
+            [sent("undelegate_stake", 300, 3, 16), ballot(102, 1, 17, "yes", tid, "treasury"),
+             sent("slash_equivocation", 300, 4, 18, params={"proposal_id": pid, "equivocator": b})],
+            name="after_quick_5")
+        assert five["delegations"] == {e: {"validator": b, "amount": 20 * million,
+                                           "tranches": [{"level": 4, "amount": 20 * million}]}}
+        assert five["delegation_unbonding"] == [{"delegator": d, "validator": a, "amount": 30 * million,
+                                                 "tranches": [{"level": 1, "amount": 30 * million}],
+                                                 "unbonding_from": 5, "release_at": 13}]
+        assert [entry["stake"] for entry in five["validators"]] == [300 * million, 70 * million, 200 * million]
+        assert [entry["stake"] for entry in five["consensus_set"]] == [300 * million, 90 * million, 200 * million]
+        assert ours(five)["double_votes"][0]["punished"] is True and ours(five)["phase"] == "adoption"
+        assert held(five, d) == held(four, d) - 2_000 + 3 * million                        # no share of the reward
+        minted = five["total_supply"] - four["total_supply"] + 27 * million
+        assert held(five, a) - held(four, a) == 3_000 + minted - minted * 50_000 // million
+        assert theirs(five)["phase"] == "passed" and theirs(five)["votes"] == {a: "yes", c: "yes"}
+
+        # -- level 6: the first transaction of a guardian releases the payment
+        six = whole(
+            "the block of level 6. The first guardian releases the payment with its first transaction, which "
+            "carries its key: the recipient is paid, the bond returns to the submitter, who is the recipient "
+            "here, and the proposal is over. A call to the contract succeeds. The proposer is the validator of "
+            "the second delegation, whose delegator has its share of the reward",
+            "after_quick_5", b,
+            [sent("release_payment", 359, 0, 19, key=True, params={"proposal_id": tid}),
+             sent("call", 338, 4, 20, recipient=k, amount=0, entry="add", params={"by": 3})],
+            name="after_quick_6", answers={1: {"takes": {"by": "int"}, "leaves": stored(10)}})
+        assert (theirs(six)["phase"], theirs(six)["ended_at"], "bond" in theirs(six)) == ("executed", 6, False)
+        assert held(six, f) - held(five, f) == 15 * million and six["keys"][g] == [{"from": 6, "public_key": key_of(359)}]
+        assert six["contracts"][k]["storage"] == stored(10) and held(six, e) - held(five, e) > -1_000
+        minted = six["total_supply"] - five["total_supply"]
+        assert held(six, treasury) - held(five, treasury) == minted * 50_000 // million - 5 * million
+
+        # -- level 7: the second vote ends without its quorum
+        seven = whole(
+            "the block of level 7, at which the second vote ends. The second delegation ends, and the weight of "
+            "its validator comes down at once; that validator then votes yes, alone: its weight is under a "
+            "quarter of all the weights, the vote does not reach its quorum, and the proposal is rejected. Half "
+            "its bond is burned and half goes to the treasury",
+            "after_quick_6", c, [sent("undelegate_stake", 338, 5, 21), ballot(101, 3, 22, "yes", pid)],
+            name="after_quick_7")
+        assert (ours(seven)["phase"], ours(seven)["ended_at"], "bond" in ours(seven)) == ("rejected", 7, False)
+        assert ours(seven)["adoption_votes"] == {b: "yes"} and seven["delegations"] == {}
+        assert [entry["stake"] for entry in seven["consensus_set"]] == [300 * million, 70 * million, 200 * million]
+        assert [leaving["release_at"] for leaving in seven["delegation_unbonding"]] == [13, 15]
+        minted = seven["total_supply"] - six["total_supply"] + 50 * million
+        assert held(seven, treasury) - held(six, treasury) == 50 * million + minted * 50_000 // million
+        assert seven["parameters"] == start["parameters"]                     # what it proposed is not taken
+
+        # -- level 8: the snapshot of the next epoch
+        eight = whole("the block of level 8, the second snapshot: no delegation is left, and the weights are the "
+                      "stakes, one of which the slash lowered", "after_quick_7", a, [])
+        assert eight["consensus_set"] == eight["validators"]
+
+        # -- blocks that a key makes invalid
+        transfer = lambda account, nonce, sig, key=None, fee=1000: {                        # noqa: E731
+            **self.tx("transfer", nonce=nonce, sig=sig, sender={"$account": account}, recipient={"$address": 2},
+                      amount=0, **({} if key is None else {"public_key": {"$key": key}})), "fee": fee}
+        whole("a block of level 1 on `state_quick` in which an account that has no key sends without one",
+              "state_quick", a, [transfer(300, 0, 30)], rule="key_missing", at=0)
+        whole("the first transaction of an account carries its key, and so does its second",
+              "state_quick", a, [delegation, {**statement, "public_key": {"$key": 300}}],
+              rule="key_carried_again", at=1)
+        whole("an account carries the key of another", "state_quick", a,
+              [{**delegation, "public_key": {"$key": 338}}], rule="key_of_another", at=0)
+        whole("an account that holds nothing sends a transfer of 0 for a fee of 0, which a block can charge, with a "
+              "key whose Ed25519 part is no point of the curve",
+              "state_quick", a, [transfer(301, 0, 31, key=301, fee=0)], rule="not_a_key", at=0)
+        rotated = self.quick_state()
+        rotated["keys"][c].append({"from": 1, "public_key": {"$key": 422}})
+        self.yes("state_quick_rotated", "state", "`state_quick` in which a validator has a second key, which is "
+                 "current from level 1: the key of another address", rotated)
+        whole("the account whose address is the hash of that key sends its first transaction with it: the key was "
+              "recorded before, and the block is invalid",
+              "state_quick_rotated", a, [transfer(422, 0, 32, key=422, fee=0)], rule="key_known", at=0)
+        whole("the same transaction on `state_quick`, which does not hold that key: the block is valid",
+              "state_quick", a, [transfer(422, 0, 32, key=422, fee=0)])
+
+    # -- chapter 2: what each kind of transaction does (section 9.16) -----------
+
+    def first_transactions(self) -> None:
+        """The key a first transaction carries: what the transactions of a
+        block do to the key registry, or the rule that makes the block
+        invalid. The fillers 300 and 338 are keys whose Ed25519 part passes
+        the check of the note; 301 is no point of the curve, and 305 is a
+        point outside the subgroup of prime order."""
+        validator, treasury = self.account(100), self.address(2)
+        registry = {validator: [{"from": 0, "public_key": {"$key": 100}}]}
+        entry = lambda key, level=7: [{"from": level, "public_key": {"$key": key}}]          # noqa: E731
+
+        def sent(account: int, key: int | None = None, nonce: int = 0, sig: int = 1, kind: str = "transfer",
+                 **fields: Any) -> dict:
+            if kind == "transfer":
+                fields = {"recipient": {"$address": 2}, "amount": 1, **fields}
+            if key is not None:
+                fields["public_key"] = {"$key": key}
+            return self.tx(kind, nonce=nonce, sig=sig, sender={"$account": account}, **fields)
+
+        def carried(why: str, transactions: list, then: dict | None = None, rule: str = "", at: int | None = None,
+                    keys: dict | None = None, level: int = 7) -> None:
+            before = {"level": level, "keys": copy(registry if keys is None else keys)}
+            for tx in self.expand(transactions):
+                sch.check("transaction", tx, self.network_id)
+            result = sch.first_keys(self.network_id, self.expand(before), self.expand(transactions))
+            record: dict[str, Any] = {"why": why, "before": before, "transactions": transactions}
+            if rule:
+                assert result == {"valid": False, "rule": rule, "at": at}, (why, result)
+                record.update({"rule": rule, "at": at})
+            else:
+                assert then is not None and result == {"valid": True, "keys": self.expand(then)}, (why, result)
+                record["then"] = {"keys": then}
+            self.keyed.append(record)
+
+        new, other = self.account(300), self.account(338)
+        assert treasury != new
+        carried("the first transaction of an account carries its key: the key is recorded from the level of the block",
+                [sent(300, 300)], {**registry, new: entry(300)})
+        carried("its second transaction, in the same block, carries none: it finds the key the first one recorded",
+                [sent(300, 300), sent(300, nonce=1, sig=2)], {**registry, new: entry(300)})
+        carried("an account whose key the state holds carries none, and the registry does not change",
+                [sent(100, nonce=4)], registry)
+        carried("two new accounts in one block, each with its key, around a transaction of an account that has one",
+                [sent(338, 338), sent(100, nonce=4, sig=2), sent(300, 300, sig=3)],
+                {**registry, new: entry(300), other: entry(338)})
+        carried("any kind of transaction can be the first of its account: here the end of a delegation",
+                [sent(300, 300, kind="undelegate_stake")], {**registry, new: entry(300, 9)}, level=9)
+        carried("the level from which a key is recorded is the level of the block: the last one there is",
+                [sent(300, 300)], {**registry, new: entry(300, INT_MAX)}, level=INT_MAX)
+        carried("a registry that holds nothing yet", [sent(300, 300)], {new: entry(300)}, keys={})
+        # -- each rule, broken alone
+        carried("a sender without a key carries none: the block is invalid",
+                [sent(300)], rule="key_missing", at=0)
+        carried("the second transaction of the block is the one that carries no key",
+                [sent(300, 300), sent(338, sig=2)], rule="key_missing", at=1)
+        carried("a new account carries its key a second time, in the block that recorded it",
+                [sent(300, 300), sent(300, 300, nonce=1, sig=2)], rule="key_carried_again", at=1)
+        carried("an account whose key the state holds carries that key again",
+                [sent(100, 100, nonce=4)], rule="key_carried_again", at=0)
+        carried("a new account carries the key of another one, which passes the check",
+                [sent(300, 338)], rule="key_of_another", at=0)
+        carried("the Ed25519 part of the key is no point of the curve",
+                [sent(301, 301)], rule="not_a_key", at=0)
+        carried("the Ed25519 part of the key is a point of the curve outside the subgroup of prime order",
+                [sent(305, 305)], rule="not_a_key", at=0)
+        rotated = {validator: [{"from": 0, "public_key": {"$key": 100}}, {"from": 5, "public_key": {"$key": 338}}]}
+        carried("the key of a new account was recorded before, for another address, by a rotation: the hash of the "
+                "key is the sender, the key passes the check, and the block is invalid",
+                [sent(338, 338)], rule="key_known", at=0, keys=rotated)
+        carried("the same block on a registry that does not hold that key",
+                [sent(338, 338)], {**registry, other: entry(338)})
+        # -- several rules broken: the first one, in the order of the list
+        carried("an account that has a key carries another one, which is not its own: the rule on a second key "
+                "comes first", [sent(100, 338, nonce=4)], rule="key_carried_again", at=0)
+        carried("a key that is not that of the sender and passes no check: the hash is looked at first",
+                [sent(300, 301)], rule="key_of_another", at=0)
+        unchecked = {validator: [{"from": 0, "public_key": {"$key": 100}}, {"from": 5, "public_key": {"$key": 305}}]}
+        carried("a key that passes no check and that the registry holds for another address: the check comes "
+                "first", [sent(305, 305)], rule="not_a_key", at=0, keys=unchecked)
+
+    def delegations(self) -> None:
+        """Delegations and their ends in one block. Addresses are short
+        names: the rules only compare them."""
+        held = {"validator": "v", "amount": 700, "tranches": [{"level": 60, "amount": 300},
+                                                                {"level": 90, "amount": 400}]}
+
+        def tables(**changes: Any) -> dict:
+            base = {"balances": {"d1": 1000, "d2": 50, "v": 5, "w": 2000},
+                    "validators": [{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}],
+                    "consensus_set": [{"address": "v", "stake": 1700}, {"address": "w", "stake": 3}],
+                    "delegations": {"d3": held}, "delegation_unbonding": []}
+            return copy({**base, **changes})
+
+        def stake(why: str, operations: list, did: list, after: dict | None = None, level: int = 1000,
+                  period: int = 300, **before: Any) -> None:
+            start = {"level": level, "delegation_unbonding_blocks": period, **tables(**before)}
+            result = sch.delegate(start, operations)
+            expected = {**tables(**before), **copy(after or {})}
+            assert result == {"did": did, **expected}, (why, result)
+            assert all(outcome in sch.DELEGATING_RULES for outcome in did) <= (after is None), why
+            self.staked.append({"why": why, "before": start, "operations": operations, "then": result})
+
+        to = lambda sender, amount, validator="v": {"sender": sender, "kind": "delegate_stake",   # noqa: E731
+                                                    "amount": amount, "params": {"validator": validator}}
+        end = lambda sender: {"sender": sender, "kind": "undelegate_stake"}                 # noqa: E731
+        one = lambda amount, level=1000: {"validator": "v", "amount": amount,              # noqa: E731
+                                          "tranches": [{"level": level, "amount": amount}]}
+        gone = lambda delegator, level=1000, period=300, **more: {                          # noqa: E731
+            "delegator": delegator, **{**held, **more}, "unbonding_from": level, "release_at": level + period}
+
+        stake("a first delegation: the amount leaves the balance, the delegation has one tranche of the level of "
+              "the block, and the weight of the validator does not move",
+              [to("d1", 400)], ["delegated"],
+              {"balances": {"d1": 600, "d2": 50, "v": 5, "w": 2000}, "delegations": {"d3": held, "d1": one(400)}})
+        stake("the same sender delegates twice in the block: one tranche, of the two amounts",
+              [to("d1", 400), to("d1", 100)], ["delegated", "delegated"],
+              {"balances": {"d1": 500, "d2": 50, "v": 5, "w": 2000}, "delegations": {"d3": held, "d1": one(500)}})
+        stake("a delegator adds to its delegation at a later level: one tranche more",
+              [to("d1", 250)], ["delegated"],
+              {"balances": {"d1": 750, "d2": 50, "v": 5, "w": 2000},
+               "delegations": {"d1": {"validator": "v", "amount": 650, "tranches": [
+                   {"level": 999, "amount": 400}, {"level": 1000, "amount": 250}]}}},
+              delegations={"d1": one(400, 999)})
+        stake("all that the sender holds: it leaves `balances`",
+              [to("d2", 50)], ["delegated"],
+              {"balances": {"d1": 1000, "v": 5, "w": 2000}, "delegations": {"d3": held, "d2": one(50)}})
+        stake("one mukrn more than the sender holds", [to("d2", 51)], ["stake_not_held"])
+        stake("a validator delegates to another validator",
+              [to("w", 2000)], ["delegated"],
+              {"balances": {"d1": 1000, "d2": 50, "v": 5}, "delegations": {"d3": held, "w": one(2000)}})
+        stake("a validator delegates to itself", [to("v", 5)], ["own_validator"])
+        stake("an address that is no validator: a delegator, and an address the state does not know",
+              [to("d1", 400, "d3"), to("d1", 400, "nobody")], ["no_such_validator", "no_such_validator"])
+        stake("a delegator of one validator delegates to another: it ends its first delegation before",
+              [to("d3", 1, "w")], ["other_validator"], balances={"d3": 9, "v": 5})
+        stake("it ends it, and delegates to the other validator in the same block: the first delegation is "
+              "unbonding, and the weight of its validator came down at once",
+              [end("d3"), to("d3", 1, "w")], ["ended", "delegated"],
+              {"balances": {"d3": 8, "v": 5},
+               "consensus_set": [{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}],
+               "delegations": {"d3": {"validator": "w", "amount": 1, "tranches": [{"level": 1000, "amount": 1}]}},
+               "delegation_unbonding": [gone("d3")]}, balances={"d3": 9, "v": 5})
+        stake("the same two transactions in the other order: the delegation fails, then the end succeeds",
+              [to("d3", 1, "w"), end("d3")], ["other_validator", "ended"],
+              {"consensus_set": [{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}],
+               "delegations": {}, "delegation_unbonding": [gone("d3")]}, balances={"d3": 9, "v": 5})
+        stake("the end of a delegation: it leaves `delegations` and enters the end of `delegation_unbonding` with "
+              "its tranches, and the weight of its validator becomes its stake plus what is still delegated to it",
+              [end("d3")], ["ended"],
+              {"consensus_set": [{"address": "v", "stake": 1300}, {"address": "w", "stake": 3}],
+               "delegations": {"d4": one(300, 70)},
+               "delegation_unbonding": [gone("d0", 950, amount=5, tranches=[{"level": 10, "amount": 5}]), gone("d3")]},
+              delegations={"d3": held, "d4": one(300, 70)},
+              delegation_unbonding=[gone("d0", 950, amount=5, tranches=[{"level": 10, "amount": 5}])],
+              consensus_set=[{"address": "v", "stake": 2000}, {"address": "w", "stake": 3}])
+        stake("a weight that was already below does not move: the delegation that ends was bonded after the "
+              "snapshot", [end("d3")], ["ended"],
+              {"delegations": {}, "delegation_unbonding": [gone("d3")]},
+              consensus_set=[{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}])
+        stake("a weight that is below what still backs the validator stays where it is: another delegation, bonded "
+              "after the snapshot too, does not enter the weight when the first one ends",
+              [end("d3")], ["ended"],
+              {"delegations": {"d4": one(300, 990)}, "delegation_unbonding": [gone("d3")]},
+              delegations={"d3": held, "d4": one(300, 990)},
+              consensus_set=[{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}])
+        stake("a delegation that was made in the block ends in the block",
+              [to("d1", 400), end("d1")], ["delegated", "ended"],
+              {"balances": {"d1": 600, "d2": 50, "v": 5, "w": 2000},
+               "delegation_unbonding": [{"delegator": "d1", **one(400), "unbonding_from": 1000, "release_at": 1300}]})
+        stake("a sender without a delegation ends nothing: one that never delegated, and one whose delegation is "
+              "unbonding already", [end("d1"), end("d0")], ["no_delegation", "no_delegation"],
+              delegation_unbonding=[gone("d0", 950)])
+        stake("the end of a delegation twice in a block: the second one finds none",
+              [end("d3"), end("d3")], ["ended", "no_delegation"],
+              {"consensus_set": [{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}],
+               "delegations": {}, "delegation_unbonding": [gone("d3")]})
+        stake("a delegator delegates again to the same validator while an older delegation of its own unbonds",
+              [to("d0", 7)], ["delegated"],
+              {"balances": {"d0": 3}, "delegations": {"d3": held, "d0": one(7)}},
+              balances={"d0": 10}, delegation_unbonding=[gone("d0", 950)])
+        top = INT_MAX
+        stake("a delegation that ends at the last level at which it can still be released",
+              [end("d3")], ["ended"],
+              {"consensus_set": [{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}],
+               "delegations": {}, "delegation_unbonding": [gone("d3", top - 300)]}, level=top - 300)
+        stake("one level later: the level of its release would be above 2^63 - 1, and the end fails",
+              [end("d3")], ["release_out_of_range"], level=top - 299)
+        # -- several rules broken: the first one, in the order of the list
+        stake("an unknown validator and an amount the sender does not hold: the validator is looked at first",
+              [to("d2", 51, "nobody")], ["no_such_validator"])
+        stake("a validator that delegates to itself more than it holds, while it has a delegation to another",
+              [to("v", 6)], ["own_validator"], delegations={"v": {**held, "validator": "w"}})
+        stake("a delegator of another validator that does not hold the amount: the other delegation comes first",
+              [to("d3", 10, "w")], ["other_validator"], balances={"d3": 9, "v": 5})
+        stake("a sender without a delegation at one of the last levels: the delegation is looked at first",
+              [end("d1")], ["no_delegation"], level=top)
+
+    def proposals(self) -> None:
+        """Proposals and votes in one block. Addresses and the identifiers
+        of the proposals a state already holds are short names: the rules
+        only compare them. The identifier of a proposal that is submitted is
+        computed, from its submitter, its payload and its salt."""
+        bond = {"protocol": 100, "treasury": 10}
+
+        def waiting(pair: str, track: str = "protocol", phase: str = "exploration", **more: Any) -> dict:
+            votes = {"exploration_votes": {}, "adoption_votes": {}, "double_votes": []} if track == "protocol" \
+                else {"votes": {}}
+            payload = {"params": {"fee_floor_base": 0}} if track == "protocol" \
+                else {"recipients": [{"address": "r", "amount": 5}]}
+            proposal = {"proposal_id": pair, "submitter": "v", "payload": payload, "submitted_at": 900,
+                        "phase": phase, **votes, **more}
+            if phase in sch.OVER[track]:
+                proposal["ended_at"] = 990
+            else:
+                proposal["bond"] = bond[track]
+            return proposal
+
+        def tables(**changes: Any) -> dict:
+            base = {"balances": {"v": 250, "w": 100, "x": 10, "y": 9},
+                    "validators": [{"address": "v", "stake": 1000}, {"address": "w", "stake": 3}],
+                    "governance": {"protocol": [waiting("p1")], "treasury": [waiting("t1", "treasury", "voting")]}}
+            return copy({**base, **changes})
+
+        def govern(why: str, operations: list, did: list, after: dict | None = None, level: int = 1000,
+                   **before: Any) -> dict:
+            start = {"level": level, "protocol_bond": bond["protocol"], "treasury_bond": bond["treasury"],
+                     **tables(**before)}
+            result = sch.govern(self.network_id, start, operations)
+            expected = {name: value for name, value in {**tables(**before), **copy(after or {})}.items()
+                        if name != "validators"}
+            assert result == {"did": did, **expected}, (why, result)
+            assert all(outcome in sch.PROPOSING_RULES for outcome in did) <= (after is None), why
+            self.governed.append({"why": why, "before": start, "operations": operations, "then": result})
+            return result
+
+        def propose(sender: str, track: str = "protocol", salt: int = 0, **payload: Any) -> dict:
+            if not payload:
+                payload = {"params": {"treasury_share_ppm": 40_000}} if track == "protocol" \
+                    else {"recipients": [{"address": "r", "amount": 1_000_000}], "memo": "a grant"}
+            return {"sender": sender, "kind": "governance_propose",
+                    "params": {"track": track, "payload": payload, "salt": salt}}
+
+        def identifier(operation: dict) -> str:
+            return ref.H("kern.gov.id", self.network_id, ref.canonical_json({
+                "submitter": operation["sender"], "payload": operation["params"]["payload"],
+                "salt": operation["params"]["salt"]})).hex()
+
+        def submitted(operation: dict, level: int = 1000) -> dict:
+            track = operation["params"]["track"]
+            votes = {"exploration_votes": {}, "adoption_votes": {}, "double_votes": []} if track == "protocol" \
+                else {"votes": {}}
+            return {"proposal_id": identifier(operation), "submitter": operation["sender"],
+                    "payload": operation["params"]["payload"], "submitted_at": level, "phase": "submitted",
+                    **votes, "bond": bond[track]}
+
+        vote = lambda sender, ballot, pair="p1", track="protocol": {                        # noqa: E731
+            "sender": sender, "kind": "governance_vote",
+            "params": {"track": track, "proposal_id": pair, "vote": ballot}}
+        first, voting = waiting("p1"), waiting("t1", "treasury", "voting")
+        both = lambda protocol=None, treasury=None: {                                       # noqa: E731
+            "protocol": [first] if protocol is None else protocol, "treasury": [voting] if treasury is None else treasury}
+
+        # -- proposals
+        ours = propose("v")
+        govern("a validator submits a protocol proposal: its bond leaves its balance, and the proposal enters the "
+               "end of the list of its track, in the phase `submitted`, without a vote",
+               [ours], ["submitted"],
+               {"balances": {"v": 150, "w": 100, "x": 10, "y": 9}, "governance": both([first, submitted(ours)])})
+        theirs = propose("x", "treasury")
+        govern("an account that is no validator submits a treasury proposal, with all that it holds as its bond: "
+               "it leaves `balances`. The proposal asks for more than any treasury of these vectors holds, and "
+               "nothing here reads what the treasury holds: that is looked at when a guardian releases the payment",
+               [theirs], ["submitted"],
+               {"balances": {"v": 250, "w": 100, "y": 9}, "governance": both(None, [voting, submitted(theirs)])})
+        govern("an account that is no validator submits a protocol proposal, and holds its bond",
+               [propose("x")], ["not_by_a_validator"], balances={"v": 250, "w": 100, "x": 100, "y": 9})
+        again = propose("v", salt=1)
+        govern("the same proposal twice in a block: the second one has the identifier of the first. With another "
+               "`salt` it is another proposal",
+               [ours, ours, again], ["submitted", "known_proposal", "submitted"],
+               {"balances": {"v": 50, "w": 100, "x": 10, "y": 9},
+                "governance": both([first, submitted(ours), submitted(again)])})
+        over = {**waiting(identifier(ours), "protocol", "rejected"), "payload": ours["params"]["payload"]}
+        govern("a proposal that is over and still in the state has that identifier: the proposal fails",
+               [ours], ["known_proposal"], governance=both([over]))
+        crossed = propose("v", params={"i_min_ppm": 60_001, "i_max_ppm": 60_000})
+        govern("`params` that hold an `i_min_ppm` above their `i_max_ppm`", [crossed], ["crossed_rates"])
+        equal = propose("v", params={"i_min_ppm": 60_000, "i_max_ppm": 60_000})
+        alone = propose("v", params={"i_min_ppm": 1_000_000})
+        govern("two equal rates, and an `i_min_ppm` alone, at the top of its range: both are submitted. What the "
+               "second one would leave is judged when its vote ends",
+               [equal, alone], ["submitted", "submitted"],
+               {"balances": {"v": 50, "w": 100, "x": 10, "y": 9},
+                "governance": both([first, submitted(equal), submitted(alone)])})
+        govern("a sender that holds one mukrn less than the bond of its track",
+               [propose("y", "treasury")], ["bond_not_held"])
+        swap = propose("w", swap="state_root_function", to="trie")
+        govern("a validator that holds exactly the bond of the protocol track",
+               [swap], ["submitted"],
+               {"balances": {"v": 250, "x": 10, "y": 9}, "governance": both([first, submitted(swap)])})
+        govern("a proposal and, in the same block, a vote on it: its vote is not open",
+               [ours, vote("v", "yes", identifier(ours))], ["submitted", "vote_not_open"],
+               {"balances": {"v": 150, "w": 100, "x": 10, "y": 9}, "governance": both([first, submitted(ours)])})
+        # -- votes of the protocol track
+        govern("the first vote of a validator in a phase is recorded",
+               [vote("v", "yes")], ["voted"], {"governance": both([{**first, "exploration_votes": {"v": "yes"}}])})
+        doubled = {**first, "exploration_votes": {"v": "yes"},
+                   "double_votes": [{"voter": "v", "phase": "exploration", "level": 1000, "punished": False}]}
+        govern("the same vote again changes nothing; another vote does not replace the first, and is recorded as a "
+               "double vote, of the level of the block; a third one changes nothing more",
+               [vote("v", "yes"), vote("v", "yes"), vote("v", "no"), vote("v", "abstain")],
+               ["voted", "voted", "voted", "voted"], {"governance": both([doubled])})
+        govern("the same vote twice, and nothing else: no double vote",
+               [vote("w", "no"), vote("w", "no")], ["voted", "voted"],
+               {"governance": both([{**first, "exploration_votes": {"w": "no"}}])})
+        punished = {**first, "exploration_votes": {"v": "yes", "w": "no"},
+                    "double_votes": [{"voter": "v", "phase": "exploration", "level": 960, "punished": True}]}
+        govern("a validator whose double vote of this phase was punished votes another way again: no second "
+               "double vote. Another validator votes two ways: its double vote comes after the first",
+               [vote("v", "no"), vote("w", "yes")], ["voted", "voted"],
+               {"governance": both([{**punished, "double_votes": punished["double_votes"] + [
+                   {"voter": "w", "phase": "exploration", "level": 1000, "punished": False}]}])},
+               governance=both([punished]))
+        second = {**waiting("p1", phase="adoption"), "exploration_votes": {"v": "yes"},
+                  "double_votes": [{"voter": "v", "phase": "exploration", "level": 960, "punished": False}]}
+        govern("the second vote of a proposal is another phase: a validator that voted two ways in the first one "
+               "votes, and votes two ways again",
+               [vote("v", "no"), vote("v", "yes")], ["voted", "voted"],
+               {"governance": both([{**second, "adoption_votes": {"v": "no"}, "double_votes": second[
+                   "double_votes"] + [{"voter": "v", "phase": "adoption", "level": 1000, "punished": False}]}])},
+               governance=both([second]))
+        # -- votes of the treasury track
+        govern("on the treasury track a vote is recorded, and the last vote of a validator replaces its first: no "
+               "double vote",
+               [vote("v", "yes", "t1", "treasury"), vote("w", "abstain", "t1", "treasury"),
+                vote("v", "no", "t1", "treasury")], ["voted", "voted", "voted"],
+               {"governance": both(None, [{**voting, "votes": {"v": "no", "w": "abstain"}}])})
+        # -- what makes a vote fail
+        govern("an account that is no validator votes", [vote("x", "yes")], ["voter_not_a_validator"])
+        govern("a vote names a proposal the state does not hold, or one of the other track",
+               [vote("v", "yes", "p9"), vote("v", "yes", "t1"), vote("v", "yes", "p1", "treasury")],
+               ["unknown_proposal", "unknown_proposal", "unknown_proposal"])
+        closed = [waiting("p2", phase="submitted"), waiting("p3", phase="cooldown"),
+                  waiting("p4", phase="activated"), waiting("p5", phase="rejected")]
+        govern("a protocol proposal that waits, rests or is over: no vote is open",
+               [vote("v", "yes", pair) for pair in ("p2", "p3", "p4", "p5")], ["vote_not_open"] * 4,
+               governance=both(closed))
+        shut = [waiting("t2", "treasury", "submitted"), waiting("t3", "treasury", "passed"),
+                waiting("t4", "treasury", "executed"), waiting("t5", "treasury", "rejected")]
+        govern("a treasury proposal that waits for its vote or for a guardian, or is over: no vote is open",
+               [vote("v", "no", pair, "treasury") for pair in ("t2", "t3", "t4", "t5")], ["vote_not_open"] * 4,
+               governance=both(None, shut))
+        # -- several rules broken: the first one, in the order of the list
+        govern("a proposal of the protocol track by an account that is no validator and does not hold the bond: "
+               "the sender is looked at first", [propose("y")], ["not_by_a_validator"])
+        known = propose("y", "treasury")
+        govern("a proposal the state holds, by a sender that does not hold the bond: the identifier comes first",
+               [known], ["known_proposal"],
+               governance=both(None, [{**waiting(identifier(known), "treasury", "voting"),
+                                       "payload": known["params"]["payload"]}]))
+        govern("crossed rates by a validator that does not hold the bond: the rates come first",
+               [{**crossed, "sender": "w"}, propose("w", params={"i_max_ppm": 0})],
+               ["crossed_rates", "bond_not_held"], balances={"v": 250, "w": 99})
+        govern("an account that is no validator votes on a proposal the state does not hold: the sender is looked "
+               "at first; a validator votes on one whose vote is not open",
+               [vote("x", "yes", "p9"), vote("w", "yes", "p2")], ["voter_not_a_validator", "vote_not_open"],
+               governance=both(closed))
+
+    def attestations(self) -> None:
+        """Attestations and their revocations in one block. Addresses are
+        short names, and so are the identifiers of the attestations a state
+        already holds. The identifier of an attestation that is recorded is
+        computed, from its issuer, what it states and the nonce of its
+        transaction."""
+        def standing(issuer: str = "i", **more: Any) -> dict:
+            return {"issuer": issuer, "schema_id": "kyc.basic", "subject": "subject-1", "claim": {"level": 2},
+                    "bond": 40, "issued_at": 900, "slashed": False, **more}
+
+        def tables(**changes: Any) -> dict:
+            base = {"balances": {"i": 100, "j": 7},
+                    "attestations": {"a1": standing(), "a2": standing(revoked_at=950),
+                                     "a3": standing(bond=0, slashed=True), "a4": standing("j", bond=0)}}
+            return copy({**base, **changes})
+
+        def attest(why: str, operations: list, did: list, after: dict | None = None, level: int = 1000,
+                   **before: Any) -> None:
+            start = {"level": level, **tables(**before)}
+            result = sch.attest(self.network_id, start, operations)
+            expected = {**tables(**before), **copy(after or {})}
+            assert result == {"did": did, **expected}, (why, result)
+            assert all(outcome in sch.ATTESTING_RULES for outcome in did) <= (after is None), why
+            self.attested.append({"why": why, "before": start, "operations": operations, "then": result})
+
+        def states(sender: str, nonce: int, amount: int, subject: str = "subject-2", **claim: Any) -> dict:
+            return {"sender": sender, "kind": "attest", "nonce": nonce, "amount": amount,
+                    "params": {"schema_id": "kyc.basic", "subject": subject, "claim": claim}}
+
+        def identifier(operation: dict) -> str:
+            params = operation["params"]
+            return ref.H("kern.attestation.id", self.network_id, ref.canonical_json({
+                "issuer": operation["sender"], "schema_id": params["schema_id"], "subject": params["subject"],
+                "claim": params["claim"], "attest_nonce": operation["nonce"]})).hex()
+
+        def recorded(operation: dict, level: int = 1000, **more: Any) -> dict:
+            params = operation["params"]
+            return {"issuer": operation["sender"], "schema_id": params["schema_id"], "subject": params["subject"],
+                    "claim": params["claim"], "bond": operation["amount"], "issued_at": level, "slashed": False,
+                    **more}
+
+        revoke = lambda sender, name: {"sender": sender, "kind": "revoke_attestation",      # noqa: E731
+                                       "params": {"attestation_id": name}}
+        kept = tables()["attestations"]
+        one = states("i", 4, 60, country="BE", level=2)
+        attest("an attestation with a bond: the bond leaves the balance of its issuer, and the attestation is "
+               "recorded under its identifier, from the level of the block",
+               [one], ["attested"],
+               {"balances": {"i": 40, "j": 7}, "attestations": {**kept, identifier(one): recorded(one)}})
+        free, whole = states("j", 0, 0), states("j", 1, 7)
+        attest("an attestation without a bond, then one that bonds all its issuer holds: the issuer leaves "
+               "`balances`. The two state the same thing under two nonces, and are two attestations",
+               [free, whole], ["attested", "attested"],
+               {"balances": {"i": 100},
+                "attestations": {**kept, identifier(free): recorded(free), identifier(whole): recorded(whole)}})
+        assert identifier(free) != identifier(whole) and free["params"] == whole["params"]
+        attest("a bond of one mukrn more than the issuer holds", [states("j", 0, 8)], ["amount_not_held"])
+        attest("the issuer of an attestation revokes it: `revoked_at` is the level of the block, and the bond stays "
+               "held", [revoke("i", "a1")], ["revoked"],
+               {"attestations": {**kept, "a1": standing(revoked_at=1000)}})
+        attest("an attestation is recorded and revoked in one block: it was issued and revoked at the same level",
+               [one, revoke("i", identifier(one))], ["attested", "revoked"],
+               {"balances": {"i": 40, "j": 7},
+                "attestations": {**kept, identifier(one): recorded(one, revoked_at=1000)}})
+        attest("a revocation names an attestation the state does not hold", [revoke("i", "a9")], ["unknown_attestation"])
+        attest("an account revokes the attestation of another", [revoke("j", "a1")], ["not_the_issuer"])
+        attest("an attestation is revoked twice: once before the block, once in it",
+               [revoke("i", "a2"), revoke("i", "a1"), revoke("i", "a1")],
+               ["revoked_already", "revoked", "revoked_already"],
+               {"attestations": {**kept, "a1": standing(revoked_at=1000)}})
+        attest("the issuer of an attestation that was slashed revokes it", [revoke("i", "a3")], ["slashed_attestation"])
+        # -- several rules broken: the first one, in the order of the list
+        attest("an account revokes an attestation of another that is revoked already: the issuer is looked at "
+               "first", [revoke("j", "a2")], ["not_the_issuer"])
+        attest("an attestation that was revoked, then slashed: the revocation is looked at first",
+               [revoke("i", "a5")], ["revoked_already"],
+               attestations={**kept, "a5": standing(bond=0, revoked_at=950, slashed=True)})
+
+    def contracts(self) -> None:
+        """Originations and calls in one block. These are whole
+        transactions, on real addresses: the address of a contract comes
+        from the identifier of its origination, and a value of the type
+        `address` is an address of the network. What the language says is
+        written here by hand, answer by answer, and the test of the
+        repository asks the interpreter of the node the same questions."""
+        a, b = self.account(110), self.account(120)
+        fields = {"count": "int", "owner": "address", "label": "string", "open": "bool"}
+        held = {a: 1000, b: 50}
+
+        def originate(sender: int, nonce: int, code: str, **named: Any) -> dict:
+            return self.tx("originate", nonce=nonce, sig=nonce, sender={"$account": sender}, code=code,
+                           initial_storage=named)
+
+        def call(sender: int, nonce: int, contract: Any, entry: str, amount: int = 0, **params: Any) -> dict:
+            return self.tx("call", nonce=nonce, sig=nonce, sender={"$account": sender}, recipient=contract,
+                           amount=amount, entry=entry, params=params)
+
+        def at(tx: dict) -> str:
+            return ref.contract_address(self.network_id, sch.transaction_id(self.network_id, self.expand(tx)))
+
+        def run(why: str, transactions: list, answers: dict, did: list, balances: dict | None = None,
+                contracts: dict | None = None, then: dict | None = None) -> dict:
+            before = {"balances": copy(held if balances is None else balances), "contracts": copy(contracts or {})}
+            sent = self.expand(transactions)
+            for tx in sent:
+                sch.check("transaction", tx, self.network_id)
+            dictated = Dictated(answers)
+            result = sch.contract(self.network_id, before, sent, dictated)
+            expected = {"did": did, **before, **copy(then or {})}
+            assert result == expected, (why, result)
+            assert all(outcome in sch.CONTRACT_RULES for outcome in did) <= (then is None), why
+            assert sch.contract(self.network_id, before, sent, sch.Said(dictated.language)) == result, why
+            self.contracted.append({"why": why, "before": before, "transactions": transactions,
+                                    "language": dictated.language, "then": result})
+            return result
+
+        accepted = {"declares": fields, "holds": True}
+        full = {"count": 7, "owner": a, "label": "first", "open": True}
+
+        # -- originations
+        first = originate(110, 3, COUNTER, count=7, owner={"$account": 110}, label="first", open=True)
+        run("an origination that names every field of its code: the contract is recorded at the address made from "
+            "the identifier of the transaction, with its code and its first storage",
+            [first], {0: accepted}, ["originated"],
+            then={"contracts": {at(first): {"code": COUNTER, "storage": full}}})
+        bare = originate(110, 3, COUNTER, owner={"$account": 120})
+        run("an origination that names only its field of the type `address`: the other fields take 0, the empty "
+            "text and `false`",
+            [bare], {0: accepted}, ["originated"],
+            then={"contracts": {at(bare): {"code": COUNTER,
+                                           "storage": {"count": 0, "owner": b, "label": "", "open": False}}}})
+        funded = originate(120, 0, FUNDED)
+        run("an invariant that reads `balance`, on an address that holds nothing: the origination fails",
+            [funded], {0: {"declares": {"n": "int"}, "holds": False}}, ["invariant_refused"])
+        run("the same origination once its address holds 5 mukrn: the invariants are given what the address holds, "
+            "and it keeps it",
+            [funded], {0: {"declares": {"n": "int"}, "holds": True}}, ["originated"],
+            balances={**held, at(funded): 5}, then={"contracts": {at(funded): {"code": FUNDED, "storage": {"n": 0}}}})
+        mine, theirs = originate(110, 4, MINE, owner={"$account": 110}), originate(110, 5, MINE, owner={"$account": 120})
+        run("an invariant that reads `sender`: the invariants of an origination are given the sender of the "
+            "transaction. The first origination names its sender, the second names another account",
+            [mine, theirs], {0: {"declares": {"owner": "address"}, "holds": True},
+                             1: {"declares": {"owner": "address"}, "holds": False}},
+            ["originated", "invariant_refused"],
+            then={"contracts": {at(mine): {"code": MINE, "storage": {"owner": a}}}})
+        run("a code that does not read, a code whose types are wrong, and a code with a statement 65 levels deep: "
+            "the language refuses each, and says nothing of its fields",
+            [originate(110, 3, UNREADABLE), originate(110, 4, MISTYPED), originate(110, 5, DEEP)],
+            {0: {}, 1: {}, 2: {}}, ["code_refused"] * 3)
+        wide = lambda count: "contract Wide { storage { " + "".join(                         # noqa: E731
+            f"f{n}: int, " for n in range(count)) + "} }"
+        most = originate(110, 3, wide(256))
+        run("a code that declares 256 fields, and none of the type `address`: every field takes its default",
+            [most], {0: {"declares": {f"f{n}": "int" for n in range(256)}, "holds": True}}, ["originated"],
+            then={"contracts": {at(most): {"code": wide(256), "storage": {f"f{n}": 0 for n in range(256)}}}})
+        run("a code that declares 257 fields: no state could hold its storage",
+            [originate(110, 3, wide(257))], {0: {"declares": {f"f{n}": "int" for n in range(257)}}},
+            ["fields_out_of_bounds"])
+        named = lambda length: "contract Long { storage { " + "a" * length + ": bool, } }"   # noqa: E731
+        longest = originate(110, 3, named(64))
+        run("a field whose name is 64 characters long, then one whose name is 65: the language reads both codes, "
+            "and the second name is not a `name`",
+            [longest, originate(110, 4, named(65))],
+            {0: {"declares": {"a" * 64: "bool"}, "holds": True}, 1: {"declares": {"a" * 65: "bool"}}},
+            ["originated", "fields_out_of_bounds"],
+            then={"contracts": {at(longest): {"code": named(64), "storage": {"a" * 64: False}}}})
+        declared = {"declares": fields}
+        run("`initial_storage` names a field the code does not declare",
+            [originate(110, 3, COUNTER, owner={"$account": 110}, counts=7)], {0: declared}, ["undeclared_field"])
+        elsewhere = a[:-1] + ("2" if a[-1] != "2" else "3")
+        assert sch.verdict("transaction", self.expand(originate(110, 3, COUNTER, owner=elsewhere)),
+                           self.network_id) == "accepted"                   # a value is an address by its type only
+        run("a value that is not of the type of its field: `true` for an integer, 1 for a boolean, a text for an "
+            "integer, an integer for a text, an integer for an address, and for an address a text whose checksum "
+            "is not that of the network",
+            [originate(110, 3, COUNTER, owner={"$account": 110}, count=True),
+             originate(110, 4, COUNTER, owner={"$account": 110}, open=1),
+             originate(110, 5, COUNTER, owner={"$account": 110}, count="7"),
+             originate(110, 6, COUNTER, owner={"$account": 110}, label=7),
+             originate(110, 7, COUNTER, owner=7),
+             originate(110, 8, COUNTER, owner=elsewhere)],
+            {n: declared for n in range(6)}, ["wrong_value"] * 6)
+        run("a field of the type `address` that `initial_storage` does not name: it has no default",
+            [originate(110, 3, COUNTER, count=7)], {0: declared}, ["address_not_named"])
+        run("an invariant that the first storage breaks",
+            [originate(110, 3, COUNTER, count=101, owner={"$account": 110})],
+            {0: {"declares": fields, "holds": False}}, ["invariant_refused"])
+        # -- several rules broken by an origination: the first one, in the order of the list
+        run("257 fields and a name the code does not declare: the fields are counted first",
+            [originate(110, 3, wide(257), more=1)], {0: {"declares": {f"f{n}": "int" for n in range(257)}}},
+            ["fields_out_of_bounds"])
+        run("a name the code does not declare and a value of another type: the names are looked at first; then a "
+            "value of another type and an address that is not named: the values come first; then an address that "
+            "is not named and a storage that breaks an invariant: the invariants are not even checked",
+            [originate(110, 3, COUNTER, counts=7, count=True), originate(110, 4, COUNTER, count=True),
+             originate(110, 5, COUNTER, count=101)],
+            {n: declared for n in range(3)}, ["undeclared_field", "wrong_value", "address_not_named"])
+
+        # -- calls
+        k = at(first)
+        there = {"balances": {**held, k: 5}, "contracts": {k: {"code": COUNTER, "storage": full}}}
+        closed = {"balances": held, "contracts": {k: {"code": COUNTER, "storage": {**full, "open": False}}}}
+        add, nothing = {"takes": {"by": "int"}}, {"takes": {}}
+        rename = {"takes": {"to": "string", "who": "address"}}
+        stored = lambda **changes: {"contracts": {k: {"code": COUNTER, "storage": {**full, **changes}}}}   # noqa: E731
+        run("a call that succeeds: the storage of the contract becomes the one the execution leaves",
+            [call(120, 0, k, "add", by=5)], {0: {**add, "leaves": {**full, "count": 12}}}, ["called"],
+            **there, then=stored(count=12))
+        run("a call that moves 3 mukrn to a contract that holds 5: the execution is given a `balance` of 8, the "
+            "amount of the call included, and keeps it in a field",
+            [call(120, 0, k, "pay", 3)], {0: {**nothing, "leaves": {**full, "count": 8}}}, ["called"],
+            **there, then={"balances": {a: 1000, b: 47, k: 8}, **stored(count=8)})
+        run("a call that moves all its sender holds: the sender leaves `balances`",
+            [call(120, 0, k, "pay", 50)], {0: {**nothing, "leaves": {**full, "count": 55}}}, ["called"],
+            **there, then={"balances": {a: 1000, k: 55}, **stored(count=55)})
+        run("a call with two parameters, by the account the contract names as its owner: the execution is given "
+            "the sender of the transaction",
+            [call(110, 4, k, "rename", to="second", who={"$account": 120})],
+            {0: {**rename, "leaves": {**full, "label": "second", "owner": b}}}, ["called"],
+            **there, then=stored(label="second", owner=b))
+        run("the same call by another account: the contract refuses it",
+            [call(120, 0, k, "rename", to="second", who={"$account": 120})], {0: rename}, ["execution_refused"],
+            **there)
+        run("a call to an account, and a call to an address the state does not know",
+            [call(120, 0, a, "add", by=5), call(120, 1, {"$address": 77}, "add", by=5)], {},
+            ["not_a_contract"] * 2, **there)
+        run("a call that moves one mukrn more than its sender holds",
+            [call(120, 0, k, "pay", 51)], {}, ["payment_not_held"], **there)
+        run("an entry point the contract does not have, and a view called as an entry point: the language says "
+            "that neither is an entry point",
+            [call(120, 0, k, "nothing"), call(120, 1, k, "get")], {0: {}, 1: {}}, ["wrong_parameters"] * 2, **there)
+        run("parameters that are not those of the entry point: one that is missing, one too many, `true` for an "
+            "integer, an integer for a text, and for an address a text whose checksum is not that of the network",
+            [call(120, 0, k, "add"), call(120, 1, k, "add", by=5, more=1), call(120, 2, k, "add", by=True),
+             call(110, 4, k, "rename", to=7, who={"$account": 120}), call(110, 5, k, "rename", to="x", who=elsewhere)],
+            {0: add, 1: add, 2: add, 3: rename, 4: rename}, ["wrong_parameters"] * 5, **there)
+        run("a `require` that refuses: the contract is closed. The call fails and nothing moves, the amount of the "
+            "call included",
+            [call(120, 0, k, "add", 9, by=5)], {0: add}, ["execution_refused"], **closed)
+        run("an execution that would leave a storage its invariants refuse, one whose sum leaves 64 bits, and a "
+            "`require` on the amount of the call",
+            [call(120, 0, k, "add", by=94), call(120, 1, k, "add", by=INT_MAX), call(120, 2, k, "pay")],
+            {0: add, 1: add, 2: nothing}, ["execution_refused"] * 3, **there)
+        run("the invariant holds at its bound: a call that leaves 100",
+            [call(120, 0, k, "add", by=93)], {0: {**add, "leaves": {**full, "count": 100}}}, ["called"],
+            **there, then=stored(count=100))
+        second = originate(120, 0, COUNTER, owner={"$account": 120}, open=True)
+        fresh = {"count": 0, "owner": b, "label": "", "open": True}
+        run("an origination and, in the same block, two calls to the contract it creates: the second call finds "
+            "what the first one left",
+            [second, call(120, 1, at(second), "add", by=1), call(110, 3, at(second), "pay", 2)],
+            {0: accepted, 1: {**add, "leaves": {**fresh, "count": 1}}, 2: {**nothing, "leaves": {**fresh, "count": 2}}},
+            ["originated", "called", "called"],
+            then={"balances": {a: 998, b: 50, at(second): 2},
+                  "contracts": {at(second): {"code": COUNTER, "storage": {**fresh, "count": 2}}}})
+        # -- several rules broken by a call: the first one, in the order of the list
+        run("a call to an account that moves more than its sender holds: the recipient is looked at first; a call "
+            "to a contract that moves more than its sender holds and names no entry point of it: the amount comes "
+            "first, and the language is not asked; a call whose parameters are not those of its entry point, to a "
+            "contract that is closed: the parameters come first, and nothing is executed",
+            [call(120, 0, a, "add", 51, by=5), call(120, 1, k, "nothing", 51), call(120, 2, k, "add", by=True)],
+            {2: add}, ["not_a_contract", "payment_not_held", "wrong_parameters"], **closed)
+
     def exchanges(self) -> None:
         """A connection, as the node that asks for blocks sees it."""
         def exchange(why: str, steps: list[dict], verdicts: list[str]) -> None:
@@ -2430,18 +3379,28 @@ class Builder(Vectors):
         self.rewards()
         self.tallies()
         self.slashes()
+        self.first_transactions()
+        self.delegations()
+        self.proposals()
+        self.attestations()
+        self.contracts()
         self.transitions()
         self.exchanges()
         self.outside()
         return {"description": DESCRIPTION, "network_id": self.network_id.hex(), "limits": LIMITS,
                 "rules": sch.RULES, "block_rules": sch.BLOCK_RULES, "guardian_rules": sch.GUARDIAN_RULES,
                 "slash_rules": sch.SLASH_RULES, "whole_block_rules": sch.WHOLE_BLOCK_RULES,
+                "key_rules": sch.KEY_RULES, "delegating_rules": sch.DELEGATING_RULES,
+                "proposing_rules": sch.PROPOSING_RULES, "attesting_rules": sch.ATTESTING_RULES,
+                "contract_rules": sch.CONTRACT_RULES,
                 "directives": DIRECTIVES,
                 "accepted": self.accepted, "refused": self.refused,
                 "accepted_texts": self.accepted_texts, "refused_texts": self.refused_texts,
                 "prefixes": self.prefixes, "answers": self.answers, "replies": self.replies,
                 "charges": self.charged, "decisions": self.decided, "payments": self.guarded,
                 "rewards": self.rewarded, "tallies": self.tallied, "slashes": self.slashed,
+                "first_transactions": self.keyed, "delegations": self.staked, "proposals": self.governed,
+                "attestations": self.attested, "contracts": self.contracted,
                 "transitions": self.applied,
                 "exchanges": self.exchanged, "served": self.served}
 

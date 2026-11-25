@@ -310,7 +310,7 @@ Internal helpers (`_apply_*`, `_credit`, `_debit`, etc., with leading underscore
 
 The Skald lexer, parser, AST, and interpreter as of v1.0. The static type checker in [`kern/skald/typecheck.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/typecheck.py).
 
-**Stable**: existing contract source code that compiles in v1.0 will continue to compile in all v1.x. One bound came to it: a code nested deeper than 64 levels is not read ([`skald-language.md`](skald-language.md), "Bounds"). Before the bound such a code was read or refused according to the Python stack of the node that read it, so no node could promise to read it.
+**Stable**: existing contract source code that compiles in v1.0 will continue to compile in all v1.x. One bound came to it: a code nested deeper than 64 levels is not read ([`skald-language.md`](skald-language.md), "Bounds"). Near the limit of the Python stack, a deeper code was read or refused according to the node that read it; the bound is set far below that limit, so that every node gives the same answer. It also refuses code that every node read before: a sum of 64 terms, for instance.
 
 ### 3.4 Storage schema
 
@@ -621,13 +621,13 @@ A kind has the fields of its row, and no other: a cell that is empty is a field 
 | `rotate_key` |  |  |  |  |  | table below |
 
 - **`transfer`** moves `amount` to `recipient`.
-- **`originate`** creates a contract from its `code`, with the fields of `initial_storage`. A field that is not named takes the default of its type; the map can be empty.
+- **`originate`** creates a contract from its `code`, with the fields of `initial_storage`. A field that is not named takes 0, `false` or the empty text, as its type says. A field of the type `address` has no default: an origination that does not name it fails (section 9.16). The map can be empty when the code declares no such field.
 - **`call`** calls the entry point `entry` of the contract at `recipient`, with `params` by name, and moves `amount` to the contract, which can be 0. Parameters are given by name only: the list and the single value that a call may carry today are not forms of structure version 1.
 - **`delegate_stake`** bonds `amount` to a validator, and **`undelegate_stake`** ends the delegation of the sender: it has no field of its own.
 - **`attest`** records an attestation, with `amount` as its bond, which can be 0.
 - **`release_payment`** and **`cancel_payment`** are the transactions of a guardian of the treasury: the first releases a payment that waits, the second cancels it (section 9.16).
 
-Which names a contract declares, and what an entry point takes, is for the contract to say: a transaction of the right form whose names do not fit fails when it is applied.
+Which names a contract declares, and what an entry point takes, is for the contract to say: a transaction of the right form whose names do not fit fails when it is applied. Section 9.16 states what each of these kinds does to the state, and the rules that make its operation fail.
 
 #### `params` of `governance_propose`
 
@@ -973,10 +973,13 @@ With one request waiting at most, the answer to a request is the next `blocks` f
 | Parameters of a call | An object by name, a list by position, one value, or `null` | A map of names to values | One form for one call |
 | Initial storage | Any JSON, or `null` | A map of names to values, which can be empty | The same |
 | What a contract takes and holds | Any JSON in the transaction. An integer outside 64 bits or a text beyond 4,096 bytes fails the operation, which pays its fee | An integer of 64 bits, a boolean or a text | The four types of Skald |
+| A name the contract does not declare, in `initial_storage` or in `params` | Ignored | The operation fails | A transaction says what it does, and nothing else |
+| A field of the type `address` that an origination does not name | Takes a default, `kn1` and 33 zeros, which is no address of structure version 1 | The origination fails | No address stands for nobody |
 | The size of a transaction | What is signed | The whole transaction, witness included | Note, 7 |
 | Parameters of a protocol proposal | Seventeen names, seven of them with a fraction | Nine names, each an integer or a boolean with its range | Note, 4.3: no number with a fraction |
 | `salt` of a proposal | Optional, 0 when absent | Required | No default |
 | `undelegate_stake` | Empty `params` | No `params` | No placeholder |
+| An `undelegate_stake` whose sender has no delegation | Succeeds, and changes nothing | Fails | Nothing ended |
 | Amount of a delegation | Checked when applied | 1 at least, in the schema | A delegation of nothing is not one |
 | `subject` and `schema_id` of an attestation | Any text | A bounded text over a part of ASCII | Names are compared as bytes |
 | Header | Eight signed fields | Nine: `version` and `witness_root` come, the key of the proposer goes | Note, 6.3 |
@@ -1002,6 +1005,8 @@ With one request waiting at most, the answer to a request is the next `blocks` f
 | The phase `withdrawn` | A phase no transaction leads to | Not a phase | A schema holds no value that cannot occur |
 | Double votes on a proposal | `equivocations`: both votes, the level of the second, and the reporter once punished | `double_votes`: the voter, the phase, the level, and whether it was punished | The state keeps what the next block needs |
 | The treasury address | Optional | Required; it has no key, and no transaction is sent by it | Only a payment that was voted and released moves what the treasury holds |
+| A treasury proposal that asks for more than the treasury holds | Fails when it is submitted | Is submitted: the sum is looked for when a guardian releases the payment | One check, where the payment is made |
+| A vote that contradicts the first one of its validator, on the protocol track | The operation is said to fail, and the double vote is recorded | The operation succeeds, and records the double vote | An operation that fails changes nothing |
 | A treasury proposal whose vote passes | Is paid by the block in which its vote ends | Waits, in the phase `passed`, until a guardian releases it; it is rejected at the end of its wait | A payment needs a vote and a guardian |
 | Guardians of the treasury | None | `guardians`: 3 to 8 accounts, fixed by the genesis | They release a payment or cancel it, and can do nothing else |
 | What a guardian sends | Nothing | `release_payment` and `cancel_payment`, two of the fifteen kinds of transactions | A guardian acts by a transaction, in a block |
@@ -1069,7 +1074,10 @@ For chapter 2 it holds:
 - **rewards** (`rewards`): a part of a state and a proposer, with what is staked, the rate, the reward and what each address receives; among them numbers that pass 2^64 on the way, and a supply at the end of its range;
 - **votes** (`tallies`): the weights of a snapshot and the votes of a track, with the weights of the yes and of the no, the quorum and the outcome;
 - **reports of offences** (`slashes`): the tables a slash reads and the reports of one block, with what each one does or the rule that makes it fail (`slash_rules`), what each address receives, what is burned and the tables afterwards;
-- **whole blocks** (`transitions`): a state, a block, and the state the block leads to, with its root; or the rule that makes the block invalid, one of `whole_block_rules` or of `block_rules`;
+- **the key a first transaction carries** (`first_transactions`): a key registry and the transactions of one block, with the registry they leave, or the rule that makes the block invalid (`key_rules`) and the transaction that breaks it. Some fillers have an Ed25519 part that passes the check of the note, and others do not;
+- **delegations** (`delegations`), **proposals and votes** (`proposals`) and **attestations** (`attestations`): the tables these kinds read and write and the operations of one block, with what each one does or the rule that makes it fail (`delegating_rules`, `proposing_rules`, `attesting_rules`), and the tables afterwards;
+- **contracts** (`contracts`): originations and calls of one block, as whole transactions, with what the language says of each (`language`), what each one does or the rule that makes it fail (`contract_rules`), and the balances and the contracts afterwards. Neither program executes a contract: section 9.16 says what the vectors hold of the language, and what they do not;
+- **whole blocks** (`transitions`): a state, a block, and the state the block leads to, with its root; or the rule that makes the block invalid, one of `whole_block_rules`, of `block_rules` or of `key_rules`;
 - **exchanges** (`exchanges`, `served`): what happens on a connection as the node that asks for blocks sees it, step by step, and what a node sends when two requests reach it.
 
 For chapter 3 it holds:
@@ -1408,7 +1416,7 @@ The key that is current at a level is the last one whose `from` is not above tha
 A key enters the registry in three ways:
 
 1. The genesis records the key of each validator, from level 0.
-2. The first transaction of an account carries its key, whose hash is the address. The key is recorded from the level of that block, and it is the key that transaction is verified with.
+2. The first transaction of an account carries its key, whose hash is the address. The key is recorded from the level of that block, and it is the key that transaction is verified with. Section 9.16 states, as five rules of a block, when a transaction carries a key and which one.
 3. A `rotate_key` in the block of level `H` records the new key from level `H` + 1 (note, section 6.4).
 
 A key is checked before it is recorded (note, section 4.5, rule 4), and nothing ever leaves the registry. The rules of section 9.12 are those of the note, read on a state: the first key of an address is the one whose hash is the address; a key stands once in the whole registry; a key of an address takes no part of an earlier key of that address; and since one rotation of an address takes effect in a block, the last `from` of an address is `level` plus 1 at most.
@@ -1462,7 +1470,7 @@ A genesis names its structure version and its signature scheme, and one that nam
 
 ### 9.16 What a block does to the state
 
-A block of level `n` takes the state of level `n` - 1 to the state of level `n`. This section says in what order, and states what the forms cannot: what a block must be able to charge, in what order proposals are decided, what a guardian does, and what leaves the state.
+A block of level `n` takes the state of level `n` - 1 to the state of level `n`. This section says in what order, and states what the forms cannot: what a block must be able to charge, which key a first transaction carries, in what order proposals are decided, what each kind of transaction does, and what leaves the state.
 
 The steps of a block, in this order:
 
@@ -1494,7 +1502,21 @@ A block that breaks one of them is invalid: this is the rule that section 9.1 an
 
 Once these hold for a transaction, its fee moves from its sender to the proposer, the nonce of its sender goes up by one, the key it carries is recorded from the level of the block, and its operation is applied. The operation succeeds, or it fails and changes nothing else (section 9.1): a transfer whose sender does not hold the amount, a call that the contract refuses, a rotation to a key that was recorded before.
 
-`max_block_bytes` bounds every block, whether the fee floor is on or not. A schema verifies no signature, so the vectors hold the first six rules, on blocks of transfers: what each block leaves, or the rule that makes it invalid and the transaction that breaks it. The last two are those of the note (sections 4.5, 6.3 and 6.4), and their tests come with the implementation.
+`max_block_bytes` bounds every block, whether the fee floor is on or not. The vectors of this part hold the first six rules, on blocks of transfers: what each block leaves, or the rule that makes it invalid and the transaction that breaks it. The seventh is that of the note for the key of an account (its section 4.5): the next part cuts it in five rules, each with its vectors. The eighth is that of the note for signatures (its sections 6.3 and 6.4): a schema verifies no signature, and its tests come with the implementation.
+
+#### The key a first transaction carries
+
+An account that a state funds has no key until it sends: its first transaction carries its key, in `public_key`, and no later one does (note, section 4.5). The seventh rule above is five rules, looked at in this order for each transaction, on the registry as the transactions before it left it:
+
+- A sender that has no key in `keys` carries its `public_key`.
+- A sender that has a key in `keys` carries none.
+- The hash of the key a transaction carries is the address of its sender.
+- That key passes the check the note makes of a key before it is recorded (its section 4.5, rule 4).
+- No address has had that key.
+
+A block that breaks one of them is invalid. When they hold, a transaction that carries a key adds an entry to `keys` for its sender: `from` is the level of the block, and the key is the one it carries (section 9.14). The key is recorded before the operation is applied and whatever the operation does: a first transaction whose operation fails has recorded its key, as it has paid its fee. Any kind of transaction can be the first of its account, and that of a guardian can be the release of a payment.
+
+The second rule holds whatever the key: a sender that has a key carries none, not even its own. The fourth is rule 2 of section 2.5 of the note, on the Ed25519 part of the key: it reads the bytes of the key, and verifies no signature. The fifth looks at every key of the registry, the earlier keys of an address among them: a key that a rotation recorded for another address can no longer be the first key of the address it hashes to. The vectors hold the transactions of a block as the registry sees them, with the registry they leave, or the rule that makes the block invalid and the transaction that breaks it. A transaction that breaks several rules breaks the block all the same: the vectors name the first one, in the order of the list. Their keys are fillers, like every key of these vectors: the Ed25519 part of some passes the check, and that of others does not.
 
 #### Deciding proposals
 
@@ -1528,6 +1550,72 @@ A payment that is made is executed in the transaction that releases it: each rec
 A payment needs both a vote and a guardian. Until a guardian releases it, a payment that the validators voted moves nothing, and at the end of `passed` it is rejected like a proposal whose vote failed. A guardian, for its part, releases what was voted, to the recipients and for the amounts of the proposal: it cannot name another payment, and without a vote that passed its transaction fails. Until `guardian_delay_blocks` levels have passed since the end of the vote, the first guardian alone can release, and it has the whole wait in which to cancel. Past that delay two others can release without it, so that a payment does not hang on one key.
 
 The block of the level at which a vote ends applies its transactions before it decides that vote (step 2, then step 6): for them the proposal is still in its vote, and the first block in which a guardian can act is the next one. In the block of the level at which the wait ends, a payment can still be released: the transactions come before the decision that would reject it. A release that would pay more than the treasury holds fails, and can be sent again later in the wait. The sum it must find is that of every amount of the payment, what the treasury pays to itself included: that part is counted too, and comes back to the treasury when the payment is made. The vectors hold transactions of guardians in one block, with what each one does or the rule that makes it fail, and what they leave; several come twice, in one order and in the other. An operation that breaks several rules fails all the same, and leaves the same state whichever rule is named: the vectors name the first one, in the order of the list.
+
+#### What a delegation does
+
+A `delegate_stake` bonds its `amount` to a validator, and an `undelegate_stake` ends the delegation of its sender (section 9.12). A delegation that succeeds takes its `amount` from the balance of its sender. The delegation of the sender is created, or its `amount` goes up; a tranche of the level of the block is added, or the last tranche goes up when it is already of that level. The weight of the validator in `consensus_set` does not move: the next snapshot counts the delegation (step 8). An end that succeeds takes the delegation out of `delegations` and puts it at the end of `delegation_unbonding`, with its tranches, `unbonding_from` at the level of the block and `release_at` at that level plus `delegation_unbonding_blocks`. The weight of its validator in `consensus_set` becomes its stake plus the amounts still delegated to it, when that is lower. Each of the two is charged like any other transaction, and its operation fails, changing nothing else, unless all of the following hold:
+
+- A `delegate_stake` names a validator of the state.
+- That validator is not its sender.
+- Its sender has no delegation to another validator.
+- Its sender holds its `amount`.
+- The sender of an `undelegate_stake` has a delegation.
+- The level at which that delegation is released, the level of the block plus `delegation_unbonding_blocks`, is not above 2^63 - 1.
+
+The first four rules are those of a `delegate_stake`, the last two those of an `undelegate_stake`. What a sender holds is read when the turn of its operation comes, its fee paid: this goes for every amount and every bond of this section. A validator can delegate to another validator. A delegator whose earlier delegation is unbonding can delegate again, to the same validator or to another: only a delegation that stands ties it to one validator. A delegation that is made in a block can end in that block. An `undelegate_stake` whose sender has no delegation fails: the node of today lets it succeed and change nothing, and the state is the same.
+
+The vectors hold delegations and their ends in one block, with what each one does or the rule that makes it fail, and the tables they leave. An operation that breaks several rules fails all the same: the vectors name the first one, in the order of the list, here and in the three parts that follow.
+
+#### Proposals and votes
+
+A `governance_propose` submits a proposal to one of the two tracks, and a `governance_vote` votes on one (section 9.5). A proposal that is submitted takes the bond of its track, `protocol_bond` or `treasury_bond`, from the balance of its sender, and enters the end of the list of its track: its identifier, its sender as `submitter`, its payload, `submitted_at` at the level of the block, the phase `submitted`, no vote, and its bond. A vote that succeeds is recorded as section 9.12 says. On the protocol track the first vote of a validator in a phase stands: the same vote again changes nothing, and another vote does not replace it and is recorded as a double vote, once for that validator and that phase, with the level of the block, not punished. On the treasury track the last vote of a validator replaces its first. The operation of such a transaction fails, and changes nothing else, unless all of the following hold:
+
+- A `governance_propose` of the protocol track is sent by a validator.
+- No proposal of its track, in the state, has its identifier.
+- Its `params` do not hold an `i_min_ppm` above their `i_max_ppm`.
+- Its sender holds the bond of its track.
+- A `governance_vote` is sent by a validator.
+- It names a proposal of its `track`, in the state.
+- A vote of that proposal is open: its `phase` is `exploration` or `adoption` on the protocol track, `voting` on the treasury track.
+
+The first four rules are those of a `governance_propose`, the last three those of a `governance_vote`. Whoever holds the bond submits to the treasury track; only a validator submits to the protocol track, and only validators vote. A treasury proposal can ask for more than the treasury holds when it is submitted: what the treasury holds is read when a guardian releases the payment, and a release that does not find the sum fails (above). The third rule reads the `params` of the proposal alone. A proposal that names one of the two rates is submitted whatever the state holds for the other, and is rejected at the end of its second vote if its `params` would leave them crossed (above).
+
+A vote that contradicts the first one of its validator is an operation that succeeds: it writes the double vote, which a `slash_equivocation` can report (section 9.17), and the first vote is the one that is counted. A further vote of that validator in that phase succeeds too, and changes nothing. The block of the level at which a vote ends applies its transactions before it counts the vote (step 2, then step 6): a vote sent at that level is counted. The block of the level at which a vote opens applies its transactions before it opens the vote: for them it is not open, and a vote sent at that level fails. The vectors hold proposals and votes in one block, with what each one does or the rule that makes it fail, and what they leave.
+
+#### What an attestation does
+
+An `attest` records a statement of its sender, with its `amount` as a bond, and a `revoke_attestation` revokes one (section 9.5). An attestation that is recorded takes its `amount`, which can be 0, from the balance of its sender, and enters `attestations` under its identifier: its sender as `issuer`, its `schema_id`, its `subject` and its `claim`, its `amount` as `bond`, `issued_at` at the level of the block, and `slashed` at `false`. A revocation that succeeds sets `revoked_at` to the level of the block. The bond does not return then: step 4 of the block of level `revoked_at` plus `attestation_unbonding_blocks` returns it, which is the block of the revocation itself when that period is 0. The operation of such a transaction fails, and changes nothing else, unless all of the following hold:
+
+- The sender of an `attest` holds its `amount`.
+- A `revoke_attestation` names an attestation of the state.
+- Its sender is the issuer of that attestation.
+- That attestation is not revoked.
+- It is not slashed.
+
+The first rule is that of an `attest`, the four others those of a `revoke_attestation`. The identifier of an attestation holds the nonce of its transaction (section 9.5): two attestations of one issuer never have the same identifier, and an issuer that states one thing twice has two attestations. An attestation that is slashed holds no bond and stays in the state (section 9.12): nothing is left to revoke, and its revocation fails. An attestation can be recorded and revoked in one block. The vectors hold attestations and revocations in one block, with what each one does or the rule that makes it fail, and what they leave.
+
+#### What a contract does
+
+An `originate` creates a contract, and a `call` calls one of its entry points (section 9.5). The language says what is its own: whether a code reads, what it declares, whether an execution succeeds and what storage it leaves ([skald-language.md](skald-language.md)). This part states everything around the language.
+
+An origination that succeeds records the contract at the address made from the identifier of its transaction (note, section 4.1), with its code and a value for each field the code declares: the value `initial_storage` gives, or else 0, `false` or the empty text, as the type of the field says. What that address already holds stays there. A call that succeeds moves its `amount` from its sender to the contract, and the storage of the contract becomes the one the execution leaves. The operation of such a transaction fails, and changes nothing else, unless all of the following hold:
+
+- The language accepts the `code` of an `originate`: the code reads, none of its statements is more than 64 levels deep, and its types are right.
+- That code declares 256 fields at most, each under a `name`.
+- Every name of `initial_storage` is a field the code declares.
+- Every value of `initial_storage` is of the type of its field: an integer for `int`, `true` or `false` for `bool`, a text for `string`, an address of the network for `address`.
+- `initial_storage` names every field of the type `address`.
+- The invariants of the contract hold on its first storage.
+- The `recipient` of a `call` is the address of a contract.
+- The sender of a `call` holds its `amount`.
+- `entry` is an entry point of that contract, and `params` names the parameters of that entry point, all of them and no other, each with a value of its type.
+- The execution succeeds: no `require` refuses, no value leaves the type `value`, the execution stays within its 10,000 steps and its 64 levels, and the invariants hold on the storage it leaves.
+
+The first six rules are those of an `originate`, the last four those of a `call`. The check of the invariants of an origination and the execution of a call are given four things: `sender`, the sender of the transaction; `amount`, the amount of the transaction, which is 0 for an origination; `self`, the address of the contract; and `balance`, what that address holds at that moment, the amount of the call included. An execution pays nobody: it leaves a storage, and nothing else. The amount of a call that fails does not move.
+
+A field of the type `address` has no default: no address stands for nobody, and an origination names each one. A field stands in the storage under a `name` (section 9.2), 64 characters at most: the language reads longer names, and no state could hold a storage that has one. A view is not an entry point: a `call` that names one fails. No rule of structure version 1 reads `gas_limit`: an execution is bounded by the size of its code, by that of its values and by the number of its steps. The steps and the levels of an execution are counted by the language, on the tree it builds from the code: this section does not define that tree.
+
+Neither the reference nor the Go program has an interpreter of the language. In the vectors, each origination and each call comes with what the language says of it: the fields a code declares, or that the language refuses it; whether its invariants hold; the parameters of an entry point, or that the contract has none of that name; the storage an execution leaves, or that it fails. Each also comes with what the check of the invariants or the execution is given, which both programs must have built themselves. A test of the repository puts the same questions to the interpreter of the node and finds the same answers. These vectors therefore hold everything around the language and nothing of the language itself: that two clients execute a contract the same way is for the tests of the language to show.
 
 ### 9.17 The arithmetic of a block
 
@@ -1622,9 +1710,9 @@ The vectors of the sections before hold each rule on a part of a state. Those of
 
 The state a block leads to keeps every rule of section 9.12, the one that ties `total_supply` to its tables among them: what a block mints and what it burns is in that sum, and nowhere else. When a block activates a proposal that changes `state_root_function`, the root of its header is computed by the new function: a header commits to the state as the eight steps leave it, and that state names its function.
 
-Each vector gives a state, a block, and the state the block leads to: the members that leave the state and the values put in place, the root of that state, and the pin of its encoding; or the rule that makes the block invalid. The vectors hold an empty block on a first state; the block of a level at which every step has something to do, and the block after it, whose reward reads the parameters the first one activated; a block that changes the function of the state root, and the same block under the root of the old function, which is invalid; reports of offences in the block of a proposer they slash; transactions of guardians; a supply 100 mukrn under the end of its range, on a first state and in a block that burns before it mints; and blocks that are invalid.
+Each vector gives a state, a block, and the state the block leads to: the members that leave the state and the values put in place, the root of that state, and the pin of its encoding; or the rule that makes the block invalid. The vectors hold an empty block on a first state; the block of a level at which every step has something to do, and the block after it, whose reward reads the parameters the first one activated; a block that changes the function of the state root, and the same block under the root of the old function, which is invalid; reports of offences in the block of a proposer they slash; transactions of guardians; a supply 100 mukrn under the end of its range, on a first state and in a block that burns before it mints; blocks that are invalid; and a chain of eight blocks from a first state whose periods are a few blocks long, which holds every kind of transaction but a `rotate_key`. In that chain accounts send their first transaction with their key, a delegation is made and ends, a proposal of each track goes from its submission to its end, a vote is sent at the last level of its phase, a vote contradicts another and is reported, an attestation is recorded and revoked and its bond returns, a contract is created and called, and the first transaction of a guardian releases a payment. Five blocks that a key makes invalid follow, one for each rule of section 9.16.
 
-The blocks of these vectors hold transfers, the transactions of guardians and the reports of offences, sent by accounts whose key the state holds. The other kinds of transactions, and the first transaction of an account, which records its key, come with their implementation. Like every vector of this section they verify no signature, and they do not check what the consensus checks of a block: its parent, its moment, and that its proposer is the one the draw names. Their proposer is a validator.
+The blocks of these vectors hold every kind of transaction but a `rotate_key`, which comes with its implementation. Where a block creates or calls a contract, its vector carries what the language says of it (section 9.16). Like every vector of this section they verify no signature, and they do not check what the consensus checks of a block: its parent, its moment, and that its proposer is the one the draw names. Their proposer is a validator.
 
 ### 9.19 What is hashed outside blocks
 

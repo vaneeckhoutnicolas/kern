@@ -111,7 +111,7 @@ expr           := <Pratt expression with the operators listed below>
 |         6  | `*` `/` `%`             | left          |
 |       (u)  | unary `-` unary `!`     | right         |
 
-Integer division (`/`) is truncating. Boolean operators short-circuit.
+Integer division (`/`) rounds down, toward minus infinity: `-7 / 2` is `-4`, and so is `7 / -2`. The remainder (`%`) takes the sign of its divisor: `-7 % 2` is `1`, and `7 % -2` is `-1`. Boolean operators short-circuit.
 
 ## Built-in identifiers
 
