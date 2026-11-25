@@ -16,7 +16,7 @@ Kern combines five primitives that together support this thesis. None of them is
 
 We describe the protocol architecture, the four application verticals it enables (compliance-by-construction Security Token Offerings, public goods funding, generic data oracle networks, and ZK-claims-based identity), and the operational path from the v1.1-rc reference implementation to the Midgard mainnet. We are explicit about what Kern is not, what audits are required before launch, and which design decisions are deliberate trade-offs.
 
-The reference implementation is open-source under Apache-2.0 and ships with 2776 passing tests, none skipped. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.
+The reference implementation is open-source under Apache-2.0 and ships with 2791 passing tests, none skipped. A professional security audit by a specialized firm is mandatory before Midgard mainnet launch; we have conducted an internal review that surfaced and fixed seven vulnerabilities prior to engaging the professional audit.
 
 ### Table of contents
 
@@ -82,7 +82,7 @@ These five constraints, in conjunction, produce the rest of the protocol mechani
 
 What Kern ships, concretely:
 
-1. A **Layer-1 blockchain protocol** with the design above, running with Python reference implementation (Apache-2.0, ~33,000 LOC, 2776 passing tests).
+1. A **Layer-1 blockchain protocol** with the design above, running with Python reference implementation (Apache-2.0, ~33,000 LOC, 2791 passing tests).
 2. **KRN**, the native token, with a 100M genesis supply distributed per the Ethereum 2014 template.
 3. **Skald**, a contract language with first-class runtime-enforced invariants, plus a static type system, plus a deterministic interpreter (the Kern Virtual Machine).
 4. **A dual-track governance system** (protocol amendments + treasury) with equivocation slashing.
@@ -442,7 +442,7 @@ In v1.1-rc the rewarded endorser set is the proposer alone, so the proposer rece
 
 At the 50% target staking ratio, the reward is ~0.079 KRN/block (79 220 mukrn). The proposer additionally keeps the *fees* of every successful transaction it includes; failed-transaction fees are burned. Delegators share their baker's rewards after the per-validator commission; their bonds are held by the protocol, not by the baker.
 
-The L1 transaction fee is a flat sender-chosen `tx.fee` paid in mukrn (Skald executes loop-free and non-recursive, so termination is structural and per-tx compute metering is not required at the L1 layer; gas metering, with constants from the Yellow Paper, applies inside the rollup Mini-EVM, §7). An **optional, governance-gated fee floor and per-block size cap** can be activated to add a compute-proportional fee component and a spam bound; it is off by default and detailed in [`fee-floor.md`](fee-floor.md).
+The L1 transaction fee is a flat sender-chosen `tx.fee` paid in mukrn (Skald has no loop and no recursion, and the interpreter bounds every execution; the L1 layer does not meter compute, and the fee does not depend on it. Gas metering, with constants from the Yellow Paper, applies inside the rollup Mini-EVM, §7). An **optional, governance-gated fee floor and per-block size cap** can be activated to add a fee component that grows with the size of a transaction and a spam bound; it is off by default and detailed in [`fee-floor.md`](fee-floor.md).
 
 > An interactive, animated walk-through of the block lifecycle, the gas/fee flow, the reward split, the adaptive-issuance curve, and the attestation lifecycle is published at **kern_site/how-it-works.html**.
 
@@ -839,7 +839,7 @@ Quick start to run Kern locally:
 git clone https://github.com/vaneeckhoutnicolas/kern    # exact URL TBD post-Foundation
 cd kern
 pip install -e ".[dev,explorer,docs]"
-pytest tests/                # 2776 tests should pass in about 3 minutes
+pytest tests/                # 2791 tests should pass in about 3 minutes
 python networks/devnet_bootstrap.py    # local 3-validator devnet
 python scripts/kern_wallet.py keygen --out ~/.kern/my-wallet.json
 ```
@@ -904,7 +904,7 @@ The Kern reference implementation is open-source under Apache-2.0. As of v1.1-rc
 - 43 Python modules (protocol, explorer, tools)
 - 68 markdown specifications and guides
 - 10 Skald example contracts (vault, counter, 3 STOs, QF, RPGF, 3 oracle/marketplace)
-- **2776 passing tests**, none skipped
+- **2791 passing tests**, none skipped
 - 4 internal originality checks pass (no copied code, all files SPDX-licensed, founder attribution on all modules)
 
 The repository is at https://github.com/vaneeckhoutnicolas/kern (or wherever the Foundation chooses to host it post-incorporation).

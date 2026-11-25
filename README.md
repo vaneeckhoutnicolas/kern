@@ -84,7 +84,7 @@ The genesis distribution is specified: **100 000 000 KRN** genesis supply, broad
 
 ## What's in this repository
 
-This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 2776 tests passing.**
+This is a **working reference implementation** in Python: **~33 000 lines of code, ~70 markdown specifications, 2791 tests passing.**
 
 ```
 kern/
@@ -139,7 +139,7 @@ kern/
 │   ├── build_genesis.py
 │   ├── build_v1_genesis.py     # v1.0 distribution: 70/10/14/3/2/1
 │   └── kern_wallet.py
-├── tests/                      # 2776 tests, none skipped
+├── tests/                      # 2791 tests, none skipped
 ├── docker/
 ├── genesis.json                # 100M KRN, Ethereum-style distribution
 └── genesis_vesting.json        # Off-chain vesting schedules
@@ -200,7 +200,7 @@ Run the test suite:
 
 ```bash
 pytest tests/
-# 2776 passed in about 3 minutes (the multi-process consensus tests start real nodes)
+# 2791 passed in about 3 minutes (the multi-process consensus tests start real nodes)
 ```
 
 ### A multi-node devnet in one command (Docker)
@@ -383,6 +383,7 @@ print(f"Pairing identity holds: {result[-1] == 1}")    # True
 | **v1.1-rc Phase D** | **Consensus weight backed by slashable collateral: bonded own stake and delegations with an unbonding period, evidence window, bounded BFT state ([details](docs/phase-d-changes.md))** | **✅** |
 | **v1.1-rc Phase E** | **Undelegation lowers weight at once, slashing limited to exposed stake; consensus fork reproduced in a network harness and closed by a Tendermint-style lock and valid round with a persistent signing journal; crash recovery of the journal, the locked blocks and their pre-endorsement certificates, after review of the implementation; validated on the simulator and on real node processes on one machine, including crashes of a dominant validator and of the whole cluster ([details](docs/phase-e-changes.md), [design](docs/consensus-locking.md))** | **🟡 in progress (this version): multi-machine devnet** |
 | kern-go | Go client in a sibling repo — this repo remains the executable specification; kern-go becomes the operator reference after differential testing ([details](docs/roadmap.md)) | 🔵 announced |
+| kern-agent-mcp | Agent track, in parallel, in a sibling repo: an MCP (Model Context Protocol) server through which AI agents read the chain and prepare transactions that the user signs. Tooling around the node, as the Docker devnet is: no change to consensus or to the formats, no key in reach of an agent ([details](docs/roadmap.md)) | 🔵 announced |
 | v1.0 | First stable release after audit cycle 1 | 🔵 |
 | Yggdrasil testnet | Public testnet, permissionless validators | 🔵 |
 | Midgard mainnet | Production launch with 100M KRN distribution | 🔵 |

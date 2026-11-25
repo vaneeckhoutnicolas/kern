@@ -94,6 +94,17 @@ option). The full inventory of translation hazards — integer widths,
 canonical JSON, map ordering, crypto backends, concurrency — is
 maintained in [`go-port-breakpoints.md`](go-port-breakpoints.md).
 
+## Track 5 — Agents (kern-agent-mcp)
+
+**Announced. A parallel track: it runs beside the protocol work and does not wait for the networks.**
+
+A server for AI agents, working name **kern-agent-mcp**, will be developed as a sibling repository. It speaks MCP (Model Context Protocol), the interface through which an agent calls tools, and it calls only what a Kern node already serves.
+
+- **Tooling around the node, not protocol.** As the Docker devnet did, it changes nothing in consensus, in the formats or in the state.
+- **The user signs.** Its first version reads the chain (accounts, blocks, validators, governance) and prepares transactions. No key is in reach of an agent, and an agent moves no funds by itself.
+- **Ahead of the networks.** It needs a node, not a public network: it comes before Yggdrasil and Midgard.
+- **What touches the protocol comes last.** Rights that a user delegates to an agent, verified by consensus, would be a protocol change: they wait for a second client, a devnet on several machines and an audit, and would come as an amendment through governance.
+
 ## Cross-track timing (realistic if pursued seriously)
 
 Assuming a small focused team and a serious commitment to the audit-driven path:
@@ -130,5 +141,6 @@ The three-track structure makes it visible that progress on one track doesn't au
 
 - **Code**: v1.1-rc ✅ with the Phase A hardening applied: consensus on the wire (every networked block requires a cryptographically verified > 2/3 endorsement quorum), strict typed ingress decoding, integer-only issuance (ppm fixed point), periodic state snapshots with deterministic replay, catch-up sync and re-gossip, mypy clean. See [`consensus-wire.md`](consensus-wire.md).
 - **Multi-client**: kern-go announced (Track 4). This repo remains the executable specification and baseline; the Go client becomes the operator-facing reference after differential testing.
+- **Agents**: kern-agent-mcp announced (Track 5). A parallel track in a sibling repository: tooling around the node, with no change to the protocol.
 - **Networks**: Devnet bootstrap script ships in `networks/devnet_bootstrap.py`. Previewnet design pending.
 - **Ops**: All blocked on Foundation setup, which is a real-world action no codebase can take by itself. Genesis distribution table is finalized — see [`tokenomics.md`](tokenomics.md) §4 and [`contributors-program.md`](contributors-program.md).

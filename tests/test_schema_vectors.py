@@ -12,13 +12,15 @@ ties them together:
 - tests/vectors/kern/schemas.json, built by tests/schema_vectors.py:
   objects that are accepted, objects that are refused and the rule that
   refuses each, what a block charges, what proposals decide, what the
-  guardians of the treasury do and what two peers exchange, read back
-  here as the Go program reads them;
+  guardians of the treasury do, what each kind of transaction does and
+  what two peers exchange, read back here as the Go program reads them;
 - tests/vectors/kern/profile_check.go, which checks the same file with
   tables of its own; the continuous integration runs it.
 
-Nothing below touches the node, which still writes the formats of
-sections 2.1 to 2.7 of that document.
+Nothing below changes the node, which still writes the formats of
+sections 2.1 to 2.7 of that document. One test asks its interpreter what
+the language says of the contracts of the vectors: neither the reference
+nor the Go program executes a contract.
 """
 
 from __future__ import annotations
@@ -93,7 +95,7 @@ def test_the_file_is_what_its_builder_writes():
 
 
 def test_every_accepted_object_is_accepted_and_is_the_object_the_file_pins(read):
-    assert len(read["accepted"]) == 121
+    assert len(read["accepted"]) == 123
     for record, value in read["accepted"]:
         assert sch.verdict(record["schema"], value, NETWORK) == "accepted", record["name"]
         encoding = ref.canonical_json(value)
@@ -723,7 +725,7 @@ def test_every_table_of_the_document_is_the_table_of_the_reference():
 
 def test_every_rule_of_the_reference_is_a_sentence_of_the_document():
     rules = sch.rules()
-    assert sum(len(sentences) for sentences in rules.values()) == 129
+    assert sum(len(sentences) for sentences in rules.values()) == 162
     for name, sentences in rules.items():
         listed = [line[2:] for line in PARTS[name].splitlines() if line.startswith("- ")]
         assert listed[:len(sentences)] == sentences, name
@@ -753,7 +755,7 @@ def test_the_document_names_every_kind_every_frame_and_every_limit():
         assert f"| `{name}` | {value:,} |" in PARTS["Limits"]
     # What the node writes today is named where it changes, so that a reader of sections 2.1 to 2.7 finds it.
     differences = PARTS["9.9 What changes from the formats of the devnet"]
-    assert len(_table(differences)) == 65
+    assert len(_table(differences)) == 70
     assert "`release_payment` and `cancel_payment`, two of the fifteen kinds of transactions" in differences
     for gone in ("`commits`", "`endorsements`", "`cert_round`", "`null`", "`valid_round`", "`_current_level`",
                  "`issuance_params`", "`fee_params`", "`withdrawn`", "`equivocations`"):
@@ -771,9 +773,10 @@ def test_the_document_and_the_ci_name_the_command_that_runs_the_go_program():
     assert 'os.Args[1] == "-schemas"' in program and "go run profile_check.go -schemas schemas.json" in program
     # The release guide says what the command prints: one line for each chapter of vectors.
     printed = re.findall(r'fmt\.Printf\("([a-z ]+): [^"]*, as the Python reference\\n"', program.split("func checkSchemas(")[1])
-    assert printed == ["schemas", "what is kept", "the arithmetic of a block", "what is hashed outside blocks"]
+    assert printed == ["schemas", "what is kept", "the arithmetic of a block", "what each kind of transaction does",
+                       "what is hashed outside blocks"]
     guide = (ROOT / "docs" / "release-tagging.md").read_text(encoding="utf-8")
-    assert f"(cd tests/vectors/kern && {command})\n# Expected: four lines, each ending with \"as the Python reference\"\n" in guide
+    assert f"(cd tests/vectors/kern && {command})\n# Expected: five lines, each ending with \"as the Python reference\"\n" in guide
     # The Go program has the limits of the reference, written out on its side.
     for name, value in sch.LIMITS.items():
         assert re.search(rf"=\s*{value}\b", program), name
@@ -797,7 +800,7 @@ def test_the_root_of_a_state_is_the_one_of_the_note(read):
     the state is hashed as it is; with `trie` the three tables keyed by
     address leave the object, and one hash stands for them."""
     states = _kept(read, "state")
-    assert len(states) == 20
+    assert len(states) == 22
     for name, state in states.items():
         record = by_name(name)
         assert record["accounts_root"] == ref.accounts_root(NETWORK, state).hex(), name
@@ -1143,7 +1146,8 @@ def test_what_a_block_charges(read):
     assert listed == list(sch.BLOCK_RULES.values()) + sch.SIGNATURE_RULES and len(listed) == 8
     for sentence in ("A block that breaks one of them is invalid: this is the rule that section 9.1 announced.",
                      "`max_block_bytes` bounds every block, whether the fee floor is on or not.",
-                     "their tests come with the implementation"):
+                     "the next part cuts it in five rules, each with its vectors",
+                     "a schema verifies no signature, and its tests come with the implementation"):
         assert sentence in part, sentence
 
 
@@ -1690,12 +1694,519 @@ def test_what_a_slash_takes_and_when_a_report_fails():
         assert sentence in PARTS["Reporting an offence"], sentence
 
 
+# ---------------------------------------------------------------------------
+# What each kind of transaction does (section 9.16)
+# ---------------------------------------------------------------------------
+
+def _first_broken(breaks: list[str], rules: dict) -> str | None:
+    """Of the rules an operation breaks, the first one in the order of the document."""
+    return next((rule for rule in rules if rule in breaks), None)
+
+
+def _alone(seen: dict[str, int], breaks: list[str]) -> None:
+    if len(breaks) == 1:
+        seen[breaks[0]] = seen.get(breaks[0], 0) + 1
+
+
+def _why(family: str, start: str) -> dict:
+    """The one vector of a family whose `why` starts with these words."""
+    (found,) = [record for record in FILE[family] if record["why"].startswith(start)]
+    return found
+
+
+def test_the_key_a_first_transaction_carries():
+    """The seventh rule of what a block charges, cut in five, read a second
+    time from its sentences: who carries a key, which key, and what the
+    registry holds afterwards."""
+    import ed25519_reference as ed
+    assert len(FILE["first_transactions"]) == 19 and FILE["key_rules"] == sch.KEY_RULES
+    vectors, alone, kinds = sv.Vectors(NETWORK), {}, set()
+    for record in FILE["first_transactions"]:
+        before, sent = vectors.expand(record["before"]), vectors.expand(record["transactions"])
+        assert all(sch.verdict("transaction", tx, NETWORK) == "accepted" for tx in sent), record["why"]
+        result = sch.first_keys(NETWORK, before, sent)
+        had = {address: [entry["public_key"] for entry in entries] for address, entries in before["keys"].items()}
+        expected, new = None, []
+        for at, tx in enumerate(sent):
+            sender, carried, breaks = tx["sender"], tx.get("public_key"), []
+            if carried is None:
+                breaks += [] if sender in had else ["key_missing"]
+            else:
+                key = ref.key_from_text(carried)
+                breaks += ["key_carried_again"] if sender in had else []
+                breaks += ["key_of_another"] if ref.account_address(NETWORK, key) != sender else []
+                breaks += ["not_a_key"] if not ed.is_a_key(key[-32:]) else []
+                breaks += ["key_known"] if any(carried in held for owner, held in had.items() if owner != sender) else []
+            rule = _first_broken(breaks, sch.KEY_RULES)
+            if rule is not None:
+                expected = {"valid": False, "rule": rule, "at": at}
+                _alone(alone, breaks)
+                break
+            if carried is not None:
+                had[sender] = [carried]
+                new.append(sender)
+                kinds.add(tx["kind"])
+        if expected is not None:
+            assert result == expected == {"valid": False, "rule": record["rule"], "at": record["at"]}, record["why"]
+            assert "then" not in record
+            continue
+        then = vectors.expand(record["then"])
+        assert result == {"valid": True, "keys": then["keys"]} and "rule" not in record, record["why"]
+        # A key is recorded from the level of the block, for its sender, and nothing else moves.
+        assert set(then["keys"]) == set(before["keys"]) | set(new)
+        for address, entries in then["keys"].items():
+            assert entries == ([{"from": before["level"], "public_key": had[address][0]}] if address in new
+                               else before["keys"][address]), record["why"]
+    assert set(alone) == set(sch.KEY_RULES) and kinds == {"transfer", "undelegate_stake"}
+    # The fillers: what passes the check of the note, and the two ways not to pass it.
+    part = lambda n: sv.filler("key", n, ref.PUBLIC_KEY_BYTES)[-32:]                         # noqa: E731
+    assert all(ed.is_a_key(part(n)) for n in (300, 338, 356, 359, 422))
+    assert ed.decode_strictly(part(301)) is None and ed.decode_strictly(part(305)) is not None
+    assert not ed.is_a_key(part(305)) and not any(ed.is_a_key(part(n)) for n in range(100, 163))
+    assert _why("first_transactions", "the level from which a key is recorded i")["before"]["level"] == sch.INT_MAX
+    known, twin = _why("first_transactions", "the key of a new account was recorded be"), _why("first_transactions", "the same block on a registry that does n")
+    assert known["transactions"] == twin["transactions"] and (known["rule"], "then" in twin) == ("key_known", True)
+    assert _bullets("The key a first transaction carries") == list(sch.KEY_RULES.values()) == \
+        sch.rules()["The key a first transaction carries"]
+    part_ = PARTS["The key a first transaction carries"]
+    for sentence in ("a first transaction whose operation fails has recorded its key, as it has paid its fee",
+                     "a sender that has a key carries none, not even its own", "and verifies no signature",
+                     "the vectors name the first one, in the order of the list"):
+        assert sentence in part_, sentence
+    charges = PARTS["What a block charges"]
+    assert "the next part cuts it in five rules, each with its vectors" in charges
+
+
+def _prefixes(engine, before: dict, operations: list) -> list[dict]:
+    """The tables an operation finds when its turn comes: what the ones before it left."""
+    return [{**before, **{name: value for name, value in engine(before, operations[:i]).items() if name != "did"}}
+            for i in range(len(operations))]
+
+
+def test_what_a_delegation_does():
+    assert len(FILE["delegations"]) == 24 and FILE["delegating_rules"] == sch.DELEGATING_RULES
+    alone, done = {}, collections.Counter()
+    bonded = lambda tables: sum(tables["balances"].values()) + sum(                          # noqa: E731
+        holding["amount"] for holding in list(tables["delegations"].values()) + tables["delegation_unbonding"])
+    for record in FILE["delegations"]:
+        before, operations, then = record["before"], record["operations"], record["then"]
+        assert sch.delegate(before, operations) == then, record["why"]
+        level, period = before["level"], before["delegation_unbonding_blocks"]
+        for found, operation, did in zip(_prefixes(sch.delegate, before, operations), operations, then["did"]):
+            sender, mine = operation["sender"], found["delegations"].get(operation["sender"])
+            stakes = {entry["address"]: entry["stake"] for entry in found["validators"]}
+            if operation["kind"] == "delegate_stake":
+                assert set(operation) == {"sender", "kind", "amount", "params"} and operation["amount"] >= 1
+                validator = operation["params"]["validator"]
+                breaks = [rule for rule, broken in (
+                    ("no_such_validator", validator not in stakes), ("own_validator", validator == sender),
+                    ("other_validator", mine is not None and mine["validator"] != validator),
+                    ("stake_not_held", found["balances"].get(sender, 0) < operation["amount"])) if broken]
+            else:
+                assert set(operation) == {"sender", "kind"} and operation["kind"] == "undelegate_stake"
+                breaks = [rule for rule, broken in (("no_delegation", mine is None),
+                                                    ("release_out_of_range", level + period > sch.INT_MAX)) if broken]
+            _alone(alone, breaks)
+            assert did == (_first_broken(breaks, sch.DELEGATING_RULES) or
+                           ("delegated" if operation["kind"] == "delegate_stake" else "ended")), record["why"]
+            done[did] += 1
+        # Nothing is minted and nothing is burned: what leaves a balance is bonded, and what ends is still held.
+        assert bonded(then) == bonded(before) and then["validators"] == before["validators"]
+        for holding in list(then["delegations"].values()) + then["delegation_unbonding"]:
+            levels = [tranche["level"] for tranche in holding["tranches"]]
+            assert holding["amount"] == sum(tranche["amount"] for tranche in holding["tranches"]) > 0
+            assert levels == sorted(set(levels)) and levels[-1] <= level
+        for old, new in zip(before["consensus_set"], then["consensus_set"]):
+            delegated = sum(holding["amount"] for holding in then["delegations"].values()
+                            if holding["validator"] == new["address"])
+            stake = next(entry["stake"] for entry in then["validators"] if entry["address"] == new["address"])
+            ended = any(did == "ended" for did in then["did"])
+            # A weight never goes up here, and comes down only when a delegation ends.
+            assert new["stake"] == (min(old["stake"], stake + delegated) if ended else old["stake"]), record["why"]
+        for leaving in then["delegation_unbonding"][len(before["delegation_unbonding"]):]:
+            assert (leaving["unbonding_from"], leaving["release_at"]) == (level, level + period)
+            assert leaving["release_at"] <= sch.INT_MAX
+        assert then["delegation_unbonding"][:len(before["delegation_unbonding"])] == before["delegation_unbonding"]
+    assert set(alone) == set(sch.DELEGATING_RULES) and (done["delegated"], done["ended"]) == (9, 8)
+    last, beyond = _why("delegations", "a delegation that ends at the last level"), _why("delegations", "one level later: the level of its releas")
+    assert last["then"]["delegation_unbonding"][-1]["release_at"] == sch.INT_MAX
+    assert beyond["before"]["level"] == last["before"]["level"] + 1 and beyond["then"]["did"] == ["release_out_of_range"]
+    twice = _why("delegations", "the same sender delegates twice in the b")["then"]["delegations"]["d1"]
+    assert twice == {"validator": "v", "amount": 500, "tranches": [{"level": 1000, "amount": 500}]}
+    # The order of a block is part of what it does.
+    one, other = _why("delegations", "it ends it, and delegates to the other v"), _why("delegations", "the same two transactions in the other o")
+    assert one["operations"] == other["operations"][::-1] and one["then"]["did"] == ["ended", "delegated"]
+    assert other["then"]["did"] == ["other_validator", "ended"]
+    assert _bullets("What a delegation does") == list(sch.DELEGATING_RULES.values()) == \
+        sch.rules()["What a delegation does"]
+    for sentence in ("The weight of the validator in `consensus_set` does not move",
+                     "A validator can delegate to another validator.",
+                     "A delegation that is made in a block can end in that block.",
+                     "the node of today lets it succeed and change nothing, and the state is the same"):
+        assert sentence in PARTS["What a delegation does"], sentence
+
+
+def test_proposals_and_votes():
+    assert len(FILE["proposals"]) == 24 and FILE["proposing_rules"] == sch.PROPOSING_RULES
+    alone, done = {}, collections.Counter()
+    engine = lambda before, operations: sch.govern(NETWORK, before, operations)             # noqa: E731
+    open_votes = {"protocol": ("exploration", "adoption"), "treasury": ("voting",)}
+    for record in FILE["proposals"]:
+        before, operations, then = record["before"], record["operations"], record["then"]
+        assert engine(before, operations) == then, record["why"]
+        validators = {entry["address"] for entry in before["validators"]}
+        bonds = {"protocol": before["protocol_bond"], "treasury": before["treasury_bond"]}
+        paid = 0
+        for found, operation, did in zip(_prefixes(engine, before, operations), operations, then["did"]):
+            sender, params = operation["sender"], operation["params"]
+            track = params["track"]
+            listed = {proposal["proposal_id"]: proposal for proposal in found["governance"][track]}
+            if operation["kind"] == "governance_propose":
+                identifier = ref.H("kern.gov.id", NETWORK, ref.canonical_json(
+                    {"submitter": sender, "payload": params["payload"], "salt": params["salt"]})).hex()
+                rates = params["payload"].get("params", {})
+                breaks = [rule for rule, broken in (
+                    ("not_by_a_validator", track == "protocol" and sender not in validators),
+                    ("known_proposal", identifier in listed),
+                    ("crossed_rates", rates.get("i_min_ppm", 0) > rates.get("i_max_ppm", 1_000_000)),
+                    ("bond_not_held", found["balances"].get(sender, 0) < bonds[track])) if broken]
+                paid += 0 if breaks else bonds[track]
+            else:
+                assert operation["kind"] == "governance_vote" and set(params) == {"track", "proposal_id", "vote"}
+                named = listed.get(params["proposal_id"])
+                breaks = [rule for rule, broken in (
+                    ("voter_not_a_validator", sender not in validators), ("unknown_proposal", named is None),
+                    ("vote_not_open", named is not None and named["phase"] not in open_votes[track])) if broken]
+            _alone(alone, breaks)
+            assert did == (_first_broken(breaks, sch.PROPOSING_RULES) or
+                           ("submitted" if operation["kind"] == "governance_propose" else "voted")), record["why"]
+            done[did] += 1
+        # A bond leaves a balance and is held by the proposal: nothing else moves an amount.
+        assert sum(before["balances"].values()) - sum(then["balances"].values()) == paid
+        for track in ("protocol", "treasury"):
+            old, new = before["governance"][track], then["governance"][track]
+            assert [proposal["proposal_id"] for proposal in new[:len(old)]] == [p["proposal_id"] for p in old]
+            for proposal in new[len(old):]:
+                assert (proposal["submitted_at"], proposal["phase"], proposal["bond"]) == \
+                    (before["level"], "submitted", bonds[track])
+                assert not any(proposal[name] for name in proposal if name.endswith("votes"))
+            for was, now in zip(old, new):
+                assert {name: value for name, value in now.items() if not name.endswith("votes")} == \
+                    {name: value for name, value in was.items() if not name.endswith("votes")}
+                if track == "protocol":
+                    for phase in ("exploration", "adoption"):
+                        first, kept = was[phase + "_votes"], now[phase + "_votes"]
+                        assert {voter: kept[voter] for voter in first} == first       # a first vote stands
+                    pairs = [(double["voter"], double["phase"]) for double in now["double_votes"]]
+                    assert len(pairs) == len(set(pairs)) and now["double_votes"][:len(was["double_votes"])] == \
+                        was["double_votes"]
+                    assert all(double == {**double, "level": before["level"], "punished": False}
+                               for double in now["double_votes"][len(was["double_votes"]):])
+    assert set(alone) == set(sch.PROPOSING_RULES) and (done["submitted"], done["voted"]) == (8, 14)
+    contrary = _why("proposals", "the same vote again changes nothing; ano")
+    assert [operation["params"]["vote"] for operation in contrary["operations"]] == ["yes", "yes", "no", "abstain"]
+    after = contrary["then"]["governance"]["protocol"][0]
+    assert after["exploration_votes"] == {"v": "yes"} and after["double_votes"] == [
+        {"voter": "v", "phase": "exploration", "level": 1000, "punished": False}]
+    replaced = _why("proposals", "on the treasury track a vote is recorded")["then"]["governance"]["treasury"][0]
+    assert replaced["votes"] == {"v": "no", "w": "abstain"} and "double_votes" not in replaced
+    asked = _why("proposals", "an account that is no validator submits a treasury proposal")
+    assert asked["operations"][0]["params"]["payload"]["recipients"][0]["amount"] == 1_000_000
+    assert asked["then"]["did"] == ["submitted"] and "treasury" not in asked["before"]
+    assert "x" in asked["before"]["balances"] and "x" not in asked["then"]["balances"]
+    alone_rate = _why("proposals", "two equal rates, and an `i_min_ppm` alon")
+    assert [operation["params"]["payload"]["params"] for operation in alone_rate["operations"]] == \
+        [{"i_min_ppm": 60_000, "i_max_ppm": 60_000}, {"i_min_ppm": 1_000_000}]
+    assert _bullets("Proposals and votes") == list(sch.PROPOSING_RULES.values()) == sch.rules()["Proposals and votes"]
+    for sentence in ("A treasury proposal can ask for more than the treasury holds when it is submitted",
+                     "A vote that contradicts the first one of its validator is an operation that succeeds",
+                     "a vote sent at that level is counted", "a vote sent at that level fails",
+                     "only a validator submits to the protocol track, and only validators vote"):
+        assert sentence in PARTS["Proposals and votes"], sentence
+
+
+def test_what_an_attestation_does():
+    assert len(FILE["attestations"]) == 11 and FILE["attesting_rules"] == sch.ATTESTING_RULES
+    alone, done = {}, collections.Counter()
+    engine = lambda before, operations: sch.attest(NETWORK, before, operations)             # noqa: E731
+    held = lambda tables: sum(tables["balances"].values()) + sum(                            # noqa: E731
+        attestation["bond"] for attestation in tables["attestations"].values())
+    for record in FILE["attestations"]:
+        before, operations, then = record["before"], record["operations"], record["then"]
+        assert engine(before, operations) == then, record["why"]
+        recorded = {}
+        for found, operation, did in zip(_prefixes(engine, before, operations), operations, then["did"]):
+            sender, params = operation["sender"], operation["params"]
+            if operation["kind"] == "attest":
+                assert set(operation) == {"sender", "kind", "nonce", "amount", "params"}
+                breaks = ["amount_not_held"] if found["balances"].get(sender, 0) < operation["amount"] else []
+                if not breaks:
+                    identifier = ref.H("kern.attestation.id", NETWORK, ref.canonical_json(
+                        {"issuer": sender, "schema_id": params["schema_id"], "subject": params["subject"],
+                         "claim": params["claim"], "attest_nonce": operation["nonce"]})).hex()
+                    recorded[identifier] = {"issuer": sender, **params, "bond": operation["amount"],
+                                            "issued_at": before["level"], "slashed": False}
+            else:
+                assert operation["kind"] == "revoke_attestation" and set(params) == {"attestation_id"}
+                named = found["attestations"].get(params["attestation_id"])
+                breaks = ["unknown_attestation"] if named is None else [rule for rule, broken in (
+                    ("not_the_issuer", named["issuer"] != sender), ("revoked_already", "revoked_at" in named),
+                    ("slashed_attestation", named["slashed"])) if broken]
+                if not breaks and params["attestation_id"] in recorded:
+                    recorded[params["attestation_id"]]["revoked_at"] = before["level"]
+            _alone(alone, breaks)
+            assert did == (_first_broken(breaks, sch.ATTESTING_RULES) or
+                           ("attested" if operation["kind"] == "attest" else "revoked")), record["why"]
+            done[did] += 1
+        # A bond leaves a balance and is held by its attestation; a revocation returns nothing.
+        assert held(then) == held(before) and set(then["attestations"]) == set(before["attestations"]) | set(recorded)
+        assert all(then["attestations"][identifier] == attestation for identifier, attestation in recorded.items())
+        for identifier, was in before["attestations"].items():
+            now = then["attestations"][identifier]
+            assert {**now, "revoked_at": 0} == {**was, "revoked_at": 0} and now["bond"] == was["bond"]
+            assert now.get("revoked_at") in (was.get("revoked_at"), before["level"])
+    assert set(alone) == set(sch.ATTESTING_RULES) and (done["attested"], done["revoked"]) == (4, 3)
+    assert _bullets("What an attestation does") == list(sch.ATTESTING_RULES.values()) == \
+        sch.rules()["What an attestation does"]
+    for sentence in ("The bond does not return then", "an issuer that states one thing twice has two attestations",
+                     "An attestation can be recorded and revoked in one block."):
+        assert sentence in PARTS["What an attestation does"], sentence
+
+
+class Interpreted:
+    """The language as the interpreter of the node speaks it. The questions
+    an engine of the reference asks are put to `kern.skald`, and what it
+    answers is kept in the form a vector carries it in (`language`)."""
+
+    def __init__(self) -> None:
+        self.language: dict[str, dict] = {}
+
+    def says(self, position: int, question: dict):
+        import copy
+
+        import kern.skald as skald
+        from kern.skald.typecheck import type_check
+        said, asks, code = self.language.setdefault(str(position), {}), question["asks"], question["code"]
+        given = question.get("receives")
+        if given is not None:
+            said["receives"] = copy.deepcopy(given)
+        try:
+            if asks == "declares":
+                if type_check(code):
+                    return None
+                said[asks] = {field.name: field.type_ for field in skald.parse(code).storage_schema}
+            elif asks == "takes":
+                entry = skald.parse(code).functions.get(question["entry"])
+                if entry is None or entry.kind != "entry":
+                    return None
+                said[asks] = {parameter.name: parameter.type_ for parameter in entry.params}
+            elif asks == "holds":
+                said[asks] = False
+                kept = skald.interpret_origination(code, copy.deepcopy(given["storage"]), sender=given["sender"],
+                                                   self_addr=given["self"], balance=given["balance"])
+                assert kept == given["storage"] and given["amount"] == 0
+                said[asks] = True
+            else:
+                said[asks] = skald.interpret_call(
+                    code, copy.deepcopy(given["storage"]), question["entry"], copy.deepcopy(question["params"]),
+                    sender=given["sender"], amount=given["amount"], self_addr=given["self"], balance=given["balance"])
+        except Exception:                               # whatever an operation raises, it fails: the node does so
+            return said.get(asks)
+        return said[asks]
+
+    def done(self) -> None:
+        pass
+
+
+def test_what_a_contract_does():
+    """Originations and calls, around the language. What the vectors say of
+    the language is what the interpreter of the node says: the same
+    questions are put to it, and its answers are the `language` of each
+    vector, to the last member."""
+    import kern.skald as skald
+    assert len(FILE["contracts"]) == 29 and FILE["contract_rules"] == sch.CONTRACT_RULES
+    vectors, alone, done = sv.Vectors(NETWORK), {}, collections.Counter()
+    asked: collections.Counter = collections.Counter()
+
+    def is_an_address(value) -> bool:
+        try:
+            sch.address_hash(NETWORK, value)
+        except ValueError:
+            return False
+        return True
+
+    types = {"int": lambda value: type(value) is int, "bool": lambda value: type(value) is bool,
+             "string": lambda value: type(value) is str,
+             "address": is_an_address}
+    for record in FILE["contracts"]:
+        before, sent, then = record["before"], vectors.expand(record["transactions"]), record["then"]
+        assert all(sch.verdict("transaction", tx, NETWORK) == "accepted" for tx in sent), record["why"]
+        assert sch.contract(NETWORK, before, sent, sch.Said(record["language"])) == then, record["why"]
+        # The interpreter of the node, asked the same questions, says what the vector says.
+        spoken = Interpreted()
+        assert sch.contract(NETWORK, before, sent, spoken) == then, record["why"]
+        assert spoken.language == record["language"], record["why"]
+        tables = {"balances": dict(before["balances"]), "contracts": dict(before["contracts"])}
+        for position, (tx, did) in enumerate(zip(sent, then["did"])):
+            said, sender = record["language"].get(str(position), {}), tx["sender"]
+            asked.update(said.keys())
+            if tx["kind"] == "originate":
+                named, declared = tx["initial_storage"], said.get("declares")
+                address = ref.contract_address(NETWORK, sch.transaction_id(NETWORK, tx))
+                breaks = ["code_refused"] if declared is None else [rule for rule, broken in (
+                    ("fields_out_of_bounds", len(declared) > 256 or any(len(name) > 64 for name in declared)),
+                    ("undeclared_field", any(name not in declared for name in named)),
+                    ("wrong_value", any(name in declared and not types[declared[name]](value)
+                                        for name, value in named.items())),
+                    ("address_not_named", any(type_ == "address" and name not in named
+                                              for name, type_ in declared.items())),
+                    ("invariant_refused", said.get("holds") is False)) if broken]
+                if not breaks:
+                    first = {name: named.get(name, {"int": 0, "bool": False, "string": ""}.get(type_))
+                             for name, type_ in declared.items()}
+                    assert said["receives"] == {"sender": sender, "amount": 0, "self": address,
+                                                "balance": tables["balances"].get(address, 0), "storage": first}
+                    tables["contracts"][address] = {"code": tx["code"], "storage": first}
+            else:
+                contract, amount = tables["contracts"].get(tx["recipient"]), tx["amount"]
+                breaks = [rule for rule, broken in (
+                    ("not_a_contract", contract is None),
+                    ("payment_not_held", tables["balances"].get(sender, 0) < amount)) if broken]
+                if not breaks:
+                    takes = said.get("takes")
+                    if takes is None or set(takes) != set(tx["params"]) or not all(
+                            types[takes[name]](value) for name, value in tx["params"].items()):
+                        breaks = ["wrong_parameters"]
+                    elif "leaves" not in said:
+                        breaks = ["execution_refused"]
+                if "receives" in said:
+                    # The amount of the call is in the balance the execution is given, and has not moved yet.
+                    assert said["receives"] == {
+                        "sender": sender, "amount": amount, "self": tx["recipient"],
+                        "balance": tables["balances"].get(tx["recipient"], 0) + amount,
+                        "storage": contract["storage"]}, record["why"]
+                if not breaks:
+                    tables["balances"][sender] -= amount
+                    tables["balances"][tx["recipient"]] = tables["balances"].get(tx["recipient"], 0) + amount
+                    tables["contracts"][tx["recipient"]] = {**contract, "storage": said["leaves"]}
+            _alone(alone, breaks)
+            assert did == (_first_broken(breaks, sch.CONTRACT_RULES) or
+                           ("originated" if tx["kind"] == "originate" else "called")), (record["why"], position)
+            done[did] += 1
+        tables["balances"] = {address: amount for address, amount in tables["balances"].items() if amount}
+        assert tables == {"balances": then["balances"], "contracts": then["contracts"]}, record["why"]
+        assert sum(then["balances"].values()) == sum(before["balances"].values())        # an execution pays nobody
+    assert set(alone) == set(sch.CONTRACT_RULES) and (done["originated"], done["called"]) == (7, 7)
+    assert set(asked) == {"declares", "receives", "holds", "takes", "leaves"}
+    # The bounds are those of the interpreter: 256 fields are kept and 257 are not, a name of 64 characters is a
+    # name and one of 65 is not, and the deepest statement the language reads is 64 levels deep.
+    assert (skald.MAX_STEPS, skald.MAX_DEPTH, skald.MAX_TEXT_BYTES) == (10_000, 64, sch.LIMITS["value_bytes"])
+    assert sch.LIMITS["contract_fields"] == 256 and sch.NAME.inner.high == 64
+    refused = vectors.expand(_why("contracts", "a code that does not read, a code whose ")["transactions"])
+    assert len(refused) == 3 and refused[2]["code"].count("+") == 63          # a sum of 64 terms
+    for tx in refused:
+        with pytest.raises(skald.SkaldError):
+            skald.interpret_origination(tx["code"], None)
+    assert skald.interpret_origination(refused[2]["code"].replace("1 + ", "", 1), None) == {"n": 0}
+    paid = _why("contracts", "a call that moves 3 mukrn to a contract ")
+    assert paid["language"]["0"]["receives"]["balance"] == 8 and paid["language"]["0"]["leaves"]["count"] == 8
+    closed = _why("contracts", "a `require` that refuses: the contract i")
+    assert closed["then"] == {"did": ["execution_refused"], **closed["before"]}
+    assert vectors.expand(closed["transactions"])[0]["amount"] == 9
+    assert _bullets("What a contract does") == list(sch.CONTRACT_RULES.values()) == sch.rules()["What a contract does"]
+    part = PARTS["What a contract does"]
+    for sentence in ("An execution pays nobody: it leaves a storage, and nothing else.",
+                     "The amount of a call that fails does not move.",
+                     "A field of the type `address` has no default", "No rule of structure version 1 reads `gas_limit`",
+                     "Neither the reference nor the Go program has an interpreter of the language.",
+                     "that two clients execute a contract the same way is for the tests of the language to show"):
+        assert sentence in part, sentence
+    # The reference does not use the interpreter, and neither does the builder of the vectors.
+    for name in ("schema_reference.py", "schema_vectors.py"):
+        source = (ROOT / "tests" / name).read_text(encoding="utf-8")
+        assert "import kern" not in source and "from kern" not in source, name
+
+
+def test_a_chain_of_blocks_holds_every_kind_of_transaction(read):
+    """Eight blocks from a first state whose periods are a few blocks long.
+    The interpreter of the node says of their contracts what the vectors
+    say, and each account carries its key once, in its first transaction."""
+    vectors, objects = sv.Vectors(NETWORK), dict(read["objects"])
+    chain = [record for record in FILE["transitions"] if record["from"] == "state_quick" and "name" in record]
+    while True:
+        following = [record for record in FILE["transitions"] if record["from"] == chain[-1].get("name")]
+        if not following:
+            break
+        chain += following
+    assert [record["from"] for record in chain] == ["state_quick"] + [f"after_quick_{n}" for n in range(1, 8)]
+    start, state, kinds, carried = objects["state_quick"], objects["state_quick"], set(), {}
+    constants = start["constants"]
+    assert (constants["epoch_blocks"], constants["protocol_exploration_blocks"]) == (4, 2)
+    states = [start]
+    for record in chain:
+        block = vectors.expand(record["block"])
+        spoken = Interpreted()
+        result = sch.apply(NETWORK, state, block, spoken)
+        assert result["valid"] and result["failed"] == record["then"]["failed"], record["why"]
+        assert spoken.language == record.get("language", {}), record["why"]
+        for tx in block["transactions"]:
+            kinds.add(tx["kind"])
+            assert ("public_key" in tx) == (tx["sender"] not in state["keys"] and tx["sender"] not in carried)
+            if "public_key" in tx:
+                carried[tx["sender"]] = (block["header"]["level"], tx["public_key"])
+        state = result["state"]
+        states.append(state)
+    assert kinds == set(sch.WHOLE_BLOCK_KINDS) - {"transfer", "cancel_payment", "slash_consensus_equivocation",
+                                                   "slash_attestation_equivocation"}
+    # Every key the chain recorded is the key its account carried, from the level of that block.
+    assert len(carried) == 4 and set(state["keys"]) == set(start["keys"]) | set(carried)
+    for address, (level, key) in carried.items():
+        assert state["keys"][address] == [{"from": level, "public_key": key}]
+        assert ref.account_address(NETWORK, ref.key_from_text(key)) == address
+    a, b, c = (validator["address"] for validator in start["validators"])
+    protocol = [s["governance"]["protocol"][0] if s["governance"]["protocol"] else None for s in states]
+    treasury = [s["governance"]["treasury"][0] if s["governance"]["treasury"] else None for s in states]
+    assert [p and p["phase"] for p in protocol] == [None, "submitted", "exploration", "exploration", "cooldown",
+                                                    "adoption", "adoption", "rejected", "rejected"]
+    assert [p and p["phase"] for p in treasury] == [None, None, "submitted", "voting", "voting", "passed", "executed",
+                                                    "executed", "executed"]
+    # A vote sent at the level at which the vote opens fails, and one sent at its last level is counted.
+    assert chain[1]["then"]["failed"] == [0, 1] and protocol[2]["exploration_votes"] == {}
+    assert protocol[3]["exploration_votes"] == {a: "yes", b: "no"} and protocol[4]["exploration_votes"][c] == "yes"
+    assert not sch.tally(states[3]["consensus_set"], protocol[3]["exploration_votes"], "protocol")["passes"]
+    assert sch.tally(states[3]["consensus_set"], protocol[4]["exploration_votes"], "protocol")["passes"]
+    # A vote that contradicts the first one is recorded, then reported: 30 parts in 100 of the stake.
+    assert protocol[3]["double_votes"] == [{"voter": b, "phase": "exploration", "level": 3, "punished": False}]
+    assert protocol[5]["double_votes"][0]["punished"] is True
+    stakes = lambda s: [validator["stake"] for validator in s["validators"]]              # noqa: E731
+    weights = lambda s: [entry["stake"] for entry in s["consensus_set"]]                   # noqa: E731
+    assert stakes(states[4]) == [300_000_000, 100_000_000, 200_000_000] == weights(states[3])
+    assert stakes(states[5]) == [300_000_000, 70_000_000, 200_000_000]
+    # A delegation weighs from the snapshot that follows it, and its end weighs at once.
+    assert weights(states[4]) == [330_000_000, 120_000_000, 200_000_000]
+    assert weights(states[5]) == [300_000_000, 90_000_000, 200_000_000]
+    assert weights(states[7]) == [300_000_000, 70_000_000, 200_000_000] == weights(states[8]) == stakes(states[8])
+    # The bond of an attestation returns two levels after its revocation, and the bond of a payment with it.
+    (identifier,) = states[1]["attestations"]
+    assert [s["attestations"][identifier]["bond"] for s in states[1:5]] == [1_000, 1_000, 1_000, 0]
+    assert states[2]["attestations"][identifier]["revoked_at"] == 2 == 4 - constants["attestation_unbonding_blocks"]
+    assert (treasury[6]["ended_at"], "bond" in treasury[6], "bond" in treasury[5]) == (6, False, True)
+    # The contract: created and called in one block, a call that fails leaves it, a later call finds it.
+    (contract,) = states[1]["contracts"]
+    assert [s["contracts"][contract]["storage"]["count"] for s in states[1:]] == [7, 7, 7, 7, 7, 10, 10, 10]
+    assert states[1]["balances"][contract] == 7 == states[8]["balances"][contract]
+    for sentence in ("a chain of eight blocks from a first state whose periods are a few blocks long",
+                     "the first transaction of a guardian releases a payment",
+                     "Five blocks that a key makes invalid follow, one for each rule of section 9.16."):
+        assert sentence in PARTS["9.18 A whole block"], sentence
+
+
 def test_a_whole_block_leads_to_a_state_that_keeps_every_rule(read):
     """Whole blocks on whole states, read as a second program reads them:
     the state a block leads to is the first state with what the vector
     removes and puts in place, it keeps every rule of section 9.12, and its
     root is in the header of the block."""
-    assert len(FILE["transitions"]) == 18 and FILE["whole_block_rules"] == sch.WHOLE_BLOCK_RULES
+    assert len(FILE["transitions"]) == 32 and FILE["whole_block_rules"] == sch.WHOLE_BLOCK_RULES
     vectors, objects = sv.Vectors(NETWORK), dict(read["objects"])
     invalid: collections.Counter = collections.Counter()
     kinds: set[str] = set()
@@ -1704,11 +2215,11 @@ def test_a_whole_block_leads_to_a_state_that_keeps_every_rule(read):
         assert sch.verdict("state", state, NETWORK) == "accepted" == sch.verdict("block", block, NETWORK), record["why"]
         header = block["header"]
         assert header["proposer"] in [validator["address"] for validator in state["validators"]]
-        result = sch.apply(NETWORK, state, block)
+        result = sch.apply(NETWORK, state, block, sch.Said(record.get("language")))
         if "rule" in record:
             assert "then" not in record and "name" not in record            # an invalid block leads to no state
             assert result == {"valid": False, **{name: record[name] for name in ("rule", "at") if name in record}}
-            assert record["rule"] in {**sch.WHOLE_BLOCK_RULES, **sch.BLOCK_RULES}
+            assert record["rule"] in {**sch.WHOLE_BLOCK_RULES, **sch.BLOCK_RULES, **sch.KEY_RULES}
             invalid[record["rule"]] += 1
             continue
         then = record["then"]
@@ -1723,16 +2234,25 @@ def test_a_whole_block_leads_to_a_state_that_keeps_every_rule(read):
         assert sch.state_root(NETWORK, after).hex() == then["state_root"] == header["state_root"]
         assert after["level"] == header["level"] == state["level"] + 1 and after["total_supply"] == sch.held(after)
         kinds |= {tx["kind"] for tx in block["transactions"]}
-        assert all(tx["sender"] in state["keys"] and "public_key" not in tx for tx in block["transactions"])
-        # What is fixed by the genesis does not move.
-        for name in ("chain_id", "treasury_address", "guardians", "keys", "contracts", "constants"):
+        # A sender has a key: the one the state holds, or the one its first transaction carries.
+        senders = {tx["sender"] for tx in block["transactions"]}
+        assert senders <= set(after["keys"]) and set(after["keys"]) - set(state["keys"]) <= senders
+        assert ("language" in record) == any(tx["kind"] in ("originate", "call") and
+                                             (tx["kind"] == "originate" or tx["recipient"] in after["contracts"])
+                                             for tx in block["transactions"])
+        # What is fixed by the genesis does not move, no key leaves the registry, and no contract leaves the state.
+        for name in ("chain_id", "treasury_address", "guardians", "constants"):
             assert after[name] == state[name], name
+        assert all(after["keys"][address][:len(entries)] == entries for address, entries in state["keys"].items())
+        assert all(after["contracts"][address]["code"] == contract["code"]
+                   for address, contract in state["contracts"].items())
         assert [v["address"] for v in after["validators"]] == [v["address"] for v in state["validators"]]
         if "name" in record:
             assert record["name"] not in objects
             objects[record["name"]] = after
     assert kinds == set(sch.WHOLE_BLOCK_KINDS)
-    assert invalid == {"wrong_level": 2, "wrong_state_root": 2, "wrong_nonce": 1, "block_too_large": 1}
+    assert invalid == {"wrong_level": 2, "wrong_state_root": 2, "wrong_nonce": 1, "block_too_large": 1,
+                       **{rule: 1 for rule in sch.KEY_RULES}}
     assert set(sch.WHOLE_BLOCK_RULES) <= set(invalid)
     whys = {record["why"][:60]: record for record in FILE["transitions"]}
     # The change of the function: the root of the header is that of the new function, and the root of the old
@@ -1822,17 +2342,33 @@ def test_a_whole_block_leads_to_a_state_that_keeps_every_rule(read):
                    if address not in full["keys"] and address != full["treasury_address"])
     paid = {"sender": sender, "nonce": full["nonces"][sender], "fee": 1000, "chain_id": full["chain_id"],
             "gas_limit": 10000, "signature": "s"}
-    for tx in ({"kind": "governance_vote", **paid, "params": {}},
-               {"kind": "transfer", **paid, "recipient": sender, "amount": 0, "public_key": "x"},
-               {"kind": "transfer", **paid, "sender": keyless, "nonce": 0, "recipient": sender, "amount": 0}):
-        with pytest.raises(ValueError, match="do not hold"):
-            sch.transition(full, {"header": header, "transactions": [tx]})
+    assert keyless not in full["nonces"]
+    with pytest.raises(ValueError, match="do not hold"):
+        sch.transition(NETWORK, full, {"header": header, "transactions": [{"kind": "rotate_key", **paid, "params": {}}]})
     with pytest.raises(ValueError, match="is a validator"):
-        sch.transition(full, {"header": {**header, "proposer": keyless}, "transactions": []})
+        sch.transition(NETWORK, full, {"header": {**header, "proposer": keyless}, "transactions": []})
+    # The language is never guessed: a block that creates a contract comes with what the language says of it, and
+    # says nothing that is not asked.
+    creation = {"kind": "originate", **paid, "code": "contract Empty { }", "initial_storage": {}}
+    created = {"header": header, "transactions": [creation]}
+    address = ref.contract_address(NETWORK, sch.transaction_id(NETWORK, creation))
+    given = {"sender": sender, "amount": 0, "self": address, "balance": 0, "storage": {}}
+    said = {"declares": {}, "receives": given, "holds": True}
+    assert address in sch.transition(NETWORK, full, created, sch.Said({"0": said}))["state"]["contracts"]
+    with pytest.raises(ValueError, match="nothing is said of the language"):
+        sch.transition(NETWORK, full, created)
+    for language in ({"0": {**said, "leaves": {}}}, {"0": said, "1": {}}):
+        with pytest.raises(ValueError, match="more is said of the language than is asked"):
+            sch.transition(NETWORK, full, created, sch.Said(language))
+    with pytest.raises(ValueError, match="not what its execution is said to receive"):
+        sch.transition(NETWORK, full, created, sch.Said({"0": {**said, "receives": {**given, "balance": 1}}}))
+    with pytest.raises(KeyError):                                         # whether the invariants hold is always said
+        sch.transition(NETWORK, full, created, sch.Said({"0": {"declares": {}, "receives": given}}))
     assert _bullets("9.18 A whole block") == list(sch.WHOLE_BLOCK_RULES.values()) and len(sch.WHOLE_BLOCK_RULES) == 2
     for sentence in ("the root of its header is computed by the new function",
                      "what a block mints and what it burns is in that sum, and nowhere else",
-                     "sent by accounts whose key the state holds", "Their proposer is a validator."):
+                     "The blocks of these vectors hold every kind of transaction but a `rotate_key`",
+                     "Their proposer is a validator."):
         assert sentence in PARTS["9.18 A whole block"], sentence
     # The pages that describe the node of today say where the rules of structure version 1 are.
     for page in ("adaptive-issuance.md", "governance.md", "staking.md", "attestations.md"):
