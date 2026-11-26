@@ -260,4 +260,6 @@ interpret_view(code, storage, view, params, *, self_addr=..., balance=0) -> Any
 
 The chain gives an origination its `sender`, the address of the contract and what that address holds, and gives a call what the contract holds. A caller outside a chain that leaves them out gets the zero address and a balance of 0. A view takes its `balance` from its caller in the same way.
 
+What an execution is given is of its type: `sender` and `self_addr` are texts that start with `kn1`, which is what the type `address` asks of a value, and `amount` and `balance` are integers, which `true` and `false` are not. A caller that gives anything else is refused before the code is read, whether the code reads the value or not. The bounds are checked as before, where an expression reads the value.
+
 Each call parses the source from scratch (no caching yet); a production node will store compiled KVM bytecode in the contract's state and skip re-parsing.

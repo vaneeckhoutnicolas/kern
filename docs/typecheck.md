@@ -81,7 +81,7 @@ The checker enforces that:
 
 ## Integration with origination
 
-The function `interpret_origination` in [`kern/skald/__init__.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/__init__.py) calls the type-checker as its first step:
+The function `interpret_origination` in [`kern/skald/__init__.py`](https://github.com/vaneeckhoutnicolas/kern/blob/main/kern/skald/__init__.py) calls the type-checker before it does anything with the code:
 
 ```python
 def interpret_origination(code, initial_storage):

@@ -724,6 +724,23 @@ def _binop(op: str, a: Any, b: Any) -> Any:
 # Public API
 # ---------------------------------------------------------------------------
 
+def _given(sender: Any, amount: Any, self_addr: Any, balance: Any) -> None:
+    """What an execution is given is of its type: an address for `sender`
+    and `self`, an integer for `amount` and `balance`.
+
+    The three functions below call this before they read the code, so the
+    answer does not depend on what the code reads. An address is what the
+    type `address` asks of a value, a text that starts with `kn1`, and an
+    integer is an integer and nothing else. The bounds are not checked
+    here: they are where an expression reads the value, as before."""
+    for name, value in (("sender", sender), ("self", self_addr)):
+        if not (isinstance(value, str) and value.startswith("kn1")):
+            raise SkaldError(f"{name}: expected address, got {value!r}")
+    for name, value in (("amount", amount), ("balance", balance)):
+        if type(value) is not int:
+            raise SkaldError(f"{name}: expected int, got {type(value).__name__}")
+
+
 def interpret_origination(
     code: str,
     initial_storage: Optional[Dict[str, Any]],
@@ -742,7 +759,12 @@ def interpret_origination(
     their own. They see `sender`, the account that creates the contract,
     `self_addr`, its address, and `balance`, what that address already
     holds; `amount` is 0. A caller that gives none of them, outside a
-    chain, gets the zero address for both and a balance of 0."""
+    chain, gets the zero address for both and a balance of 0. What is
+    given is of its type, or the origination is refused before the code
+    is read."""
+    sender = sender if sender is not None else "kn1" + "0" * 33
+    self_addr = self_addr if self_addr is not None else "kn1" + "0" * 33
+    _given(sender, 0, self_addr, balance)
     # Import here to avoid circular import (typecheck imports from this module).
     from .typecheck import type_check as _type_check
     errors = _type_check(code)
@@ -762,9 +784,9 @@ def interpret_origination(
         storage[p.name] = v
     # Run invariants on the initial state.
     interp = _Interp(contract, storage, ctx={
-        "sender": sender if sender is not None else "kn1" + "0" * 33,
+        "sender": sender,
         "amount": 0,
-        "self": self_addr if self_addr is not None else "kn1" + "0" * 33,
+        "self": self_addr,
         "balance": balance,
     })
     interp.check_invariants()
@@ -787,8 +809,10 @@ def interpret_call(
     Skald-level failure.
 
     `balance` is what the contract holds while the entry runs, with the
-    `amount` of the call."""
+    `amount` of the call. What is given is of its type, or the call is
+    refused before the code is read."""
     import copy
+    _given(sender, amount, self_addr, balance)
     contract = parse(code)
     new_storage = copy.deepcopy(storage)
     if entry not in contract.functions:
@@ -831,8 +855,11 @@ def interpret_view(
 
     Nobody signs a view and nothing is paid to it: its `sender` is the zero
     address and its `amount` is 0. `balance` is what the contract holds,
-    which the caller reads in the state; a caller that gives none gives 0."""
+    which the caller reads in the state; a caller that gives none gives 0.
+    What is given is of its type, or the view is refused before the code
+    is read."""
     import copy
+    _given("kn1" + "0" * 33, 0, self_addr, balance)
     contract = parse(code)
     if view not in contract.functions:
         raise SkaldError(f"no such view: {view}")

@@ -2127,7 +2127,7 @@ def test_what_a_contract_does():
         assert "import kern" not in source and "from kern" not in source, name
 
 
-def test_a_chain_of_blocks_holds_every_kind_of_transaction(read):
+def test_a_chain_of_eight_blocks_holds_the_kinds_the_document_names(read):
     """Eight blocks from a first state whose periods are a few blocks long.
     The interpreter of the node says of their contracts what the vectors
     say, and each account carries its key once, in its first transaction."""
@@ -2156,8 +2156,21 @@ def test_a_chain_of_blocks_holds_every_kind_of_transaction(read):
                 carried[tx["sender"]] = (block["header"]["level"], tx["public_key"])
         state = result["state"]
         states.append(state)
-    assert kinds == set(sch.WHOLE_BLOCK_KINDS) - {"transfer", "cancel_payment", "slash_consensus_equivocation",
-                                                   "slash_attestation_equivocation"}
+    # Ten kinds: the eight of the last four parts of section 9.16, and two more. The other four kinds of the
+    # whole blocks are in the blocks that are not of this chain.
+    stated = {"delegate_stake", "undelegate_stake", "governance_propose", "governance_vote", "attest",
+              "revoke_attestation", "originate", "call"}
+    assert kinds == stated | {"release_payment", "slash_equivocation"} and len(kinds) == 10
+    assert set(sch.WHOLE_BLOCK_KINDS) - kinds == {"transfer", "cancel_payment", "slash_consensus_equivocation",
+                                                  "slash_attestation_equivocation"}
+    others = [record for record in FILE["transitions"] if record not in chain]
+    assert set(sch.WHOLE_BLOCK_KINDS) - kinds <= {tx["kind"] for record in others
+                                                  for tx in vectors.expand(record["block"])["transactions"]}
+    titles = list(PARTS)
+    parts_of_916 = titles[titles.index("9.16 What a block does to the state") + 1:
+                          titles.index("9.17 The arithmetic of a block")]
+    assert parts_of_916[-4:] == ["What a delegation does", "Proposals and votes", "What an attestation does",
+                                 "What a contract does"]
     # Every key the chain recorded is the key its account carried, from the level of that block.
     assert len(carried) == 4 and set(state["keys"]) == set(start["keys"]) | set(carried)
     for address, (level, key) in carried.items():
@@ -2195,10 +2208,18 @@ def test_a_chain_of_blocks_holds_every_kind_of_transaction(read):
     (contract,) = states[1]["contracts"]
     assert [s["contracts"][contract]["storage"]["count"] for s in states[1:]] == [7, 7, 7, 7, 7, 10, 10, 10]
     assert states[1]["balances"][contract] == 7 == states[8]["balances"][contract]
-    for sentence in ("a chain of eight blocks from a first state whose periods are a few blocks long",
+    for sentence in ("a chain of eight blocks from a first state whose periods are a few blocks long. That chain holds "
+                     "ten kinds of transactions: the eight whose operation section 9.16 states in its last four parts, "
+                     "a `release_payment` and a `slash_equivocation`.",
                      "the first transaction of a guardian releases a payment",
-                     "Five blocks that a key makes invalid follow, one for each rule of section 9.16."):
+                     "Five blocks that a key makes invalid follow, one for each of the five rules of the key a first "
+                     "transaction carries (section 9.16), and then the last of them on a state that makes it valid."):
         assert sentence in PARTS["9.18 A whole block"], sentence
+    assert "which holds every kind of transaction" not in PARTS["9.18 A whole block"]
+    # The six blocks that follow the chain: one for each rule of a key, and the twin of the last one.
+    after = FILE["transitions"][FILE["transitions"].index(chain[-1]) + 1:]
+    assert [record.get("rule") for record in after] == list(sch.KEY_RULES) + [None]
+    assert after[-1]["block"]["transactions"] == after[-2]["block"]["transactions"]
 
 
 def test_a_whole_block_leads_to_a_state_that_keeps_every_rule(read):
