@@ -312,6 +312,259 @@ def test_control_a_call_and_a_creation_are_given_their_balance_as_before():
 
 
 # ---------------------------------------------------------------------------
+# What an execution is given is of its type
+# ---------------------------------------------------------------------------
+# The three functions put in an execution what their caller gives them:
+# `sender`, `amount`, `self` and `balance`. The chain gives the sender and
+# the amount of a transaction, the address of the contract and a balance of
+# its state. A caller outside a chain gives what it wants, and until this
+# part it was taken as it came: a view declared `-> int` returned `True`
+# when its balance was `True`. The three functions now refuse, before they
+# read the code, a `sender` or a `self` that is not an address and an
+# `amount` or a `balance` that is not an integer.
+
+SEEN = """
+contract Seen {
+    storage { who: address, here: address, paid: int, held: int, n: int, }
+    entry look() { who = sender; here = self; paid = amount; held = balance; }
+    entry both() { n = amount + balance; }
+    entry rest() { n = n + 1; }
+    view sum() -> int { return amount + balance; }
+    view at() -> address { return self; }
+    view idle() -> int { return n; }
+}
+"""
+BLANK = {"who": ZERO, "here": ZERO, "paid": 0, "held": 0, "n": 0}
+NOT_AN_ADDRESS = [7, True, 1.5, b"kn1" + b"a" * 33, ["kn1"], "", "abc", "KN1" + "a" * 33, " kn1" + "a" * 33]
+NOT_AN_INTEGER = [True, False, None, 1.5, 1.0, "1", "", [1], b"1"]
+ADDRESSES_GIVEN = [("origination", "sender"), ("origination", "self_addr"), ("call", "sender"),
+                   ("call", "self_addr"), ("view", "self_addr")]
+INTEGERS_GIVEN = [("origination", "balance"), ("call", "amount"), ("call", "balance"), ("view", "balance")]
+
+
+def given(function, **context):
+    """One of the three functions on `Seen`, through code that reads nothing
+    of what the execution is given."""
+    if function == "origination":
+        return interpret_origination(SEEN, dict(BLANK), **context)
+    if function == "call":
+        return interpret_call(SEEN, BLANK, "rest", None,
+                              **{"sender": SOMEONE, "amount": 0, "self_addr": ITSELF, **context})
+    return interpret_view(SEEN, BLANK, "idle", None, **context)
+
+
+def test_control_the_contract_that_looks_at_what_it_is_given_is_well_typed():
+    assert type_check(SEEN) == []
+    assert given("origination") == BLANK and given("call") == {**BLANK, "n": 1} and given("view") == 0
+
+
+@pytest.mark.parametrize("function, name", ADDRESSES_GIVEN)
+@pytest.mark.parametrize("value", NOT_AN_ADDRESS, ids=repr)
+def test_what_is_not_an_address_is_refused_as_the_sender_and_as_the_contract(function, name, value):
+    with pytest.raises(SkaldError) as refusal:
+        given(function, **{name: value})
+    assert str(refusal.value) == f"{'self' if name == 'self_addr' else name}: expected address, got {value!r}"
+
+
+@pytest.mark.parametrize("function, name", INTEGERS_GIVEN)
+@pytest.mark.parametrize("value", NOT_AN_INTEGER, ids=repr)
+def test_what_is_not_an_integer_is_refused_as_an_amount_and_as_a_balance(function, name, value):
+    with pytest.raises(SkaldError) as refusal:
+        given(function, **{name: value})
+    assert str(refusal.value) == f"{name}: expected int, got {type(value).__name__}"
+
+
+@pytest.mark.parametrize("function, name", [("call", "sender"), ("call", "self_addr"), ("view", "self_addr")])
+def test_a_call_and_a_view_do_not_take_none_for_an_address(function, name):
+    with pytest.raises(SkaldError) as refusal:
+        given(function, **{name: None})
+    assert str(refusal.value) == f"{'self' if name == 'self_addr' else name}: expected address, got None"
+
+
+ALONE = "contract Alone { storage { n: int, } invariant alone { sender == self } invariant empty { balance == 0 } }"
+
+
+def test_control_an_origination_that_is_given_no_address_still_sees_the_zero_address():
+    """Outside a chain, a caller that leaves `sender` and `self_addr` out,
+    or gives `None`, gets the zero address for both, and a balance of 0."""
+    assert interpret_origination(ALONE, None) == {"n": 0}
+    assert interpret_origination(ALONE, None, sender=None, self_addr=None, balance=0) == {"n": 0}
+    assert interpret_origination(ALONE, None, sender=ZERO, self_addr=ZERO) == {"n": 0}
+    with pytest.raises(SkaldError, match="invariant 'alone' violated"):
+        interpret_origination(ALONE, None, sender=SOMEONE, self_addr=ITSELF)
+    with pytest.raises(SkaldError, match="invariant 'empty' violated"):
+        interpret_origination(ALONE, None, balance=1)
+
+
+@pytest.mark.parametrize("address", [ZERO, SOMEONE, ITSELF, "kn1", "kn1x"])
+def test_control_a_text_that_starts_with_kn1_is_taken_for_an_address(address):
+    """The check is the one a value of the type `address` gets, and no more:
+    it does not ask for a whole address."""
+    for function, name in ADDRESSES_GIVEN:
+        given(function, **{name: address})
+    seen = interpret_call(SEEN, BLANK, "look", None, sender=address, amount=0, self_addr=address)
+    assert (seen["who"], seen["here"]) == (address, address)
+    assert interpret_view(SEEN, BLANK, "at", None, self_addr=address) == address
+
+
+@pytest.mark.parametrize("value", [0, 1, -1, 7, INT_MIN, INT_MAX])
+def test_control_an_integer_is_taken_for_an_amount_and_for_a_balance(value):
+    """A negative one too: the language has no unsigned type, and the chain
+    gives none."""
+    for function, name in INTEGERS_GIVEN:
+        given(function, **{name: value})
+    seen = interpret_call(SEEN, BLANK, "look", None, sender=SOMEONE, amount=value, self_addr=ITSELF, balance=value)
+    assert (seen["paid"], seen["held"]) == (value, value)
+    assert type(seen["paid"]) is int and type(seen["held"]) is int
+    assert interpret_view(SEEN, BLANK, "sum", None, balance=value) == value
+
+
+def test_a_refusal_comes_before_the_code_is_read():
+    """The answer does not depend on the code: one that does not read, an
+    entry or a view that does not exist, and the value is still what is
+    refused."""
+    with pytest.raises(SkaldError) as refusal:
+        interpret_origination("not a contract", None, sender=7)
+    assert str(refusal.value) == "sender: expected address, got 7"
+    with pytest.raises(SkaldError) as refusal:
+        interpret_origination("not a contract", None, balance=True)
+    assert str(refusal.value) == "balance: expected int, got bool"
+    for code, entry in (("not a contract", "rest"), (SEEN, "missing"), (SEEN, "idle")):
+        with pytest.raises(SkaldError) as refusal:
+            interpret_call(code, BLANK, entry, None, sender=SOMEONE, amount="3", self_addr=ITSELF)
+        assert str(refusal.value) == "amount: expected int, got str"
+    for code, view in (("not a contract", "idle"), (SEEN, "missing"), (SEEN, "rest")):
+        with pytest.raises(SkaldError) as refusal:
+            interpret_view(code, BLANK, view, None, self_addr=7)
+        assert str(refusal.value) == "self: expected address, got 7"
+    # The values are checked before the parameters are.
+    with pytest.raises(SkaldError) as refusal:
+        interpret_call(TYPED, START, "set", {"by": True}, sender=SOMEONE, amount=0, self_addr=ITSELF, balance=None)
+    assert str(refusal.value) == "balance: expected int, got NoneType"
+
+
+def test_control_a_code_that_does_not_read_is_refused_as_before_when_what_it_is_given_is_right():
+    with pytest.raises(SkaldError, match="expected one of .'contract',. at pos 0, got ID 'not'"):
+        interpret_origination("not a contract", None, sender=SOMEONE, self_addr=ITSELF, balance=1)
+    with pytest.raises(SkaldError, match="no such entry: missing"):
+        interpret_call(SEEN, BLANK, "missing", None, sender=SOMEONE, amount=0, self_addr=ITSELF)
+    with pytest.raises(SkaldError, match="no such view: missing"):
+        interpret_view(SEEN, BLANK, "missing", None, self_addr=ITSELF, balance=1)
+
+
+@pytest.mark.parametrize("value", [True, "7", None, 1.5, [1]], ids=repr)
+def test_a_view_does_not_return_a_balance_that_is_not_an_integer(value):
+    """Declared `-> int`, it returned its balance as it came, or computed
+    with it: `0 + True` is 1."""
+    with pytest.raises(SkaldError) as refusal:
+        interpret_view(SEEN, BLANK, "sum", None, self_addr=ITSELF, balance=value)
+    assert str(refusal.value) == f"balance: expected int, got {type(value).__name__}"
+    with pytest.raises(SkaldError) as refusal:
+        interpret_view(TYPED, START, "held", {}, balance=value)
+    assert str(refusal.value) == f"balance: expected int, got {type(value).__name__}"
+
+
+@pytest.mark.parametrize("value", [7, True, None], ids=repr)
+def test_a_view_does_not_return_a_contract_that_is_not_an_address(value):
+    with pytest.raises(SkaldError) as refusal:
+        interpret_view(SEEN, BLANK, "at", None, self_addr=value)
+    assert str(refusal.value) == f"self: expected address, got {value!r}"
+
+
+def test_a_call_does_not_compute_with_a_boolean():
+    """`amount + balance` wrote 2 in an integer field when both were `True`."""
+    with pytest.raises(SkaldError, match="expected int, got bool"):
+        interpret_call(SEEN, BLANK, "both", None, sender=SOMEONE, amount=True, self_addr=ITSELF, balance=True)
+    for name in ("amount", "balance"):
+        with pytest.raises(SkaldError) as refusal:
+            interpret_call(SEEN, BLANK, "both", None,
+                           **{"sender": SOMEONE, "amount": 1, "self_addr": ITSELF, "balance": 1, name: True})
+        assert str(refusal.value) == f"{name}: expected int, got bool"
+    after = interpret_call(SEEN, BLANK, "both", None, sender=SOMEONE, amount=1, self_addr=ITSELF, balance=1)
+    assert after["n"] == 2 and type(after["n"]) is int
+
+
+def test_control_a_refused_execution_leaves_the_storage_it_was_given():
+    storage = dict(BLANK)
+    for context in ({"sender": 7}, {"self_addr": None}, {"amount": True}, {"balance": "1"}):
+        with pytest.raises(SkaldError):
+            interpret_call(SEEN, storage, "look", None,
+                           **{"sender": SOMEONE, "amount": 0, "self_addr": ITSELF, **context})
+    assert storage == BLANK
+
+
+def test_control_a_bound_is_still_checked_where_an_expression_reads_the_value():
+    """An integer outside 64 bits is an integer, and a text of more than
+    4,096 bytes that starts with `kn1` passes the check of an address: the
+    execution that reads one fails as before, and the one that does not
+    read it passes as before."""
+    big, long = INT_MAX + 1, "kn1" + "a" * 4094
+    assert given("call", amount=big, balance=big) == {**BLANK, "n": 1}
+    assert given("call", sender=long, self_addr=long) == {**BLANK, "n": 1}
+    assert given("view", balance=big) == 0 and given("view", self_addr=long) == 0
+    assert given("origination", sender=long, self_addr=long, balance=big) == BLANK
+    for context in ({"amount": big}, {"balance": big}, {"amount": INT_MIN - 1}):
+        with pytest.raises(SkaldError, match="an integer is 64 bits"):
+            interpret_call(SEEN, BLANK, "look", None,
+                           **{"sender": SOMEONE, "amount": 0, "self_addr": ITSELF, **context})
+    for context in ({"sender": long}, {"self_addr": long}):
+        with pytest.raises(SkaldError, match="a text is 4096 bytes at most"):
+            interpret_call(SEEN, BLANK, "look", None,
+                           **{"sender": SOMEONE, "amount": 0, "self_addr": ITSELF, **context})
+    with pytest.raises(SkaldError, match="an integer is 64 bits"):
+        interpret_view(SEEN, BLANK, "sum", None, balance=big)
+    with pytest.raises(SkaldError, match="a text is 4096 bytes at most"):
+        interpret_view(SEEN, BLANK, "at", None, self_addr=long)
+
+
+def test_control_in_a_block_an_execution_is_given_addresses_and_integers():
+    """What the chain gives: the sender and the amount of a transaction, the
+    address of the contract and a balance of its state. The proposer and
+    the node that validates agree, as before."""
+    chain = new_chain()
+    watched = SEEN.replace("view idle", "invariant kept { sender != self }\n    view idle")
+    origination = make_origination(ALICE, watched, dict(BLANK), 0)
+    next_block(chain, [origination])
+    address = derive_contract_address(origination.hash())
+    assert chain.state["contracts"][address]["storage"] == BLANK
+
+    next_block(chain, [make_call(BOB, address, "look", {}, amount=3 * KRN, nonce=0),
+                       make_call(ALICE, address, "rest", {}, nonce=1)])
+    assert chain.height == 2
+    storage = chain.state["contracts"][address]["storage"]
+    assert storage == {"who": BOB.address, "here": address, "paid": 3 * KRN, "held": 3 * KRN, "n": 1}
+    assert all(type(storage[name]) is int for name in ("paid", "held", "n"))
+    assert address.startswith("kn1") and BOB.address.startswith("kn1")
+
+
+def test_in_the_chain_an_execution_refused_at_its_entry_fails_like_any_other():
+    """The chain reads a balance in its state, and it writes only integers
+    there. This state is one it never writes, with `True` for what a
+    contract holds: it is here to show what the chain does with the
+    refusal. The operation fails like one whose `require` refuses: it pays
+    its fee, its nonce is taken, and nothing else changes."""
+    chain = new_chain()
+    first = make_origination(ALICE, SEEN, dict(BLANK), 0)
+    next_block(chain, [first])
+    address = derive_contract_address(first.hash())
+    before = copy.deepcopy(chain.state)
+    before["balances"][address] = True
+
+    resting = make_call(BOB, address, "rest", {}, nonce=0)
+    state = copy.deepcopy(before)
+    result = apply_transaction(state, resting, baker=BAKER.address)
+    assert not result.ok and result.error == "balance: expected int, got bool"
+    assert state == charged(before, resting) and state["contracts"][address]["storage"] == BLANK
+
+    second = make_origination(ALICE, SEEN, dict(BLANK), 1)
+    before["balances"][derive_contract_address(second.hash())] = True
+    state = copy.deepcopy(before)
+    result = apply_transaction(state, second, baker=BAKER.address)
+    assert not result.ok and result.error == "balance: expected int, got bool"
+    assert state == charged(before, second) and list(state["contracts"]) == [address]
+
+
+# ---------------------------------------------------------------------------
 # The page of the language
 # ---------------------------------------------------------------------------
 
@@ -340,6 +593,30 @@ def test_control_the_page_still_says_what_a_call_and_a_creation_see():
     names = PAGE[PAGE.index("## Built-in identifiers"):PAGE.index("## Function classes")]
     assert "| `balance` | `int`     | What `self` holds (in mukrn), with the `amount` of this call. |" in names
     assert "At origination, the invariants see the account that creates the contract as `sender`" in names
+
+
+def test_the_page_says_that_what_an_execution_is_given_is_of_its_type():
+    notes = PAGE[PAGE.index("## Implementation notes"):]
+    assert ("What an execution is given is of its type: `sender` and `self_addr` are texts that start with `kn1`, "
+            "which is what the type `address` asks of a value, and `amount` and `balance` are integers, which "
+            "`true` and `false` are not. A caller that gives anything else is refused before the code is read, "
+            "whether the code reads the value or not. The bounds are checked as before, where an expression "
+            "reads the value.") in notes
+
+
+def test_the_page_of_the_checker_says_when_an_origination_checks_the_types():
+    """Before anything is done with the code, and after the check of what
+    the origination is given."""
+    checker = (ROOT / "docs" / "typecheck.md").read_text(encoding="utf-8")
+    assert "calls the type-checker before it does anything with the code:" in checker
+    assert "as its first step" not in checker
+    wrong = "contract Wrong { storage { n: int, } entry set() { n = true; } }"
+    assert type_check(wrong) != []
+    with pytest.raises(SkaldError, match="type errors in contract"):
+        interpret_origination(wrong, None)
+    with pytest.raises(SkaldError) as refusal:
+        interpret_origination(wrong, None, balance=True)
+    assert str(refusal.value) == "balance: expected int, got bool"
 
 
 # ---------------------------------------------------------------------------

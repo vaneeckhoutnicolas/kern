@@ -2292,7 +2292,7 @@ class Builder(Vectors):
               "state_small_blocks", a, many(27))
         whole("one transfer more: the block is too large", "state_small_blocks", a, many(28), rule="block_too_large")
 
-        # -- every kind of transaction but a rotation, and the first transactions of accounts
+        # -- the kinds whose operation section 9.16 states, and the first transactions of accounts
         self.operations_in_blocks(whole)
 
     def quick_state(self) -> dict:
@@ -2319,11 +2319,13 @@ class Builder(Vectors):
         return self.with_supply(state)
 
     def operations_in_blocks(self, whole: Callable[..., dict]) -> None:
-        """Whole blocks that hold every kind of transaction but a
-        `rotate_key`: a chain of eight blocks from a first state, in which
-        accounts send their first transaction, and blocks that a key makes
-        invalid. The accounts 300, 338, 356, 359 and 422 have a key whose
-        Ed25519 part passes the check of the note."""
+        """Whole blocks for the kinds of transactions whose operation
+        section 9.16 states: a chain of eight blocks from a first state, in
+        which accounts send their first transaction, and blocks that a key
+        makes invalid. With the blocks above, the whole blocks hold every
+        kind of transaction but a `rotate_key`. The accounts 300, 338, 356,
+        359 and 422 have a key whose Ed25519 part passes the check of the
+        note."""
         a, b, c = (self.account(100 + i) for i in range(3))
         d, e, f, g = (self.account(n) for n in (300, 338, 356, 359))
         treasury = self.address(9)
